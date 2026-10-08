@@ -1,0 +1,22 @@
+[package]
+name = "pebble-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+pebble-core.workspace = true
+uniffi.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "pebble-bindgen"
+path = "src/bin/bindgen.rs"
+required-features = ["bindgen"]

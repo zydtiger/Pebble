@@ -1,0 +1,221 @@
+use pebble_core::{Core, Error, PreviewEvent, PreviewEventKind, PreviewListener};
+use std::fs;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
+
+#[test]
+fn restart_keeps_identity_and_only_two_tables() {
+    let root = tempfile::tempdir().unwrap();
+    let first = Core::open(root.path()).unwrap().workspace().unwrap();
+    let second = Core::open(root.path()).unwrap().workspace().unwrap();
+    assert_eq!(first.personas.len(), 1);
+    assert_eq!(first.personas[0].id, second.personas[0].id);
+    assert_eq!(
+        first.personas[0].conversation_id,
+        second.personas[0].conversation_id
+    );
+    assert!(first.personas[0].chat.is_none());
+    let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
+    let tables: Vec<String> = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(tables, ["conversations", "personas"]);
+}
+
+#[test]
+fn manual_edits_reload_without_reseeding_or_changing_room() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let before = core.workspace().unwrap().personas.remove(0);
+    let directory = std::path::Path::new(&before.directory);
+    fs::write(
+        directory.join("MEMORY.md"),
+        "# Memory\n\nLikes rainy walks.\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("config.toml"),
+        "[persona]\ndisplay_name = '米拉'\n",
+    )
+    .unwrap();
+    let after = core.workspace().unwrap().personas.remove(0);
+    assert_eq!(after.display_name, "米拉");
+    assert!(after.memory.contains("rainy walks"));
+    assert_eq!(before.id, after.id);
+    assert_eq!(before.conversation_id, after.conversation_id);
+    assert_eq!(
+        Core::open(root.path())
+            .unwrap()
+            .workspace()
+            .unwrap()
+            .personas[0]
+            .display_name,
+        "米拉"
+    );
+}
+
+#[test]
+fn connections_inherit_as_a_whole_and_reject_partial_override() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    fs::write(root.path().join("config.toml"),
+        "[defaults.chat]\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='responses'\napi_key_env='MODEL_KEY'\n").unwrap();
+    let persona = core.workspace().unwrap().personas.remove(0);
+    let chat = persona.chat.unwrap();
+    assert_eq!(chat.api, "responses");
+    assert_eq!(chat.api_key_env.as_deref(), Some("MODEL_KEY"));
+    fs::write(
+        std::path::Path::new(&persona.directory).join("config.toml"),
+        "[persona]\ndisplay_name='Mira'\n[chat]\nmodel='other'\n",
+    )
+    .unwrap();
+    assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
+}
+
+#[test]
+fn invalid_and_missing_files_remain_visible_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    fs::write(
+        root.path().join("config.toml"),
+        "[defaults.chat]\nmodel='test'\nbase_url='file:///tmp'\napi='responses'\n",
+    )
+    .unwrap();
+    assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
+    fs::remove_file(root.path().join("config.toml")).unwrap();
+    assert!(matches!(Core::open(root.path()), Err(Error::File { .. })));
+    assert!(!root.path().join("config.toml").exists());
+}
+
+struct Observer {
+    events: mpsc::Sender<PreviewEvent>,
+    released: mpsc::Sender<()>,
+}
+
+impl PreviewListener for Observer {
+    fn on_event(&self, event: PreviewEvent) -> Result<(), String> {
+        self.events.send(event).map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for Observer {
+    fn drop(&mut self) {
+        let _ = self.released.send(());
+    }
+}
+
+fn observer() -> (
+    Arc<dyn PreviewListener>,
+    mpsc::Receiver<PreviewEvent>,
+    mpsc::Receiver<()>,
+) {
+    let (events, incoming) = mpsc::channel();
+    let (released, dropped) = mpsc::channel();
+    (Arc::new(Observer { events, released }), incoming, dropped)
+}
+
+fn receive_until_terminal(events: &mpsc::Receiver<PreviewEvent>) -> Vec<PreviewEvent> {
+    let mut received = Vec::new();
+    loop {
+        let event = events.recv_timeout(Duration::from_secs(5)).unwrap();
+        let terminal = matches!(
+            event.kind,
+            PreviewEventKind::Completed | PreviewEventKind::Cancelled
+        );
+        received.push(event);
+        if terminal {
+            return received;
+        }
+    }
+}
+
+#[test]
+fn stream_keeps_unicode_order_and_origin_and_releases_listener() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let persona = core.workspace().unwrap().personas.remove(0);
+    let (observer, incoming, released) = observer();
+    let task = core.start_preview(&persona.id, "你好", observer).unwrap();
+    let events = receive_until_terminal(&incoming);
+    assert_eq!(events[0].kind, PreviewEventKind::Started);
+    assert_eq!(events.last().unwrap().kind, PreviewEventKind::Completed);
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(event.sequence, index as u64);
+        assert_eq!(event.run_id, task.id);
+        assert_eq!(event.conversation_id, persona.conversation_id);
+        assert_eq!(event.persona_id, persona.id);
+    }
+    let text: String = events.iter().map(|event| event.text.as_str()).collect();
+    assert!(text.starts_with("你好，我是 Mira。"));
+    assert!(text.ends_with("也不会保存聊天内容。"));
+    released.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(incoming.try_recv().is_err());
+}
+
+#[test]
+fn cancellation_stops_stream_and_allows_another_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let persona = core.workspace().unwrap().personas.remove(0);
+    let (first_observer, incoming, released) = observer();
+    let task = core
+        .start_preview(&persona.id, "hello", first_observer)
+        .unwrap();
+    assert_eq!(
+        incoming.recv_timeout(Duration::from_secs(1)).unwrap().kind,
+        PreviewEventKind::Started
+    );
+    let (other, _, _) = observer();
+    assert!(matches!(
+        core.start_preview(&persona.id, "again", other),
+        Err(Error::Busy)
+    ));
+    task.cancel();
+    task.cancel();
+    assert_eq!(
+        receive_until_terminal(&incoming).last().unwrap().kind,
+        PreviewEventKind::Cancelled
+    );
+    released.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(incoming.try_recv().is_err());
+    let (next, _, released) = observer();
+    let next_task = core.start_preview(&persona.id, "again", next).unwrap();
+    assert_ne!(task.id, next_task.id);
+    drop(next_task);
+    released.recv_timeout(Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn dropping_handle_cancels_and_releases_callback() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let persona = core.workspace().unwrap().personas.remove(0);
+    let (observer, incoming, released) = observer();
+    let task = core.start_preview(&persona.id, "hello", observer).unwrap();
+    incoming.recv_timeout(Duration::from_secs(1)).unwrap();
+    drop(task);
+    assert_eq!(
+        receive_until_terminal(&incoming).last().unwrap().kind,
+        PreviewEventKind::Cancelled
+    );
+    released.recv_timeout(Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn preview_validates_input_and_persona() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let (listener, _, _) = observer();
+    assert!(matches!(
+        core.start_preview("missing", "hello", listener.clone()),
+        Err(Error::UnknownPersona)
+    ));
+    assert!(matches!(
+        core.start_preview("missing", "  ", listener),
+        Err(Error::EmptyMessage)
+    ));
+}

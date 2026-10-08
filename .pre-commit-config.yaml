@@ -1,0 +1,50 @@
+minimum_prek_version: "0.4.14"
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: builtin
+    hooks:
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+      - id: require-pattern
+        name: commit subject
+        stages: [commit-msg]
+        args: ['--multiline', '\A(feat|fix|docs|refactor|test|build|chore): [a-z]([^\n]*[^\n.])?(\n|\z)']
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: Rust formatting
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: Rust lint
+        entry: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: cargo-test
+        name: Rust behavior tests
+        entry: cargo test --workspace --all-features --locked
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: swift-bridge
+        name: Swift 6 static FFI integration
+        entry: bash scripts/check-bridge.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

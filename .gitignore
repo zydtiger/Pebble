@@ -1,0 +1,7 @@
+/target/
+/build/
+/macos/Generated/
+/macos/Pebble.xcodeproj/
+.DS_Store
+*.xcuserstate
+xcuserdata/

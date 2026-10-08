@@ -1,0 +1,22 @@
+default:
+    @just --list
+
+build:
+    bash scripts/build-app.sh
+
+run: build
+    open build/Pebble.app
+
+check:
+    git ls-files --cached --others --exclude-standard -z | xargs -0 prek run --hook-stage pre-commit --files
+    git ls-files --cached --others --exclude-standard -z | xargs -0 prek run --hook-stage pre-push --files
+
+check-rust:
+    prek run cargo-clippy --all-files --hook-stage pre-push
+    prek run cargo-test --all-files --hook-stage pre-push
+
+check-bridge:
+    bash scripts/check-bridge.sh
+
+preview:
+    bash scripts/render-preview.sh

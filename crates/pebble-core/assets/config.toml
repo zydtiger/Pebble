@@ -1,0 +1,9 @@
+# Shared provider settings belong here. Preview mode needs no API key.
+[defaults]
+
+# Enable a complete connection when live model support arrives.
+# [defaults.chat]
+# model = "your-model"
+# base_url = "https://your-provider.example/v1"
+# api = "chat_completions"
+# api_key_env = "PEBBLE_API_KEY"

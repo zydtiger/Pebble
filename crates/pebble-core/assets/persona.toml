@@ -1,0 +1,6 @@
+[persona]
+display_name = "Mira"
+subtitle = "A curious mind. A soft place to land."
+
+# An optional [chat] table replaces the entire app-level connection.
+# Include model, base_url, and api together; never put an API key here.

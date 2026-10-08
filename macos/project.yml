@@ -1,0 +1,53 @@
+name: Pebble
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ARCHS: arm64
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+    PRODUCT_BUNDLE_IDENTIFIER: dev.pebble.local
+    HEADER_SEARCH_PATHS: "$(SRCROOT)/Generated"
+    OTHER_SWIFT_FLAGS:
+      - "$(inherited)"
+      - "-Xcc"
+      - "-fmodule-map-file=$(SRCROOT)/Generated/PebbleCoreFFI.modulemap"
+    OTHER_LDFLAGS:
+      - "$(inherited)"
+      - "$(SRCROOT)/../target/$(RUST_PROFILE)/libpebble_ffi.a"
+      - "-liconv"
+  configs:
+    Debug:
+      RUST_PROFILE: debug
+    Release:
+      RUST_PROFILE: release
+targets:
+  Pebble:
+    type: application
+    platform: macOS
+    sources:
+      - path: Pebble
+      - path: Generated
+        includes: ["*.swift"]
+    preBuildScripts:
+      - name: Build Rust core and Swift bindings
+        script: 'bash "$SRCROOT/../scripts/build-rust.sh"'
+        basedOnDependencyAnalysis: false
+schemes:
+  Pebble:
+    build:
+      targets:
+        Pebble: all
+    run:
+      config: Debug
