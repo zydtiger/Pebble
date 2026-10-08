@@ -36,8 +36,15 @@ targets:
   Pebble:
     type: application
     platform: macOS
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: Pebble
     sources:
       - path: Pebble
+        excludes: ["Resources/Pebble.icon"]
+      - path: Pebble/Resources/Pebble.icon
+        type: file
+        buildPhase: resources
       - path: Generated
         includes: ["*.swift"]
     preBuildScripts:

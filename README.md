@@ -12,8 +12,8 @@ from Rust into SwiftUI. It does not call a model or save preview messages.
 
 ## Run it
 
-Requirements: Apple Silicon Mac, Xcode with Swift 6.3 or later, Rust 1.98.1
-(including rustfmt and Clippy), XcodeGen, and `just`. Validation also uses `prek`
+Requirements: Apple Silicon Mac, Xcode with Swift 6.3 or later and Icon Composer,
+Rust 1.98.1 (including rustfmt and Clippy), XcodeGen 2.46 or later, and `just`. Validation also uses `prek`
 0.4.14 or later. These tools are developer prerequisites, not app dependencies.
 The app's deployment target is macOS 14; it is currently exercised on the
 development host, not a matrix of older macOS releases.
@@ -29,6 +29,14 @@ You can reopen that app directly without rebuilding.
 The build generates a local Xcode project at `macos/Pebble.xcodeproj`. Open it
 after the first build if you want to iterate in Xcode. Generated bindings and
 project files are ignored; their source of truth is Rust plus `macos/project.yml`.
+
+## App icon
+
+The editable [Pebble.icon](macos/Pebble/Resources/Pebble.icon) document contains
+two vector pebbles with Liquid Glass materials. Run `just icon` to edit it in
+Icon Composer, or `just preview-icon` to export appearance and small-size
+previews into `build/icon-preview/`. `just build` compiles the icon into the app.
+See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 
 ## Try the first stage
 

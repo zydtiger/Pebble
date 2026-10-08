@@ -20,3 +20,9 @@ check-bridge:
 
 preview:
     bash scripts/render-preview.sh
+
+icon:
+    open -a "Icon Composer" macos/Pebble/Resources/Pebble.icon
+
+preview-icon:
+    bash scripts/preview-icon.sh
