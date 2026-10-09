@@ -104,6 +104,14 @@ struct RenderChecks {
                 }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "live-context")
+                try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='responses'\napi_key=''\n"
+                    .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+                await model.load()
+                guard model.selected?.connectionLabel == "Live · synthetic-live-model · Responses" else {
+                    throw RenderError.failed("Responses mode label was not exposed")
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "responses-context")
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closeChat()
                 app.terminate(nil)

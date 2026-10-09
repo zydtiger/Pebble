@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.0.4 uses one SQLite database and a live Chat Completions adapter. An
+v0.0.5 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 
@@ -25,7 +25,7 @@ One session belongs to a persona, not an app launch or visible room.
 The first input initializes a session with a fixed application/SOUL/MEMORY
 snapshot. Reloading files changes the character panel, but does not rewrite
 that existing snapshot. Sessions identify `pebble_demo_v1` / `local-demo` or
-`chat_completions` / the configured model. The credential-free `base_url` is
+`chat_completions` or `responses` / the configured model. The credential-free `base_url` is
 stored on the session; keys are resolved at runtime and never persisted.
 
 Changing the API root, model, or protocol retires the previous session. The new
@@ -54,12 +54,12 @@ send(persona, text)
   live adapter (or demo) reads that stored request outside the transaction
   checkpoint each text delta before notifying the UI
   completion transaction
-    finalize A1 + native assistant output O1
-    sent event E2 + link O1 -> E2
+    finalize A1 + native output items O1…On
+    sent event E2 + link each O1…On -> E2
     finalize C1 and advance contiguous event coverage
   commit, then notify completion
 
-next turn's request: P, I1, O1, I2
+next turn's request: P, I1, O1…On, I2
 ```
 
 The input item is JSON with `role: user` and `content` containing a serialized
@@ -67,8 +67,13 @@ envelope. Its `events` include source event/message/room IDs, event sequence,
 speaker kind/ID, and text. `reply_request` contains the target room and trigger
 message. These are fields inside content, not imaginary provider API fields.
 The prefix defines this attribution. Participant text is serialized as data.
-The completed output is `role: assistant` plus content and supported native
-`reasoning_content`/`refusal` fields; it is stored once. Only content is rendered.
+Chat Completions stores one native assistant message with supported
+`reasoning_content`/`refusal` fields. Responses input uses native `message` items
+with `input_text` content; accepted output stores every whole native reasoning
+and assistant message item separately, in provider order. IDs, encrypted state,
+and unknown fields are retained without reconstructing reasoning. All output
+items link to the same sent event in one transaction. Only visible text/refusal
+is rendered.
 
 The builder appends events without a representation in the active session.
 Received events later than this call's acceptance cutoff are excluded, even if
@@ -83,14 +88,14 @@ A call records the last input item sequence. Reconstructing that call loads
 items through this cutoff, retaining the exact saved bytes. It excludes its
 own future output and later turns. There is no full-request copy per call,
 transcript re-rendering, dynamic timestamp in the prefix, or server KV cache
-management. v0.0.4 stores raw JSON; compression and configurable context limits come later.
+management. v0.0.5 stores raw JSON; compression and configurable context limits come later.
 
 ## Failure and lifetime boundaries
 
 Acceptance and final publication are separate atomic transactions. A failure
 cannot publish half an output/event association. Delta checkpoints retain
-visible partial text; only successful completion creates an assistant model
-item and a sent event. Stopped/failed/interrupted bubbles are explicit in the
+visible partial text; only successful completion creates native model
+items and a sent event. Stopped/failed/interrupted bubbles are explicit in the
 UI and do not masquerade as accepted assistant context. The accepted user
 input stays in the session even when its reply is cancelled.
 
@@ -120,7 +125,8 @@ upgrades to 3 with credential-free API-root binding and an event-start boundary.
 Schema 3 upgrades to 4 by rebuilding model_calls with a queued status and
 nullable session/input cutoff until activation. Migration preserves all IDs and
 payloads, checks foreign keys before commit, and restores enforcement on the
-runtime connection. Existing IDs, records, frozen bytes, and editable files
+runtime connection. v0.0.5 keeps schema 4 and all eight tables; multi-item output
+uses the existing item/event association. Existing IDs, records, frozen bytes, and editable files
 remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.

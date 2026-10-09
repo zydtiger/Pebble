@@ -267,7 +267,13 @@ fn run(
     if !connected {
         status = MessageStatus::Cancelled;
     }
-    let result = db.finish_turn(&turn, &content, status, failure.as_deref(), native.as_ref());
+    let result = db.finish_turn(
+        &turn,
+        &content,
+        status,
+        failure.as_deref(),
+        native.as_deref(),
+    );
     let (kind, messages, error) = match result {
         Ok(message) => (
             match status {

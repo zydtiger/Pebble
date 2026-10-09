@@ -38,7 +38,7 @@ impl Database {
                 &id,
                 None,
                 "prefix",
-                &json!({"role":"system", "content":content}),
+                &input_message(&protocol, "system", &content),
             )?;
             (id, start)
         };
@@ -114,7 +114,7 @@ impl Database {
             &session_id,
             Some(&call_id),
             "input",
-            &json!({"role":"user", "content":serde_json::to_string(&envelope)?}),
+            &input_message(&protocol, "user", &serde_json::to_string(&envelope)?),
         )?;
         for event in event_ids {
             link(&tx, &item, &event)?;
@@ -147,7 +147,7 @@ impl Database {
         content: &str,
         status: MessageStatus,
         error: Option<&str>,
-        native: Option<&Value>,
+        native: Option<&[Value]>,
     ) -> Result<Message, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
@@ -157,13 +157,8 @@ impl Database {
         )?;
         if changed > 0 {
             if status == MessageStatus::Complete {
-                let output = insert_item(
-                    &tx,
-                    &turn.session_id,
-                    Some(&turn.call_id),
-                    "output",
-                    native.unwrap_or(&json!({"role":"assistant", "content":content})),
-                )?;
+                let fallback = [json!({"role":"assistant", "content":content})];
+                let outputs = native.unwrap_or(&fallback);
                 let event = insert_event_for(
                     &tx,
                     &turn.persona_id,
@@ -171,7 +166,16 @@ impl Database {
                     &turn.reply.id,
                     "sent",
                 )?;
-                link(&tx, &output, &event)?;
+                for payload in outputs {
+                    let output = insert_item(
+                        &tx,
+                        &turn.session_id,
+                        Some(&turn.call_id),
+                        "output",
+                        payload,
+                    )?;
+                    link(&tx, &output, &event)?;
+                }
                 update_frontier(&tx, &turn.session_id, &turn.persona_id)?;
             }
             let call_status = if status == MessageStatus::Complete {
@@ -276,4 +280,12 @@ fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), 
         params![session, persona],
     )?;
     Ok(())
+}
+
+fn input_message(protocol: &str, role: &str, content: &str) -> Value {
+    if protocol == "responses" {
+        json!({"type":"message", "role":role, "content":[{"type":"input_text", "text":content}]})
+    } else {
+        json!({"role":role, "content":content})
+    }
 }

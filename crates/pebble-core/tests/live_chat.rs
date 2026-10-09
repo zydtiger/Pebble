@@ -195,7 +195,7 @@ fn cancellation_interrupts_headers_and_idle_stream_and_omits_blank_auth() {
     }
 }
 #[test]
-fn unsupported_protocol_and_missing_credentials_never_fall_back_to_demo() {
+fn failed_responses_connection_and_missing_credentials_never_fall_back_to_demo() {
     let (root, core, id) = isolated();
     configure(
         root.path(),
@@ -207,7 +207,7 @@ fn unsupported_protocol_and_missing_credentials_never_fall_back_to_demo() {
     let (_task, rx) = start(&core, &id, "no demo");
     let events = terminal(&rx);
     assert_eq!(events.last().unwrap().kind, ChatEventKind::Failed);
-    assert!(events.last().unwrap().text.contains("not implemented"));
+    assert!(events.last().unwrap().text.contains("Could not connect"));
     assert!(core.messages(&id).unwrap()[1].content.is_empty());
     std::fs::write(root.path().join("config.toml"),"[defaults.chat]\nmodel='mock'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key_env='PEBBLE_INTENTIONALLY_MISSING_KEY_830204'\n").unwrap();
     let (_task, rx) = start(&core, &id, "missing credential");

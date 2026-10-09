@@ -6,11 +6,11 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.4 adds independent character conversations.** Create another character,
-queue followups, and switch rooms while replies continue. Each character has its
-own files, private room, model session, and serialized queue. Configure an
-OpenAI-compatible API root and model for live Chat Completions; without a
-connection, the app uses its clearly labeled deterministic local demo.
+**v0.0.5 adds Responses and native output replay.** Configure an
+OpenAI-compatible API root and model for Chat Completions or Responses; without
+a connection, the app uses its clearly labeled deterministic local demo.
+Independent characters retain separate files, private rooms, model sessions,
+and serialized queues while different rooms reply concurrently.
 
 ## Run it
 
@@ -63,8 +63,7 @@ Cancelled replies retain their partial text with a **Stopped** label. An abrupt
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
-The interface is an early light-theme design with a starter character. Responses, groups, automated memory, and work delegation belong to later
-milestones. See [the roadmap](docs/roadmap.md).
+The interface is an early light-theme design with a starter character. Groups, automated memory, and work delegation belong to later milestones. See [the roadmap](docs/roadmap.md).
 
 ## Local data
 
@@ -98,8 +97,7 @@ own `[chat]` table, replacing the whole connection. Connections require `model`,
 is the placeholder for an endpoint without authentication. Authenticated endpoints
 can use a nonempty `api_key` in the local config, or an `api_key_env` reference;
 do not configure both at once. Base URLs are API roots, normally ending in `/v1`
-for Chat Completions. Responses is validated as a protocol choice but reports
-“not implemented” when sent in this version. A configured connection calls that
+for either protocol. Set `api = "responses"` to use Responses. A configured connection calls that
 endpoint or reports an error; it never falls back to the demo. An omitted
 connection means no model is configured. New characters inherit the app default
 connection until their own local config supplies a `[chat]` table. Runtime configuration and actual keys
@@ -121,7 +119,11 @@ client honors environment proxy settings. Connection/header/idle waits are
 bounded at 10/45/45 seconds, with a 180-second request timeout and a 4096-token
 output budget. Reasoning-only, truncated, filtered, or budget-exhausted outputs
 are failed replies; visible partial text stays saved. Provider reasoning stays
-in native model history and is never rendered as a message.
+in native model history and is never rendered as a message. Responses sends
+`store = false` and requests encrypted reasoning state. Completed native output
+items, including IDs and opaque fields, are stored and replayed in order with
+the full input history; no `previous_response_id` is sent. Tool output is
+unsupported and fails explicitly. Native refusal text is displayed and retained.
 
 Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events
@@ -163,7 +165,7 @@ Tests use isolated data roots; UI-check data stays under the ignored `build/`
 directory for inspection. The Rust tests cover restart
 identity, schema scope, file edits, connection inheritance, invalid files,
 Unicode event order, cancellation, callback lifetime, migration, frozen request
-prefixes, native assistant replay, fragmented SSE, model failure states, event
+prefixes, multiple native output items and opaque replay, fragmented SSE, model failure states, event
 links, concurrent persona queues, queued cancellation, transactional rollback,
 and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
@@ -179,6 +181,9 @@ PEBBLE_LIVE_API_ROOT=http://localhost:8080/v1 \
 PEBBLE_LIVE_MODEL=your-model \
 cargo test -p pebble-core --test live_endpoint opt_in_live_two_turns_restart_and_cancel -- --ignored --nocapture
 ```
+
+For Responses, use the same environment variables and replace the test name
+with `opt_in_live_responses_two_turns_restart_and_cancel`.
 
 `PEBBLE_LIVE_API_KEY` optionally supplies a test credential. The test does not
 read the app's actual character files or chat history and prints no reasoning

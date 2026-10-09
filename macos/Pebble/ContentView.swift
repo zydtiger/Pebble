@@ -93,7 +93,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.4").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.5").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")

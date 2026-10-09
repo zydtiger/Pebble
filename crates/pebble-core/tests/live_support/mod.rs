@@ -109,6 +109,7 @@ impl Server {
                             == plan
                                 .body
                                 .find("data: [DONE]")
+                                .or_else(|| plan.body.find("event: response.completed"))
                                 .unwrap_or(plan.body.len() / 2)
                     {
                         std::thread::sleep(Duration::from_millis(700));

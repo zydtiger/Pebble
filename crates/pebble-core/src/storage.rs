@@ -101,8 +101,10 @@ impl Database {
             let (protocol, model, base_url) = super::connection::identity(persona.chat.as_ref());
             persona.connection_label = match persona.chat.as_ref() {
                 None => "Local demo · No model connected".into(),
-                Some(chat) if chat.api == "chat_completions" => format!("Live · {}", chat.model),
-                Some(chat) => format!("{} · Not implemented", chat.api),
+                Some(chat) if chat.api == "responses" => {
+                    format!("Live · {} · Responses", chat.model)
+                }
+                Some(chat) => format!("Live · {}", chat.model),
             };
             let prior: Option<(String, String, String, i64)> = tx.query_row(
                 "SELECT protocol, model, base_url, event_start_sequence FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",

@@ -45,7 +45,7 @@ Swift sends text and observer
     → Rust accepts messages, receipt event, and queued call atomically
     → persona queue activates the call and freezes its request atomically
     → Rust returns a cancellable handle and authoritative message IDs
-    → Chat Completions (or unconfigured demo) consumes the stored request
+    → Chat Completions, Responses, or unconfigured demo consumes the stored request
     → Rust checkpoints visible deltas, then notifies Swift
     → Rust atomically publishes output/event links and terminal state
     → Swift reloads the saved transcript
@@ -79,11 +79,11 @@ creates a stable private room, and exposes a minimal name form in Swift. General
 editing/settings and deletion are outside this milestone.
 
 The demo protocol is distinct from Chat Completions and Responses. Configured
-Chat Completions always runs its real HTTP adapter; Responses fails explicitly.
+connections always run their real HTTP adapter.
 An absent connection runs the local demo. Rust supplies mode/model labels and
 fresh-context notices to the typed frontend records.
 
-HTTP uses the configured API root plus `/chat/completions`, optional runtime
+HTTP uses the configured API root plus `/chat/completions` or `/responses`, optional runtime
 credentials, environment proxy settings, and no redirects. A cancellable future
 covers connection, headers, and idle stream waits. Connection timeout is 10
 seconds; headers and stream idle timeout are 45 seconds; the entire request has
@@ -91,12 +91,23 @@ a 180-second deadline. Requests have a 4096-token completion budget. Credentials
 never enter model history or call records, and provider bodies/URLs are not
 copied into error diagnostics.
 
-SSE is framed as bytes before decoding complete UTF-8 lines. Only `content`
-deltas update the visible bubble. A successful `stop` finish plus `[DONE]` and
-nonempty visible content are required for publication. Native assistant content,
-`reasoning_content`, and `refusal` are retained for replay; reasoning is hidden
-from the UI. Tool requests, stream errors, truncation, filters, and exhausted
-budgets preserve visible partial text as failed output. No retry is automatic.
+SSE is framed as bytes before decoding complete UTF-8 lines. Chat Completions
+renders only `content` deltas and requires a successful `stop` finish plus
+`[DONE]` and nonempty visible text. Native assistant content, `reasoning_content`,
+and `refusal` are retained for replay.
+
+Responses renders output text and refusal deltas. A completed-status
+`response.completed` event supplies authoritative native output in array order;
+`[DONE]` is unnecessary. Whole accepted reasoning/message items, including IDs,
+encrypted state, and unknown fields, are persisted once and replayed unchanged
+semantically. Earlier added reasoning may be incomplete and is never used as
+accepted output. Final item events and final visible text must agree with the
+stream. Both indexed events and item-ID events with an unambiguous content-part
+lifecycle are supported. See [provider contracts](providers.md).
+
+Reasoning never appears in the UI. Tool requests, errors, incomplete terminal
+states, truncation, text mismatch, and exhausted budgets preserve visible partial
+text as failed output and publish no native output. No retry is automatic.
 
 Sessions bind protocol, model, and credential-free API root. A changed binding
 retires the previous context and starts after the current event frontier. Old
