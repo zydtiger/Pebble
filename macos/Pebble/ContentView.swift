@@ -40,6 +40,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showCharacter) {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
+        .sheet(item: $model.settingsTarget) { target in SettingsSheet(model: model, target: target) }
         .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
         .confirmationDialog("Start a fresh context?", isPresented: $model.showFreshContext, titleVisibility: .visible) {
             Button("Start fresh context") { Task { await model.startFreshContext() } }
@@ -99,8 +100,10 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.6").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.7").font(.system(size: 10, design: .monospaced))
                     Spacer()
+                    Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
+                        .help("App defaults")
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")
                     Button { Task { await model.load() } } label: { Image(systemName: "arrow.clockwise") }
@@ -125,6 +128,10 @@ struct ContentView: View {
                 Text("Just the two of you").font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             }
             Spacer()
+            Button { model.settingsTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "slider.horizontal.3") }
+                .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
+                .help("Character settings")
+                .disabled(model.isReplying || model.loading)
             Button { model.showFreshContext = true } label: { Image(systemName: "sparkles") }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
                 .disabled(model.isReplying || model.loading)
@@ -193,9 +200,14 @@ struct ContentView: View {
                                         .background(bubble.isUser ? PebbleTheme.sage.opacity(0.11) : .white.opacity(0.85),
                                                     in: RoundedRectangle(cornerRadius: 18))
                                 }
+                                if !bubble.failureDetail.isEmpty {
+                                    Text(bubble.failureDetail).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                        .textSelection(.enabled)
+                                }
                                 if let status = bubble.statusLabel {
                                     HStack {
                                         Text(status).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                        if bubble.canRetry && !model.isReplying { Button("Retry") { model.retryReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
                                         if bubble.status == .queued { Button("Cancel") { model.cancelReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
                                     }
                                 }

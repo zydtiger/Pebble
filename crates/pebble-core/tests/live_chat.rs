@@ -229,7 +229,7 @@ fn changed_connection_starts_fresh_context_and_preserves_transcript_and_v2_ids()
     drop(demo);
     drop(core);
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; ALTER TABLE model_sessions DROP COLUMN base_url; ALTER TABLE model_sessions DROP COLUMN event_start_sequence; PRAGMA user_version=2;").unwrap();
+    db.execute_batch("ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; ALTER TABLE model_sessions DROP COLUMN base_url; ALTER TABLE model_sessions DROP COLUMN event_start_sequence; PRAGMA user_version=2;").unwrap();
     let core = reopen(root.path());
     assert_eq!(saved, core.messages(&id).unwrap());
     let server = Server::new(vec![stream(success("live")), stream(success("changed"))]);

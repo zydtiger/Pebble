@@ -120,6 +120,21 @@ struct RenderChecks {
                 }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "fresh-context")
+                model.sendMessage("Synthetic configured connection failure")
+                for _ in 0..<300 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
+                guard !model.isReplying, model.bubbles.last?.canRetry == true else {
+                    throw RenderError.failed("Failed latest reply did not expose Retry")
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "failed-retry")
+                window.setContentSize(NSSize(width: 600, height: 620))
+                window.contentView = NSHostingView(rootView: SettingsSheet(model: model, target: SettingsTarget(personaID: nil)))
+                try await Task.sleep(for: .milliseconds(400))
+                try capture(window, name: "app-settings")
+                window.setContentSize(NSSize(width: 600, height: 740))
+                window.contentView = NSHostingView(rootView: SettingsSheet(model: model, target: SettingsTarget(personaID: model.selectedID)))
+                try await Task.sleep(for: .milliseconds(400))
+                try capture(window, name: "character-settings")
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closeChat()
                 app.terminate(nil)

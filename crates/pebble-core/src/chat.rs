@@ -92,6 +92,28 @@ impl Chats {
         db.fresh_context(persona)
     }
 
+    pub(crate) fn settings(
+        &self,
+        db: &Database,
+        persona: Option<&str>,
+        save: impl FnOnce() -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let _queues = self.queues.lock().expect("generation queues lock");
+        db.ensure_idle(persona)?;
+        save()
+    }
+    pub(crate) fn retry(
+        &self,
+        db: Arc<Database>,
+        persona: Persona,
+        reply: &str,
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatTask, Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        let queue = queues.entry(persona.id.clone()).or_default().clone();
+        let turn = db.enqueue_retry(&persona, reply)?;
+        Self::launch(db, persona, listener, queue, turn)
+    }
     pub(crate) fn start(
         &self,
         db: Arc<Database>,
@@ -102,6 +124,15 @@ impl Chats {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_turn(&persona, prompt)?;
+        Self::launch(db, persona, listener, queue, turn)
+    }
+    fn launch(
+        db: Arc<Database>,
+        persona: Persona,
+        listener: Arc<dyn ChatListener>,
+        queue: Arc<queue::Queue>,
+        turn: Turn,
+    ) -> Result<ChatTask, Error> {
         let control = Arc::new(Control::default());
         let task = ChatTask {
             id: turn.call_id.clone(),

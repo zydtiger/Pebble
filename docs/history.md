@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.0.6 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.0.7 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 
@@ -15,7 +15,7 @@ scheduler, classifier, memory writer, or work-agent integration.
 | `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, and covered-event frontier |
 | `model_items` | Frozen raw/zstd prefix/input/output JSON BLOBs with decoded length; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
-| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status and error |
+| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error and optional retry_of |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
 they do not reorder stored history. A message ID identifies the same bubble
@@ -116,7 +116,13 @@ The draft is cleared after Rust accepts it, and callback IDs prevent updating
 the wrong visible message. Character switching keeps each room
 stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
-reloads the final transcript from Rust. No retry or resubmission is automatic.
+reloads the final transcript from Rust. No retry or resubmission is automatic. Latest-reply retry adds a new reply/call
+referencing retry_of and the existing user/receipt. In the unchanged active
+context it reuses the nearest frozen ancestor's input/event cutoff. An
+unactivated retry admits that receipt once; explicit retry after a fresh or
+changed connection can select its original event before the boundary, without
+general catch-up. Subsequent turns retain its native links and do not duplicate
+it. Earlier attempts, partial text, and original call cutoffs stay unchanged.
 
 An advisory lock on `data/app.lock` reserves the data root for the core and any
 worker still using its database. The file contains no chat state; OS ownership
@@ -124,7 +130,8 @@ is released on normal or abrupt exit. A second opener fails without touching
 running calls. After acquiring ownership, startup transactionally marks any
 remaining queued or streaming replies/calls interrupted, preserving their durable
 text and accepted input. It never invents a completed model output. This is
-basic restart consistency; retry/reconciliation workflows remain v0.0.7.
+restart consistency. Snapshots expose durable call errors and latest-reply retry
+eligibility; an interrupted queued call can be explicitly retried after reopen.
 
 Schema 1 upgrades to 2 by adding the six history tables and indexes. Schema 2
 upgrades to 3 with credential-free API-root binding and an event-start boundary.
@@ -134,7 +141,8 @@ payloads, checks foreign keys before commit, and restores enforcement on the
 runtime connection. Schema 4 upgrades to 5 by rebuilding model_items to allow
 json/zstd with decoded_length, and adding a session context_reason for persistent
 manual-boundary notices. Existing raw bytes, IDs, and item/event links remain
-unchanged; migration does not compress old payloads. All eight tables remain. Existing IDs, records, frozen bytes, and editable files
+unchanged; migration does not compress old payloads. Schema 5 upgrades to 6 by adding nullable model_calls.retry_of with a self-reference;
+existing calls stay unchanged. All eight tables remain. Existing IDs, records, frozen bytes, and editable files
 remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.

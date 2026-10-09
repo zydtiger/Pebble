@@ -2,6 +2,7 @@ mod codec;
 mod contexts;
 mod items;
 mod jobs;
+mod retry;
 mod turns;
 
 use crate::{Error, Message, MessageStatus, Persona, file_error};
@@ -41,7 +42,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 5 {
+        if version > 6 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -73,6 +74,9 @@ impl Database {
         if version < 5 {
             tx.execute_batch(include_str!("storage/codec-migration.sql"))?;
             tx.execute_batch("PRAGMA user_version = 5;")?;
+        }
+        if version < 6 {
+            tx.execute_batch("ALTER TABLE model_calls ADD COLUMN retry_of TEXT REFERENCES model_calls(id); PRAGMA user_version=6;")?;
         }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
@@ -139,11 +143,20 @@ impl Database {
         let mut query = connection.prepare(
             "SELECT m.id, m.conversation_id, m.sequence, m.sender_kind, m.sender_id, m.content,
                 CASE WHEN m.status = 'streaming' AND j.status = 'queued' THEN 'queued' ELSE m.status END,
-                m.created_at FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
+                m.created_at, COALESCE(j.error, ''),
+                (j.status IN ('failed','cancelled','interrupted')
+                  AND NOT EXISTS(SELECT 1 FROM model_calls newer JOIN messages n ON n.id=newer.reply_message_id WHERE newer.conversation_id=m.conversation_id AND n.sequence>m.sequence)
+                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.conversation_id=m.conversation_id AND busy.status IN ('queued','streaming')))
+                FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;
         Ok(query
-            .query_map([conversation_id], read_message)?
+            .query_map([conversation_id], |row| {
+                let mut message = read_message(row)?;
+                message.failure_detail = row.get(8)?;
+                message.can_retry = row.get::<_, Option<bool>>(9)?.unwrap_or(false);
+                Ok(message)
+            })?
             .collect::<Result<_, _>>()?)
     }
 }
@@ -168,5 +181,7 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         content: row.get(5)?,
         status,
         created_at: row.get(7)?,
+        failure_detail: String::new(),
+        can_retry: false,
     })
 }

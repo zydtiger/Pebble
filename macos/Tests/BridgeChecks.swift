@@ -31,7 +31,33 @@ struct BridgeChecks {
         try require(reopened.bubbles.last?.status == .complete, "UI lost the completed reply")
         reopened.closeChat()
         try await exerciseConcurrentRooms(root.appendingPathComponent("concurrent"))
+        try await exerciseDailySettingsAndRetry(root.appendingPathComponent("daily"))
         print("Swift 6 FFI checks passed: durable IDs/history, native records, Unicode deltas, cancellation, listener release, UI restart and close lifecycle.")
+    }
+
+    @MainActor
+    static func exerciseDailySettingsAndRetry(_ root: URL) async throws {
+        let model = ChatModel(dataRoot: root)
+        await model.load()
+        let id = model.selected!.id
+        let settings = try await model.readSettings(id)
+        var persona = settings.persona!
+        persona.displayName = "Edited name"
+        persona.soul = "Edited SOUL"
+        let update = SettingsUpdateRecord(chat: settings.chat, credential: .keep, contextWindowTokens: settings.contextWindowTokens, maxOutputTokens: settings.maxOutputTokens, persona: persona)
+        try await model.saveSettings(id, update: update)
+        try require(model.selected?.displayName == "Edited name", "Settings did not refresh the native persona")
+        model.sendMessage("Retry one user message")
+        model.stopReply()
+        for _ in 0..<200 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.count == 2 && model.bubbles[1].canRetry, "Cancelled latest reply did not expose Retry")
+        let userID = model.bubbles[0].id
+        model.draft = "Preserve this draft"
+        model.retryReply(model.bubbles[1].id)
+        for _ in 0..<300 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.count == 3 && model.bubbles[0].id == userID && model.bubbles[2].status == .complete, "Retry duplicated user or failed routing")
+        try require(model.bubbles[1].status == .cancelled && model.draft == "Preserve this draft", "Retry replaced partial attempt or draft")
+        model.closeChat()
     }
 
     @MainActor

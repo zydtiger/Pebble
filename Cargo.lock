@@ -775,7 +775,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "pebble-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "reqwest",
  "rusqlite",
@@ -785,6 +785,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "toml_edit",
  "url",
  "uuid",
  "zstd",
@@ -792,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "pebble-ffi"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "pebble-core",
  "thiserror",
@@ -1426,6 +1427,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.16+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88f38f3af8bf71841c67a990f4e2b52143b2d0a1a994c72513ff4c14977fc722"
+dependencies = [
+ "indexmap",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
 ]
 
 [[package]]

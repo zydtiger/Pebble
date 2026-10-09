@@ -18,6 +18,18 @@ actor CoreClient {
         return try backend.createPersona(name: name)
     }
 
+    func settings(persona: String?) throws -> SettingsRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.settings(personaId: persona)
+    }
+    func saveSettings(persona: String?, update: SettingsUpdateRecord) throws -> WorkspaceRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.saveSettings(personaId: persona, update: update)
+    }
+    func retry(persona: String, reply: String, observer: ChatObserver) throws -> ChatHandle {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.retryMessage(personaId: persona, replyId: reply, observer: observer)
+    }
     func freshContext(persona: String) throws -> PersonaRecord {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.freshContext(personaId: persona)
@@ -56,6 +68,8 @@ struct ChatBubble: Identifiable {
     let isUser: Bool
     var text: String
     var status: MessageStatus
+    var failureDetail: String
+    var canRetry: Bool
 
     init(_ message: MessageRecord) {
         id = message.id
@@ -63,6 +77,8 @@ struct ChatBubble: Identifiable {
         isUser = message.senderKind == "user"
         text = message.content
         status = message.status
+        failureDetail = message.failureDetail
+        canRetry = message.canRetry
     }
 
     var statusLabel: String? {
@@ -87,6 +103,7 @@ final class ChatModel {
     var showCharacter = false
     var showNewCharacter = false
     var showFreshContext = false
+    var settingsTarget: SettingsTarget?
     var replyRevision = 0
     private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
@@ -164,11 +181,23 @@ final class ChatModel {
         } catch { state.error = describe(error); return false }
     }
 
+    func readSettings(_ persona: String?) async throws -> SettingsRecord { try await client.settings(persona: persona) }
+    func saveSettings(_ persona: String?, update: SettingsUpdateRecord) async throws {
+        workspace = try await client.saveSettings(persona: persona, update: update)
+    }
+    func retryReply(_ reply: String) {
+        guard let persona = selected, !loading else { return }
+        beginReply(persona, prompt: "", retry: reply)
+    }
     func sendMessage(_ suggested: String? = nil) {
         guard let persona = selected, !loading else { return }
         let state = room(persona.id)
         let prompt = (suggested ?? state.draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
+        beginReply(persona, prompt: prompt, retry: nil)
+    }
+    private func beginReply(_ persona: PersonaRecord, prompt: String, retry: String?) {
+        let state = room(persona.id)
         state.error = nil
         let run = RoomRun()
         let (stream, sink) = AsyncStream<ChatUpdate>.makeStream(bufferingPolicy: .bufferingOldest(256))
@@ -176,11 +205,13 @@ final class ChatModel {
         let observer = StreamObserver(sink)
         run.task = Task { [weak self, client] in
             do {
-                let handle = try await client.send(persona: persona.id, prompt: prompt, observer: observer)
+                let handle: ChatHandle
+                if let retry { handle = try await client.retry(persona: persona.id, reply: retry, observer: observer) }
+                else { handle = try await client.send(persona: persona.id, prompt: prompt, observer: observer) }
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handle.cancel(); sink.finish(); return }
                 run.handle = handle
                 // A room switch must not clear another room's draft.
-                if state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
+                if retry == nil, state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
                 state.apply(handle.messages(), conversation: persona.conversationId)
                 if run.cancelRequested { handle.cancel() }
                 for await update in stream {
@@ -219,12 +250,14 @@ final class ChatModel {
         guard let selected else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: selected.directory, isDirectory: true))
     }
-    private func describe(_ error: Error) -> String {
+    func describe(_ error: Error) -> String {
         guard let error = error as? BackendError else { return error.localizedDescription }
         switch error {
         case let .Configuration(path, detail): return "Check \(URL(fileURLWithPath: path).lastPathComponent)\n\(detail)\n\n\(path)"
         case let .Storage(detail): return detail
         case let .ContextLimit(detail): return detail
+        case let .Settings(detail): return detail
+        case let .RetryUnavailable(detail): return detail
         case .Busy: return "Finish or stop the current reply first."
         case .UnknownPersona: return "This character is no longer available. Reload the character files."
         case .EmptyMessage: return "Write something before sending."

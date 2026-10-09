@@ -33,6 +33,8 @@ pub struct Message {
     pub content: String,
     pub status: MessageStatus,
     pub created_at: String,
+    pub failure_detail: String,
+    pub can_retry: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -64,4 +66,5 @@ pub(crate) struct Turn {
     pub conversation_id: String,
     pub user: Message,
     pub reply: Message,
+    pub retry_of: Option<String>,
 }

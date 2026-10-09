@@ -1,6 +1,6 @@
 mod live_support;
 use live_support::*;
-use pebble_core::ChatEventKind;
+use pebble_core::{ChatEventKind, CredentialChange, SettingsUpdate};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -22,9 +22,18 @@ fn exercise(api: &str) {
     let key = std::env::var("PEBBLE_LIVE_API_KEY").unwrap_or_default();
     let (root, core, id) = isolated();
     configure(root.path(), &url, &model, api, &key);
-    let config_path = root.path().join("config.toml");
-    let connection = std::fs::read_to_string(&config_path).unwrap();
-    std::fs::write(&config_path, format!("{connection}\n[defaults.context]\ncontext_window_tokens=65536\nmax_output_tokens=1024\n")).unwrap();
+    let settings = core.settings(None).unwrap();
+    core.save_settings(
+        None,
+        &SettingsUpdate {
+            chat: settings.chat,
+            credential: CredentialChange::Keep,
+            context_window_tokens: Some(65536),
+            max_output_tokens: Some(1024),
+            persona: None,
+        },
+    )
+    .unwrap();
     let (task, rx) = start(&core, &id, "Reply with exactly: PEBBLE_OK");
     let events = terminal(&rx);
     assert_eq!(
@@ -75,9 +84,29 @@ fn exercise(api: &str) {
             .iter()
             .any(|item| item.get("reasoning_content").is_some() || item["type"] == "reasoning")
     );
-    let (cancel, rx) = start(&core, &id, "Write a long synthetic story about a stone.");
+    let (cancel, rx) = start(&core, &id, "Reply with exactly: PEBBLE_RETRY_OK");
     rx.recv_timeout(Duration::from_secs(2)).unwrap();
     cancel.cancel();
     assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Cancelled);
     println!("Live cancellation: cancelled before first visible token; temporary root isolated");
+    let frozen = core.model_request(&cancel.id).unwrap();
+    let reply = cancel.messages.last().unwrap().id.clone();
+    let (retried, rx) = retry(&core, &id, &reply);
+    assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
+    let request = core.model_request(&retried.id).unwrap();
+    assert_eq!(request.session_id, frozen.session_id);
+    for (a, b) in request.items.iter().zip(&frozen.items) {
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.payload, b.payload);
+    }
+    let messages = core.messages(&id).unwrap();
+    assert_eq!(
+        messages.iter().filter(|m| m.sender_kind == "user").count(),
+        3
+    );
+    assert!(messages.last().unwrap().content.contains("PEBBLE_RETRY_OK"));
+    println!(
+        "Live explicit retry: completed, visible_content={:?}, original_user_count=3, frozen_request_unchanged=true",
+        messages.last().unwrap().content
+    );
 }

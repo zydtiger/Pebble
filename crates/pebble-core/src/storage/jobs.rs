@@ -45,6 +45,7 @@ impl Database {
             conversation_id: persona.conversation_id.clone(),
             user: message(&tx, &user)?,
             reply,
+            retry_of: None,
         };
         tx.commit()?;
         Ok(pending)

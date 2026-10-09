@@ -1,0 +1,68 @@
+# Settings and recovery
+
+Native settings are a Rust read/validate/write API over local TOML and Markdown.
+The app defaults form edits the connection and per-field context defaults; the
+character form adds name/subtitle/SOUL/MEMORY and connection/budget overrides.
+An absent character chat table inherits the entire app connection. Blank budget
+fields inherit independently. An absent app connection selects the demo.
+
+## Safe writes and credentials
+
+Settings reads expose has_api_key and api_key_env, never an inline key. Swift
+shows secure replacement input with explicit Keep/Replace/Clear/Environment
+choices. Keep preserves existing fields exactly; an empty replacement is
+rejected rather than clearing a key accidentally. Clear removes the environment
+reference and writes an empty inline key; Environment removes the inline key.
+Rust validation still rejects simultaneous nonempty inline/environment keys,
+invalid URLs/protocols, and invalid budgets. Credentials remain absent from
+history, call records, and error text; replacement debug output is redacted.
+
+Queue acceptance and writes serialize. App-default writes require all personas
+idle; a character write requires only that persona idle. Before any authoritative
+mutation, candidate overlays validate the whole workspace and dependent inherited
+budgets. toml_edit preserves unrelated fields/comments and changed string-value
+decoration where practical. Turning off a chat override removes its entire table,
+including unknown fields inside it, because an incomplete chat table is invalid.
+
+Every candidate file is written and synced to a temporary sibling first. Once
+all staging succeeds, atomic replacements publish SOUL, MEMORY, then TOML.
+Existing file permissions are retained. A staging/validation failure changes no
+authoritative file. The three-file character save is not a cross-file transaction:
+if a later replacement fails, the error lists already saved files and asks the
+user to inspect/reopen. Unpublished temporary files are cleaned up. There is no
+hidden rollback that could overwrite a concurrent manual edit.
+
+Saving SOUL/MEMORY or budgets does not rewrite an existing session prefix.
+Explicit fresh context snapshots current files. Model/root/protocol changes use
+the existing connection-boundary behavior. Broken manually edited configuration
+may require advanced file access; the settings UI does not implement a repair
+parser. Drafts are not persisted across app restart in this release.
+
+## Explicit retry
+
+Eligibility is derived from the latest call/reply in a persona's private room,
+including its retry chain. It must be failed/cancelled/interrupted and there must
+be no queued/active work for that persona. Earlier unsuccessful replies cease to
+be eligible when a later call exists. Other personas can continue independently.
+
+Retry appends one new reply and queued model_call with retry_of, reusing the
+original user message and receipt event. Old partial/error/status/cutoffs remain
+unchanged. There is no second user bubble or received event. Acceptance and
+activation retain the same durable queue and cancellation rules as normal sends.
+
+When the current compatible active session matches the nearest frozen ancestor,
+activation reuses its exact input/event cutoff. Keys and budgets resolve from the
+new attempt's current runtime configuration. An intervening retry cancelled before
+activation does not prevent reuse of an earlier frozen ancestor. New native output
+is published once only after a successful completion.
+
+For a never-activated input, retry makes the receipt consumable once after queued
+predecessor output has been accepted. For a changed connection or explicit fresh
+context, retry explicitly admits the selected original receipt even if it precedes
+the new boundary; it does not import unrelated earlier events. Its native
+representation prevents the next ordinary turn from importing it again.
+
+Startup marks retained queued/active calls interrupted. The transcript exposes
+saved failure details and current retry eligibility after reopen. Nothing is
+resent automatically. Repair settings or choose a fresh context deliberately,
+then retry. The native UI keeps earlier attempts and unsent room drafts intact.

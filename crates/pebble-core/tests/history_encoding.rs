@@ -112,7 +112,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
         )
         .unwrap();
     }
-    db.execute_batch("ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=4;").unwrap();
+    db.execute_batch("ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=4;").unwrap();
     let core = reopen(root.path());
     assert_eq!(core.messages(&id).unwrap(), messages);
     let after = core.model_request(&before.call_id).unwrap();
@@ -124,7 +124,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(
         db.query_row(

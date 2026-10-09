@@ -6,12 +6,14 @@ mod demo;
 mod history;
 mod live;
 mod personas;
+mod settings;
 mod storage;
 
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
 pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
+pub use settings::{ChatSettings, CredentialChange, PersonaUpdate, Settings, SettingsUpdate};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,6 +44,10 @@ pub enum Error {
     ContextLimit(String),
     #[error("{0}")]
     History(String),
+    #[error("{0}")]
+    SettingsSave(String),
+    #[error("{0}")]
+    RetryUnavailable(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -86,6 +92,37 @@ impl Core {
             .into_iter()
             .find(|p| p.id == id)
             .ok_or(Error::UnknownPersona)
+    }
+
+    pub fn settings(&self, persona_id: Option<&str>) -> Result<Settings, Error> {
+        settings::read(&self.data_root, persona_id)
+    }
+
+    pub fn save_settings(
+        &self,
+        persona_id: Option<&str>,
+        update: &SettingsUpdate,
+    ) -> Result<Workspace, Error> {
+        self.chats.settings(&self.database, persona_id, || {
+            settings::save(&self.data_root, persona_id, update)
+        })?;
+        self.workspace()
+    }
+
+    pub fn retry_message(
+        &self,
+        persona_id: &str,
+        reply_id: &str,
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatTask, Error> {
+        let persona = self
+            .workspace()?
+            .personas
+            .into_iter()
+            .find(|p| p.id == persona_id)
+            .ok_or(Error::UnknownPersona)?;
+        self.chats
+            .retry(self.database.clone(), persona, reply_id, listener)
     }
 
     pub fn fresh_context(&self, persona_id: &str) -> Result<Persona, Error> {

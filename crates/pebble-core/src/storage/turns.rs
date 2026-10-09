@@ -29,6 +29,25 @@ impl Database {
                         [&session_id], |row| row.get::<_, bool>(0))? {
             return Err(Error::Busy);
         }
+        if let Some(original) = &pending.retry_of {
+            let frozen: Option<(String, i64, i64)> = tx.query_row(
+                "WITH RECURSIVE attempts(id,retry_of,session_id,input_last_sequence,event_cutoff,depth) AS (
+                    SELECT id,retry_of,session_id,input_last_sequence,event_cutoff,0 FROM model_calls WHERE id=?1
+                    UNION ALL SELECT c.id,c.retry_of,c.session_id,c.input_last_sequence,c.event_cutoff,a.depth+1
+                    FROM model_calls c JOIN attempts a ON c.id=a.retry_of)
+                 SELECT session_id,input_last_sequence,event_cutoff FROM attempts WHERE session_id IS NOT NULL AND input_last_sequence IS NOT NULL ORDER BY depth LIMIT 1",
+                [original], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+            if let Some((source, last, cutoff)) = frozen
+                && source == session_id
+            {
+                tx.execute("UPDATE model_calls SET session_id=?2,input_last_sequence=?3,event_cutoff=?4,status='streaming' WHERE id=?1 AND status='queued'",params![pending.call_id,session_id,last,cutoff])?;
+                let mut turn = pending.clone();
+                turn.session_id = session_id;
+                turn.reply = message(&tx, &pending.reply.id)?;
+                tx.commit()?;
+                return Ok(turn);
+            }
+        }
         let user_id = pending.user.id.clone();
         let reply_id = pending.reply.id.clone();
 
@@ -44,8 +63,8 @@ impl Database {
             let mut query = tx.prepare(
                 "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content
                  FROM persona_events e JOIN messages m ON m.id = e.message_id
-                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND e.sequence > ?4 AND e.kind = 'received' AND e.sequence <= ?5
-                 AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed'))
+                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND e.sequence <= ?5
+                 AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming'))))
                  AND NOT EXISTS (
                      SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                      WHERE x.event_id = e.id AND i.session_id = ?3)
@@ -57,7 +76,9 @@ impl Database {
                     cutoff,
                     session_id,
                     event_start,
-                    pending.receipt_cutoff
+                    pending.receipt_cutoff,
+                    pending.retry_of.is_some(),
+                    user_id
                 ],
                 |row| {
                     Ok((
@@ -111,6 +132,7 @@ impl Database {
             conversation_id: persona.conversation_id.clone(),
             user: message(&tx, &user_id)?,
             reply: message(&tx, &reply_id)?,
+            retry_of: pending.retry_of.clone(),
         };
         tx.commit()?;
         Ok(turn)
@@ -183,8 +205,13 @@ pub(super) fn new_id() -> String {
 }
 
 pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
-    Ok(db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1",
-                    [id], read_message)?)
+    let mut message=db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1", [id],read_message)?;
+    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM model_calls newer JOIN messages n ON n.id=newer.reply_message_id WHERE newer.conversation_id=c.conversation_id AND n.sequence>(SELECT sequence FROM messages WHERE id=?1)) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.conversation_id=c.conversation_id AND busy.status IN ('queued','streaming'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    if let Some((detail, retry)) = metadata {
+        message.failure_detail = detail;
+        message.can_retry = retry;
+    }
+    Ok(message)
 }
 
 pub(super) fn insert_message(
@@ -257,7 +284,7 @@ fn link(db: &Connection, item: &str, event: &str) -> Result<(), Error> {
 fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
     db.execute(
         "UPDATE model_sessions SET covered_event_sequence = COALESCE(
-            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed')) AND NOT EXISTS (
+            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (
                 SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                 WHERE x.event_id = e.id AND i.session_id = ?1)),
             (SELECT COALESCE(MAX(sequence), 0) FROM persona_events WHERE persona_id = ?2)) WHERE id = ?1",

@@ -14,24 +14,22 @@ small enough to inspect and reconsider independently.
 | v0.0.7 | Daily-use settings, retry/cancel, interruption recovery, and usability |
 | v0.1.0 | Consolidated private-chat release |
 
-## v0.0.6 review
+## v0.0.7 review
 
-v0.0.6 adds lossless per-item raw/zstd storage, an independent decoded context
-memory bound, and inherited TOML context/output budgets. Requests retain exact
-decoded native bytes and stable prefixes across restart. The documented input
-estimate is conservative byte accounting, not exact provider token usage.
-Oversized context fails before HTTP and preserves the visible accepted input.
+v0.0.7 provides native app-default and character settings, safe explicit
+credential updates, and latest-reply retry/recovery. TOML and Markdown remain
+authoritative; Rust validates candidates and inherited budgets before per-file
+atomic replacement. SOUL/MEMORY changes preserve existing frozen prefixes.
 
-An explicit fresh-context command preserves transcript and native history while
-starting after a durable event boundary with current SOUL/MEMORY. It refuses
-that persona's outstanding queued/active work without blocking other rooms.
-Schema 1–4 migration to 5 preserves IDs and old raw bytes in the same eight tables.
-Tests cover codecs, bounded corrupt-data handling, budget reserves, native replay,
-manual boundaries, cancellation, and both protocols.
+Failed, cancelled, and interrupted attempts retain partial text and durable
+errors. Explicit retry reuses the user/receipt and frozen input when compatible;
+new contexts select only the requested input. Queued interruption and retry
+chains are covered without duplicate users, native outputs, or altered old calls.
+Schema 1–5 upgrades to 6 in the same eight tables. Both real protocol probes use
+synthetic isolated roots and exercise settings save, restart/replay, cancel/retry.
 
-The next increment is v0.0.7: app/persona settings, safe credentials, retries,
-interruption recovery, and daily usability. No automatic retry or history
-summarization occurs.
+The next increment is v0.1.0 consolidation of the completed private-chat stages.
+No automatic retry, transcript clearing, or history summarization occurs.
 
 The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
 minimum-OS testing remain future work.

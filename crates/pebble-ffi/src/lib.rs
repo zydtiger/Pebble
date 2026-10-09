@@ -1,3 +1,5 @@
+mod settings_api;
+pub use settings_api::*;
 use std::sync::Arc;
 
 uniffi::setup_scaffolding!();
@@ -18,6 +20,10 @@ pub enum BackendError {
     Generation { detail: String },
     #[error("{detail}")]
     ContextLimit { detail: String },
+    #[error("{detail}")]
+    Settings { detail: String },
+    #[error("{detail}")]
+    RetryUnavailable { detail: String },
 }
 
 impl From<pebble_core::Error> for BackendError {
@@ -27,6 +33,8 @@ impl From<pebble_core::Error> for BackendError {
                 Self::Configuration { path, detail }
             }
             pebble_core::Error::Busy => Self::Busy,
+            pebble_core::Error::SettingsSave(detail) => Self::Settings { detail },
+            pebble_core::Error::RetryUnavailable(detail) => Self::RetryUnavailable { detail },
             pebble_core::Error::ContextLimit(detail) => Self::ContextLimit { detail },
             pebble_core::Error::UnknownPersona => Self::UnknownPersona,
             pebble_core::Error::EmptyMessage => Self::EmptyMessage,
@@ -118,6 +126,8 @@ pub struct MessageRecord {
     pub content: String,
     pub status: MessageStatus,
     pub created_at: String,
+    pub failure_detail: String,
+    pub can_retry: bool,
 }
 
 impl From<pebble_core::Message> for MessageRecord {
@@ -139,6 +149,8 @@ impl From<pebble_core::Message> for MessageRecord {
             content: message.content,
             status,
             created_at: message.created_at,
+            failure_detail: message.failure_detail,
+            can_retry: message.can_retry,
         }
     }
 }
@@ -245,6 +257,31 @@ impl PebbleBackend {
 
     pub fn create_persona(&self, name: String) -> Result<PersonaRecord, BackendError> {
         Ok(self.core.create_persona(&name)?.into())
+    }
+
+    pub fn settings(&self, persona_id: Option<String>) -> Result<SettingsRecord, BackendError> {
+        Ok(self.core.settings(persona_id.as_deref())?.into())
+    }
+    pub fn save_settings(
+        &self,
+        persona_id: Option<String>,
+        update: SettingsUpdateRecord,
+    ) -> Result<WorkspaceRecord, BackendError> {
+        Ok(self
+            .core
+            .save_settings(persona_id.as_deref(), &update.into())?
+            .into())
+    }
+    pub fn retry_message(
+        &self,
+        persona_id: String,
+        reply_id: String,
+        observer: Arc<dyn ChatObserver>,
+    ) -> Result<Arc<ChatHandle>, BackendError> {
+        let task =
+            self.core
+                .retry_message(&persona_id, &reply_id, Arc::new(ObserverAdapter(observer)))?;
+        Ok(Arc::new(ChatHandle { task }))
     }
 
     pub fn fresh_context(&self, persona_id: String) -> Result<PersonaRecord, BackendError> {

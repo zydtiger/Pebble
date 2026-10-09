@@ -75,8 +75,8 @@ and active calls interrupted, with no accepted partial output or hidden resubmit
 
 Rust character creation atomically publishes a UUID directory containing
 config.toml, SOUL.md, and MEMORY.md. It inherits the app's default connection,
-creates a stable private room, and exposes a minimal name form in Swift. General
-editing/settings and deletion are outside this milestone.
+creates a stable private room, and exposes a minimal name form in Swift. Native settings edits authoritative TOML/Markdown through Rust; deletion remains
+outside this milestone.
 
 The demo protocol is distinct from Chat Completions and Responses. Configured
 connections always run their real HTTP adapter.
@@ -126,6 +126,27 @@ byte-based input estimate plus configured output reserve is checked before the
 adapter starts. Budget edits alone leave the session and prefix unchanged.
 See [context and encoding](context.md). There is no background service, automatic
 memory writer, or delegated work.
+
+## Settings and recovery
+
+Rust settings APIs expose connection identity, credential presence/environment
+reference, budget overrides, and editable character files; they never return an
+inline key. Credential writes use explicit Keep/Replace/Clear/Environment actions.
+Before writing, candidate overlays validate the entire affected workspace,
+including inherited budgets. Files stage beside their targets and publish by
+atomic replacement, Markdown before TOML; partial publication is reported.
+Queue acceptance is serialized against settings writes, with persona-local idle
+checks and an all-idle rule for app defaults. Swift owns the labeled form,
+secure input, and sheet-local errors, not configuration decisions.
+
+Only the latest terminal unsuccessful reply is retryable while that persona is
+idle. Retry creates a reply/call with retry_of and reuses the original receipt,
+never changing old bubbles or frozen requests. A current compatible session can
+reuse the nearest frozen ancestor's cutoff, including across unactivated
+cancelled retry attempts. Otherwise activation explicitly selects the original
+user event into the new context and excludes other earlier events. Durable
+failure detail and eligibility are derived for snapshots after restart. See
+[settings and recovery](settings.md). There is no automatic retry.
 
 ## Build decisions
 

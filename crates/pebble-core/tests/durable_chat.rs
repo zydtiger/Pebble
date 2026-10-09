@@ -179,9 +179,13 @@ fn cancellation_preserves_partial_bubble_but_not_an_accepted_output() {
     drop(task);
     drop(next);
     drop(core);
+    let mut expected = saved[1].clone();
+    // Retry eligibility changes when a later call exists; the saved attempt stays intact.
+    assert!(expected.can_retry);
+    expected.can_retry = false;
     assert_eq!(
         reopen(root.path()).messages(&persona.id).unwrap()[1],
-        saved[1]
+        expected
     );
 }
 
@@ -287,7 +291,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        5
+        6
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }

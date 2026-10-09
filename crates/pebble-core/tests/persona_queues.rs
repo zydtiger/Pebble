@@ -165,7 +165,7 @@ fn creation_and_migration_preserve_files_ids_and_native_history() {
     drop(task);
     drop(core);
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=3;").unwrap();
+    db.execute_batch("ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=3;").unwrap();
     let core = reopen(root.path());
     let reopened = core
         .workspace()

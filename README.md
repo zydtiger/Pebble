@@ -6,10 +6,11 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.6 adds context budgets and fresh contexts.** Independent characters use
-Chat Completions or Responses with native replay, per-character queues, and
-lossless history compression. Configure a context window and output reserve,
-or deliberately start a fresh model context while keeping saved messages.
+**v0.0.7 adds native settings and explicit recovery.** Edit app defaults and
+character files in the app, repair a connection, and retry the latest failed,
+stopped, or interrupted reply without duplicating the original user message.
+Independent characters retain native Chat Completions/Responses history,
+per-character queues, bounded context budgets, and lossless item compression.
 Without a connection, the app uses its clearly labeled deterministic local demo.
 
 ## Run it
@@ -83,7 +84,7 @@ files. Existing files are never overwritten by the seed operation.
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 4 are upgraded transactionally to 5, preserving character, room, message,
+through 5 are upgraded transactionally to 6, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -129,6 +130,39 @@ Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events
 are not silently imported into the new model session. Editing character files
 does not change an existing session's frozen SOUL/MEMORY prefix.
+
+## Settings and explicit retry
+
+Open **App defaults** with the sidebar gear, or **Character settings** with the
+sliders button in the chat header. Edit model/API root/protocol and context
+budgets. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn off
+**Override app connection** to inherit the app connection; blank character budget
+fields inherit independently. Character edits require only that character to be
+idle; app-default edits require all queued/active replies to finish or stop.
+
+Keys are never displayed. **Keep existing** retains credentials during unrelated
+saves; **Replace inline key**, **Clear authentication**, and **Environment
+variable** are explicit alternatives. Replacement uses a secure text field.
+Settings stay in local TOML/Markdown files; advanced folder access remains
+available. SOUL/MEMORY edits leave an existing frozen prefix intact until you
+start a fresh context. Invalid manual TOML can require opening the files to repair.
+
+A failed reply retains its error and any partial text after restart. **Retry**
+appears only on that character's latest failed, stopped, or interrupted reply,
+when it has no outstanding work. Retry creates a new reply/call and reuses the
+original user message; earlier attempts stay visible. In the same compatible
+context it reuses the frozen request. After connection changes or explicit
+fresh context, it admits only the selected original input into the new context,
+without importing other old messages. Runtime key and budget repairs can be
+used without rewriting the old call. Nothing is resent automatically.
+
+Each settings file is staged and replaced atomically. A character save spans
+SOUL.md, MEMORY.md, and config.toml (last); this is not a cross-file transaction.
+All candidate settings and dependent inherited budgets are validated first.
+Unrelated TOML fields/comments are preserved where practical; disabling a chat
+override removes that entire table. If publication partly fails, the sheet
+reports which files were saved and asks you to inspect/reopen before retrying.
+See [settings and recovery](docs/settings.md) for the durable rules.
 
 ## Context budgets and fresh contexts
 
@@ -211,7 +245,7 @@ capturing the desktop or other applications.
 
 Live endpoint validation is opt-in; ordinary tests only use local deterministic
 servers. The following test seeds synthetic character files in an isolated
-temporary root, completes two turns across restart, and checks early cancellation:
+temporary root, saves settings, completes two turns across restart, and checks early cancellation plus explicit retry:
 
 ```sh
 PEBBLE_LIVE_API_ROOT=http://localhost:8080/v1 \

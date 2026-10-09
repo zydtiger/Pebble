@@ -192,3 +192,15 @@ pub(super) fn reopen(root: &Path) -> Core {
     }
     panic!("worker still owns root")
 }
+
+pub(super) fn retry(
+    core: &Core,
+    persona: &str,
+    reply: &str,
+) -> (pebble_core::ChatTask, mpsc::Receiver<ChatEvent>) {
+    let (tx, rx) = mpsc::channel();
+    let task = core
+        .retry_message(persona, reply, Arc::new(Listener(tx)))
+        .unwrap();
+    (task, rx)
+}

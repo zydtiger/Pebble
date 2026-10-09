@@ -1,7 +1,7 @@
 # Pebble
 
 Pebble is a macOS character-chat app. Read `README.md` and `docs/architecture.md`
-before changing the application. The current milestone is v0.0.6, leading to the
+before changing the application. The current milestone is v0.0.7, leading to the
 private-chat release v0.1.0.
 
 ## Ownership and scope
@@ -12,11 +12,12 @@ private-chat release v0.1.0.
 - `macos/Pebble` owns SwiftUI/AppKit presentation and platform glue only.
 - `macos/Generated`, `target`, and `build` are generated; edit their sources.
 - `docs/architecture.md` owns runtime boundaries; `docs/roadmap.md` owns scope.
-- v0.0.6 supports independent persona queues, Chat Completions/Responses native
-  replay, per-item raw/zstd history, bounded context loading, configured budgets,
-  and explicit fresh-context boundaries. Swift owns presentation; Rust owns
-  context, storage, execution order, and budget decisions. Do not add groups,
-  compaction, settings editors, retry, or task delegation in this milestone.
+- v0.0.7 supports independent persona queues, Chat Completions/Responses native
+  replay, bounded raw/zstd history, context budgets, fresh contexts, native
+  app/persona settings, and explicit latest-reply retry/recovery. Swift owns
+  presentation; Rust owns validation, files, context, history, and execution.
+  Do not add groups, compaction, automatic memory, task delegation, deletion,
+  import/export, attachments, or cloud sync in this private-chat milestone.
 
 ## Development and validation
 

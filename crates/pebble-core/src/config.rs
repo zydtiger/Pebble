@@ -76,12 +76,18 @@ struct Identity {
     subtitle: String,
 }
 
-fn read(path: &Path) -> Result<String, Error> {
+fn read(path: &Path, overrides: &[(std::path::PathBuf, String)]) -> Result<String, Error> {
+    if let Some((_, text)) = overrides.iter().find(|(p, _)| p == path) {
+        return Ok(text.clone());
+    }
     fs::read_to_string(path).map_err(|error| file_error(path, error))
 }
 
-fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
-    toml::from_str(&read(path)?).map_err(|error| Error::Configuration {
+fn parse<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    overrides: &[(std::path::PathBuf, String)],
+) -> Result<T, Error> {
+    toml::from_str(&read(path, overrides)?).map_err(|error| Error::Configuration {
         path: path.display().to_string(),
         detail: format!(
             "Invalid TOML configuration at {}",
@@ -183,8 +189,15 @@ pub(crate) fn initialize(root: &Path) -> Result<(), Error> {
 }
 
 pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
+    load_candidate(root, &[])
+}
+
+pub(crate) fn load_candidate(
+    root: &Path,
+    overrides: &[(std::path::PathBuf, String)],
+) -> Result<Workspace, Error> {
     let app_path = root.join("config.toml");
-    let app: AppConfig = parse(&app_path)?;
+    let app: AppConfig = parse(&app_path, overrides)?;
     if let Some(connection) = &app.defaults.chat {
         validate_connection(connection, &app_path)?;
     }
@@ -216,7 +229,7 @@ pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
             });
         }
         let config_path = path.join("config.toml");
-        let config: PersonaConfig = parse(&config_path)?;
+        let config: PersonaConfig = parse(&config_path, overrides)?;
         if config.persona.display_name.trim().is_empty() {
             return Err(Error::Configuration {
                 path: config_path.display().to_string(),
@@ -232,8 +245,8 @@ pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
             display_name: config.persona.display_name,
             subtitle: config.persona.subtitle,
             directory: path.display().to_string(),
-            soul: read(&path.join("SOUL.md"))?,
-            memory: read(&path.join("MEMORY.md"))?,
+            soul: read(&path.join("SOUL.md"), overrides)?,
+            memory: read(&path.join("MEMORY.md"), overrides)?,
             connection_label: String::new(),
             context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
