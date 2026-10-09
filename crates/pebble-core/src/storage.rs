@@ -1,7 +1,7 @@
 mod turns;
 
 use crate::{Error, Message, MessageStatus, ModelItem, ModelRequest, Persona, file_error};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Mutex;
@@ -34,7 +34,7 @@ impl Database {
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let tx = connection.transaction()?;
         let version: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -53,6 +53,11 @@ impl Database {
         if version < 2 {
             tx.execute_batch(include_str!("storage/schema.sql"))?;
             tx.execute_batch("PRAGMA user_version = 2;")?;
+        }
+        if version < 3 {
+            tx.execute_batch("ALTER TABLE model_sessions ADD COLUMN base_url TEXT NOT NULL DEFAULT '';
+                ALTER TABLE model_sessions ADD COLUMN event_start_sequence INTEGER NOT NULL DEFAULT 0;
+                PRAGMA user_version = 3;")?;
         }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
@@ -81,6 +86,21 @@ impl Database {
                  ON CONFLICT(persona_id) DO NOTHING",
                 params![Uuid::new_v4().to_string(), persona.id],
             )?;
+            let (protocol, model, base_url) = super::connection::identity(persona.chat.as_ref());
+            persona.connection_label = match persona.chat.as_ref() {
+                None => "Local demo · No model connected".into(),
+                Some(chat) if chat.api == "chat_completions" => format!("Live · {}", chat.model),
+                Some(chat) => format!("{} · Not implemented", chat.api),
+            };
+            let prior: Option<(String, String, String, i64)> = tx.query_row(
+                "SELECT protocol, model, base_url, event_start_sequence FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
+                [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+                .optional()?;
+            persona.context_notice = match prior {
+                Some((p, m, b, start)) if p != protocol || m != model || b != base_url || start > 0 =>
+                    "Connection changed: earlier messages stay visible; this model uses a fresh context.".into(),
+                _ => String::new(),
+            };
             persona.conversation_id = tx.query_row(
                 "SELECT id FROM conversations WHERE persona_id = ?1",
                 [&persona.id],

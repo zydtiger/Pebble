@@ -21,6 +21,8 @@ pub struct Persona {
     pub soul: String,
     pub memory: String,
     pub chat: Option<ChatConnection>,
+    pub connection_label: String,
+    pub context_notice: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -76,7 +78,13 @@ fn read(path: &Path) -> Result<String, Error> {
 fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
     toml::from_str(&read(path)?).map_err(|error| Error::Configuration {
         path: path.display().to_string(),
-        detail: error.to_string(),
+        detail: format!(
+            "Invalid TOML configuration at {}",
+            error
+                .span()
+                .map(|span| format!("byte {}", span.start))
+                .unwrap_or_else(|| "unknown location".into())
+        ),
     })
 }
 
@@ -93,6 +101,15 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err(invalid(
             "chat.base_url must use http:// or https:// with a host",
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid(
+            "chat.base_url must not include credentials, a query, or a fragment",
         ));
     }
     if !matches!(connection.api.as_str(), "chat_completions" | "responses") {
@@ -208,6 +225,8 @@ pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
             directory: path.display().to_string(),
             soul: read(&path.join("SOUL.md"))?,
             memory: read(&path.join("MEMORY.md"))?,
+            connection_label: String::new(),
+            context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
         });
     }

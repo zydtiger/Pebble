@@ -46,6 +46,8 @@ pub struct PersonaRecord {
     pub memory: String,
     pub model: Option<String>,
     pub api: Option<String>,
+    pub connection_label: String,
+    pub context_notice: String,
 }
 
 #[derive(uniffi::Record)]
@@ -69,6 +71,8 @@ impl From<pebble_core::Workspace> for WorkspaceRecord {
                     directory: persona.directory,
                     soul: persona.soul,
                     memory: persona.memory,
+                    connection_label: persona.connection_label,
+                    context_notice: persona.context_notice,
                     model: persona.chat.as_ref().map(|chat| chat.model.clone()),
                     api: persona.chat.map(|chat| chat.api),
                 })

@@ -79,6 +79,15 @@ struct RenderChecks {
                 window.setContentSize(NSSize(width: 820, height: 610))
                 try await Task.sleep(for: .milliseconds(300))
                 try capture(window, name: "compact")
+                try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
+                    .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+                await model.load()
+                guard model.selected?.connectionLabel == "Live · synthetic-live-model",
+                      model.selected?.contextNotice.isEmpty == false else {
+                    throw RenderError.failed("Live mode or fresh-context notice was not exposed")
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "live-context")
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closeChat()
                 app.terminate(nil)

@@ -14,24 +14,24 @@ small enough to inspect and reconsider independently.
 | v0.0.7 | Daily-use settings, retry/cancel, interruption recovery, and usability |
 | v0.1.0 | Consolidated private-chat release |
 
-## v0.0.2 review
+## v0.0.3 review
 
-v0.0.1 established the native shell and static bridge; v0.0.2 now runs the
-private-chat pipeline with an explicitly labeled local demo. Send a message,
-restart, and continue with the same visible message IDs and model session.
-The demo references the preceding user message from stored request items.
+v0.0.3 streams one real OpenAI-compatible Chat Completions connection. Native
+assistant output is saved once and replayed after restart with a frozen earlier
+prefix. Only final content is visible; separate provider reasoning stays in
+model history. Cancellation interrupts HTTP and slow streams. Failed, partial,
+and interrupted replies remain explicit and never become accepted output.
 
-Inspect the compact/growing composer, Enter to send, Command–Enter or
-Shift–Enter for new lines, saved transcript, character panel, and cancellation.
-The app still makes no model calls. Existing v0.0.1 identities migrate without
-reseeding files. Cancelled/interrupted replies remain visible but are not
-accepted as complete model outputs.
+Without configuration, the deterministic local demo remains available. A
+configured connection calls the model or fails; Responses reports that it is
+not implemented. Changing the connection starts a fresh context, preserving old
+transcript and sessions with a visible notice. Schema 1/2 data upgrades to 3
+without reseeding character files.
 
-The next increment is v0.0.3: one real Chat Completions connection, streaming,
-and provider-native request replay. Demo sessions use their own protocol and
-must not be passed to a live provider unchanged. Per-persona concurrency,
-Responses, compression/context limits, settings, and richer recovery retain
-their later milestones. No automatic retry occurs in v0.0.2.
+The next increment is v0.0.4: multiple independent personas, queues, and reliable
+room routing. Responses remains v0.0.5; compression/context budgets and general
+context reset remain v0.0.6; settings, retry, and richer recovery remain v0.0.7.
+No automatic retry occurs in v0.0.3.
 
 The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
 minimum-OS testing remain future work.

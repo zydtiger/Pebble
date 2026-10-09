@@ -6,9 +6,10 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.2 adds durable private chats.** It loads one starter character and streams
-a clearly labeled local demo reply through the real Rust message/history pipeline.
-Messages survive restarting the app. No model or network service is called.
+**v0.0.3 adds live Chat Completions.** Configure one character with an
+OpenAI-compatible API root and model to stream real replies. Rust saves native
+assistant history for restart and continuation. Without a configured connection,
+the app uses its clearly labeled deterministic local demo.
 
 ## Run it
 
@@ -38,7 +39,7 @@ Icon Composer, or `just preview-icon` to export appearance and small-size
 previews into `build/icon-preview/`. `just build` compiles the icon into the app.
 See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 
-## Try the durable-chat stage
+## Try the live-chat stage
 
 1. Open Mira's private space and choose **Say hello**, or type a thought and
    press **Enter**. **Command–Enter** or **Shift–Enter** inserts a new line. The composer grows
@@ -48,17 +49,17 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 3. Open the character information panel to read SOUL and MEMORY.
 4. Use **Open character folder**, edit the files, and choose **Reload Character
    Files** from the app menu or sidebar. Character and room IDs remain stable.
-5. Send “I like rainy walks,” then quit and reopen the app. The messages and
-   their IDs survive. Send another thought: the deterministic demo quotes the
-   preceding user message from its saved request history.
+5. Send a thought, then quit and reopen the app. The messages and their IDs
+   survive. The next request reuses the saved prefix and completed native
+   assistant output. The unconfigured demo quotes the preceding user message.
 
 Cancelled replies retain their partial text with a **Stopped** label. An abrupt
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
-The interface is an early light-theme design with a starter character. Groups,
-live inference, automated memory, and work delegation
-belong to later milestones. See [the roadmap](docs/roadmap.md).
+The interface is an early light-theme design with a starter character. Concurrent
+personas, Responses, groups, automated memory, and work delegation belong to
+later milestones. See [the roadmap](docs/roadmap.md).
 
 ## Local data
 
@@ -77,8 +78,9 @@ files. Existing files are never overwritten by the seed operation.
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
-SQLite may also create its own WAL and shared-memory sidecars. Schema version 1
-from v0.0.1 is upgraded transactionally, preserving character and room IDs. Only
+SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
+and 2 are upgraded transactionally to 3, preserving character, room, message,
+and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
 outside the source checkout. `PEBBLE_DATA_DIR` selects an isolated root for
@@ -91,10 +93,34 @@ own `[chat]` table, replacing the whole connection. Connections require `model`,
 is the placeholder for an endpoint without authentication. Authenticated endpoints
 can use a nonempty `api_key` in the local config, or an `api_key_env` reference;
 do not configure both at once. Base URLs are API roots, normally ending in `/v1`
-for Chat Completions. v0.0.2 validates this configuration but still runs the local
-demo; network inference and authentication arrive in v0.0.3. An omitted
+for Chat Completions. Responses is validated as a protocol choice but reports
+“not implemented” when sent in this version. A configured connection calls that
+endpoint or reports an error; it never falls back to the demo. An omitted
 connection means no model is configured. Runtime configuration and actual keys
 stay outside the repository.
+
+For example, edit the local app config (replace the sample root and model):
+
+```toml
+[defaults.chat]
+model = "your-model"
+base_url = "http://localhost:8080/v1"
+api = "chat_completions"
+api_key = ""
+```
+
+Empty credentials omit Authorization. `api_key_env` is resolved when a request
+starts; a missing variable fails the reply. Redirects are disabled and the
+client honors environment proxy settings. Connection/header/idle waits are
+bounded at 10/45/45 seconds, with a 180-second request timeout and a 4096-token
+output budget. Reasoning-only, truncated, filtered, or budget-exhausted outputs
+are failed replies; visible partial text stays saved. Provider reasoning stays
+in native model history and is never rendered as a message.
+
+Changing the API root, model, or protocol starts a fresh model context. Earlier
+messages stay visible, and a notice explains the boundary. Those earlier events
+are not silently imported into the new model session. Editing character files
+does not change an existing session's frozen SOUL/MEMORY prefix.
 
 ## Architecture
 
@@ -106,12 +132,12 @@ UniFFI Swift bindings → one Rust static library
           │
           ▼
 pebble-core
-  configuration · personas · messages · events · model history · demo lifecycle
+  configuration · personas · messages · events · model history · HTTP/SSE lifecycle
 ```
 
 Swift handles rendering, input, message snapshots, and platform paths.
 Rust owns authoritative identities, configuration, messages, events, frozen
-model history, database transactions, and the local demo stream. The core has no dependency on Swift or UniFFI.
+model history, database transactions, and live or demo streams. The core has no dependency on Swift or UniFFI.
 Read [the architecture](docs/architecture.md) for the boundary and lifecycle.
 
 ## Validate
@@ -131,9 +157,24 @@ Tests use isolated data roots; UI-check data stays under the ignored `build/`
 directory for inspection. The Rust tests cover restart
 identity, schema scope, file edits, connection inheritance, invalid files,
 Unicode event order, cancellation, callback lifetime, migration, frozen request
-prefixes, event links, transactional rollback, and abrupt-process-exit recovery. The Swift executable
+prefixes, native assistant replay, fragmented SSE, model failure states, event
+links, transactional rollback, and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
 concurrency checking. The renderer captures this app's own content without
 capturing the desktop or other applications.
+
+Live endpoint validation is opt-in; ordinary tests only use local deterministic
+servers. The following test seeds synthetic character files in an isolated
+temporary root, completes two turns across restart, and checks early cancellation:
+
+```sh
+PEBBLE_LIVE_API_ROOT=http://localhost:8080/v1 \
+PEBBLE_LIVE_MODEL=your-model \
+cargo test -p pebble-core --test live_endpoint opt_in_live_two_turns_restart_and_cancel -- --ignored --nocapture
+```
+
+`PEBBLE_LIVE_API_KEY` optionally supplies a test credential. The test does not
+read the app's actual character files or chat history and prints no reasoning
+content or credentials.
 
 Nothing is committed, published, or released automatically by these commands.

@@ -29,16 +29,28 @@ pub trait ChatListener: Send + Sync {
 }
 
 #[derive(Default)]
-struct Control {
+pub(crate) struct Control {
     cancelled: Mutex<bool>,
     wake: Condvar,
     finished: AtomicBool,
+    signal: tokio::sync::Notify,
 }
 
 impl Control {
     fn cancel(&self) {
         *self.cancelled.lock().expect("cancellation lock") = true;
         self.wake.notify_all();
+        self.signal.notify_one();
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        *self.cancelled.lock().expect("cancellation lock")
+    }
+
+    async fn cancelled(&self) {
+        if !self.is_cancelled() {
+            self.signal.notified().await;
+        }
     }
 
     fn wait(&self) -> bool {
@@ -91,16 +103,6 @@ impl Chats {
             return Err(Error::Busy);
         }
         let turn = db.begin_turn(&persona, prompt)?;
-        let text = match db
-            .request(&turn.call_id)
-            .and_then(|request| demo::reply(&request))
-        {
-            Ok(text) => text,
-            Err(error) => {
-                db.finish_turn(&turn, "", MessageStatus::Failed, Some(&error.to_string()))?;
-                return Err(error);
-            }
-        };
         let control = Arc::new(Control::default());
         let task = ChatTask {
             id: turn.call_id.clone(),
@@ -110,12 +112,18 @@ impl Chats {
         let worker_db = db.clone();
         let worker_turn = turn.clone();
         let spawn = std::thread::Builder::new()
-            .name("pebble-demo".into())
+            .name("pebble-chat".into())
             .spawn(move || {
-                run(worker_db, worker_turn, control, listener, text);
+                run(worker_db, worker_turn, control, listener, persona.chat);
             });
         if let Err(error) = spawn {
-            db.finish_turn(&turn, "", MessageStatus::Failed, Some(&error.to_string()))?;
+            db.finish_turn(
+                &turn,
+                "",
+                MessageStatus::Failed,
+                Some(&error.to_string()),
+                None,
+            )?;
             return Err(Error::Generation(error.to_string()));
         }
         *active = Some(Arc::downgrade(&task.control));
@@ -128,7 +136,7 @@ fn run(
     turn: Turn,
     control: Arc<Control>,
     listener: Arc<dyn ChatListener>,
-    text: String,
+    chat: Option<crate::ChatConnection>,
 ) {
     let emit = |sequence, kind, text, messages| {
         listener.on_event(ChatEvent {
@@ -149,30 +157,64 @@ fn run(
         vec![turn.user.clone(), turn.reply.clone()],
     )
     .is_ok();
+    if !connected {
+        control.cancel();
+    }
     let mut content = String::new();
     let mut sequence = 0;
     let mut status = MessageStatus::Complete;
     let mut failure = None;
-    for chunk in text.chars().collect::<Vec<_>>().chunks(7) {
-        if !connected || control.wait() {
-            status = MessageStatus::Cancelled;
-            break;
+    let mut native = None;
+    let mut checkpoint = |delta: &str| -> Result<(), Error> {
+        if !connected || control.is_cancelled() {
+            control.cancel();
+            return Err(Error::Generation("Cancelled".into()));
         }
-        let delta: String = chunk.iter().collect();
         let next = format!("{content}{delta}");
-        if let Err(error) = db.checkpoint(&turn, &next) {
-            status = MessageStatus::Failed;
-            failure = Some(error.to_string());
-            break;
-        }
+        db.checkpoint(&turn, &next)?;
         content = next;
         sequence += 1;
-        connected = emit(sequence, ChatEventKind::TextDelta, delta, Vec::new()).is_ok();
+        connected = emit(sequence, ChatEventKind::TextDelta, delta.into(), Vec::new()).is_ok();
+        if !connected {
+            control.cancel();
+        }
+        Ok(())
+    };
+    let generated = db.request(&turn.call_id).and_then(|request| {
+        if let Some(chat) = chat {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
+                .map_err(|_| Error::Generation("Could not initialize the model worker.".into()))?;
+            runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
+                    result = crate::live::generate(&chat, &request, control.clone(), &mut checkpoint) => result.map(Some),
+                }
+            })
+        } else {
+            let text = demo::reply(&request)?;
+            for chunk in text.chars().collect::<Vec<_>>().chunks(7) {
+                if control.wait() { return Err(Error::Generation("Cancelled".into())); }
+                checkpoint(&chunk.iter().collect::<String>())?;
+            }
+            Ok(None)
+        }
+    });
+    match generated {
+        Ok(output) => native = output,
+        Err(_) if control.is_cancelled() => status = MessageStatus::Cancelled,
+        Err(error) => {
+            status = MessageStatus::Failed;
+            failure = Some(error.to_string());
+        }
+    }
+    if control.is_cancelled() {
+        status = MessageStatus::Cancelled;
     }
     if !connected {
         status = MessageStatus::Cancelled;
     }
-    let result = db.finish_turn(&turn, &content, status, failure.as_deref());
+    let result = db.finish_turn(&turn, &content, status, failure.as_deref(), native.as_ref());
     let (kind, messages, error) = match result {
         Ok(message) => (
             match status {
@@ -186,7 +228,7 @@ fn run(
         Err(error) => {
             let detail = error.to_string();
             let messages = db
-                .finish_turn(&turn, &content, MessageStatus::Failed, Some(&detail))
+                .finish_turn(&turn, &content, MessageStatus::Failed, Some(&detail), None)
                 .map(|message| vec![message])
                 .unwrap_or_default();
             (ChatEventKind::Failed, messages, detail)

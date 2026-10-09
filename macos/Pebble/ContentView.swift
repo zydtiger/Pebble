@@ -86,7 +86,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.2").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.3").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")
@@ -112,7 +112,7 @@ struct ContentView: View {
                 Text("Just the two of you").font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             }
             Spacer()
-            Text("LOCAL DEMO").font(.system(size: 9, weight: .semibold)).tracking(1.2)
+            Text(persona.connectionLabel).font(.system(size: 9, weight: .semibold)).tracking(1.2)
                 .foregroundStyle(PebbleTheme.sage)
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(PebbleTheme.sage.opacity(0.08), in: Capsule())
@@ -217,7 +217,7 @@ struct ContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(PebbleTheme.line.opacity(0.7), lineWidth: 1))
-            Text("Local demo · No model connected · Messages saved on this Mac")
+            Text(model.selected.map { $0.contextNotice.isEmpty ? "\($0.connectionLabel) · Messages saved on this Mac" : $0.contextNotice } ?? "Messages saved on this Mac")
                 .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
         }
         .padding(.horizontal, 30).padding(.bottom, 22).padding(.top, 12)
@@ -286,7 +286,7 @@ private struct CharacterSheet: View {
             Text("Edit SOUL.md and MEMORY.md in the character folder, then reload. Memory is maintained by hand in this version.")
                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             HStack {
-                Text(persona.model.map { "Configured: \($0) · Local demo only" } ?? "No model connected · Local demo only")
+                Text(persona.connectionLabel)
                     .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                 Spacer()
                 Button("Open character folder") { model.openCharacterFiles() }

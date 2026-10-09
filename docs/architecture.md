@@ -4,7 +4,7 @@
 
 `pebble-core` is an ordinary Rust library. It owns TOML parsing and validation,
 SOUL/MEMORY loading, stable persona/private-room IDs, SQLite, frozen model history, and the
-demo worker's lifecycle. It can be tested without a UI or language bridge.
+live/demo worker's lifecycle. It can be tested without a UI or language bridge.
 
 `pebble-ffi` wraps the core with UniFFI 0.32.2 records, typed errors, objects, and
 a foreign-trait observer. It builds one static library. Bindings are generated
@@ -15,8 +15,8 @@ SwiftUI owns navigation, text input, view state, and rendering. `CoreClient` is
 an actor that keeps blocking configuration/database operations off MainActor.
 The generated types conform to Sendable with the selected Swift 6 compiler.
 No asynchronous Rust function is exported yet: short commands plus a callback
-stream meet this stage's needs. A future HTTP implementation will own whatever
-Rust async runtime it requires.
+stream meet this stage's needs. Each live worker owns a current-thread Tokio runtime for cancellable HTTP/SSE
+I/O; no network wait blocks MainActor or a database transaction.
 
 The host resolves the data directory and performs native actions such as
 opening Finder. The core receives the path; it does not hard-code a Mac home
@@ -44,7 +44,7 @@ ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 Swift sends text and observer
     → Rust accepts messages/events/request items in one transaction
     → Rust returns a cancellable handle and authoritative message IDs
-    → local demo consumes the stored request outside the transaction
+    → Chat Completions (or unconfigured demo) consumes the stored request
     → Rust checkpoints visible deltas, then notifies Swift
     → Rust atomically publishes output/event links and terminal state
     → Swift reloads the saved transcript
@@ -56,19 +56,38 @@ and retains an unaccepted draft on error. MainActor never opens SQLite. The
 actor bridge keeps blocking core calls off the UI thread, and listeners only
 enqueue events. A bounded, disconnected subscription cancels generation.
 
-Only one call runs at a time in v0.0.2; the UI disables character switching
+Only one call runs at a time in v0.0.3; the UI disables character switching
 during a reply. An early cancel request is retained until Rust returns the
 handle. Closing the view cancels the worker and subscription. A process-level
 data-root lock prevents another app instance from interrupting live work during
 startup recovery. Basic recovery marks unfinished replies interrupted without
 accepting their partial content into model history.
 
-The demo protocol is distinct from Chat Completions and Responses. Provider
-configuration has no effect on this stage's runtime. The fixed persona/memory
-snapshot stays unchanged for the session, including after manual file reload.
-Live inference and explicit fresh-context transitions remain later increments.
-There is no background service, model network client, automatic memory writer,
-or delegated work in this milestone.
+The demo protocol is distinct from Chat Completions and Responses. Configured
+Chat Completions always runs its real HTTP adapter; Responses fails explicitly.
+An absent connection runs the local demo. Rust supplies mode/model labels and
+fresh-context notices to the typed frontend records.
+
+HTTP uses the configured API root plus `/chat/completions`, optional runtime
+credentials, environment proxy settings, and no redirects. A cancellable future
+covers connection, headers, and idle stream waits. Connection timeout is 10
+seconds; headers and stream idle timeout are 45 seconds; the entire request has
+a 180-second deadline. Requests have a 4096-token completion budget. Credentials
+never enter model history or call records, and provider bodies/URLs are not
+copied into error diagnostics.
+
+SSE is framed as bytes before decoding complete UTF-8 lines. Only `content`
+deltas update the visible bubble. A successful `stop` finish plus `[DONE]` and
+nonempty visible content are required for publication. Native assistant content,
+`reasoning_content`, and `refusal` are retained for replay; reasoning is hidden
+from the UI. Tool requests, stream errors, truncation, filters, and exhausted
+budgets preserve visible partial text as failed output. No retry is automatic.
+
+Sessions bind protocol, model, and credential-free API root. A changed binding
+retires the previous context and starts after the current event frontier. Old
+transcript and model items remain intact; a persistent notice explains the fresh
+context. SOUL/MEMORY stays frozen inside an unchanged session after file reload.
+There is no background service, automatic memory writer, or delegated work.
 
 ## Build decisions
 

@@ -259,3 +259,17 @@ fn preview_validates_input_and_persona() {
         Err(Error::EmptyMessage)
     ));
 }
+
+#[test]
+fn malformed_config_and_url_credentials_never_echo_secrets() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    for config in [
+        "[defaults.chat]\nmodel='mock'\nbase_url='http://127.0.0.1/v1'\napi='chat_completions'\napi_key='do-not-echo' broken",
+        "[defaults.chat]\nmodel='mock'\nbase_url='http://do-not-echo@127.0.0.1/v1'\napi='chat_completions'",
+    ] {
+        fs::write(root.path().join("config.toml"), config).unwrap();
+        let error = core.workspace().unwrap_err().to_string();
+        assert!(!error.contains("do-not-echo"));
+    }
+}

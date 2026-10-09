@@ -1,0 +1,193 @@
+// Shared HTTP fixtures for deterministic and opt-in live integration tests.
+#![allow(dead_code)]
+use pebble_core::{ChatEvent, ChatEventKind, ChatListener, Core, Error};
+use serde_json::{Value, json};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::Path;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
+
+struct Listener(mpsc::Sender<ChatEvent>);
+impl ChatListener for Listener {
+    fn on_event(&self, event: ChatEvent) -> Result<(), String> {
+        self.0.send(event).map_err(|e| e.to_string())
+    }
+}
+pub(super) struct Plan {
+    pub status: u16,
+    pub body: String,
+    pub delay_headers: bool,
+    pub delay_tail: bool,
+}
+pub(super) fn stream(body: String) -> Plan {
+    Plan {
+        status: 200,
+        body,
+        delay_headers: false,
+        delay_tail: false,
+    }
+}
+pub(super) fn event(fields: Value, reason: Value) -> String {
+    format!(
+        "data: {}\r\n\r\n",
+        json!({"choices":[{"index":0,"delta":fields,"finish_reason":reason}]})
+    )
+}
+pub(super) fn success(text: &str) -> String {
+    format!(
+        "{}{}{}data: [DONE]\r\n\r\n",
+        event(
+            json!({"role":"assistant","reasoning_content":"private-test-reasoning"}),
+            Value::Null
+        ),
+        event(json!({"content":text}), Value::Null),
+        event(json!({}), json!("stop"))
+    )
+}
+pub(super) struct Server {
+    pub url: String,
+    pub requests: mpsc::Receiver<(String, Value)>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl Server {
+    pub fn new(plans: Vec<Plan>) -> Self {
+        let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", socket.local_addr().unwrap());
+        let (tx, requests) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for plan in plans {
+                let (mut connection, _) = socket.accept().unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0; 1024];
+                let (headers, body) = loop {
+                    let n = connection.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buf[..n]);
+                    if let Some(index) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                        let headers = String::from_utf8(bytes[..index].to_vec()).unwrap();
+                        let size: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if bytes.len() >= index + 4 + size {
+                            break (
+                                headers,
+                                serde_json::from_slice::<Value>(
+                                    &bytes[index + 4..index + 4 + size],
+                                )
+                                .unwrap(),
+                            );
+                        }
+                    }
+                };
+                tx.send((headers, body)).unwrap();
+                if plan.delay_headers {
+                    std::thread::sleep(Duration::from_millis(700));
+                }
+                let headers = format!(
+                    "HTTP/1.1 {} Test\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    plan.status,
+                    plan.body.len()
+                );
+                if connection.write_all(headers.as_bytes()).is_err() {
+                    continue;
+                }
+                // One byte per write deliberately fragments Unicode and SSE boundaries.
+                for (index, byte) in plan.body.bytes().enumerate() {
+                    if plan.delay_tail
+                        && index
+                            == plan
+                                .body
+                                .find("data: [DONE]")
+                                .unwrap_or(plan.body.len() / 2)
+                    {
+                        std::thread::sleep(Duration::from_millis(700));
+                    }
+                    if connection.write_all(&[byte]).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            url,
+            requests,
+            worker: Some(worker),
+        }
+    }
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.worker.take().unwrap().join().unwrap();
+    }
+}
+pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &str) {
+    std::fs::write(
+        root.join("config.toml"),
+        format!(
+            "[defaults.chat]\nmodel='{model}'\nbase_url='{url}'\napi='{api}'\napi_key='{key}'\n"
+        ),
+    )
+    .unwrap();
+}
+pub(super) fn isolated() -> (tempfile::TempDir, Core, String) {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let persona = core.workspace().unwrap().personas.remove(0);
+    std::fs::write(
+        Path::new(&persona.directory).join("SOUL.md"),
+        "You are a synthetic integration-test character. Answer concisely.",
+    )
+    .unwrap();
+    std::fs::write(
+        Path::new(&persona.directory).join("MEMORY.md"),
+        "Synthetic test memory only.",
+    )
+    .unwrap();
+    (root, core, persona.id)
+}
+pub(super) fn start(
+    core: &Core,
+    id: &str,
+    text: &str,
+) -> (pebble_core::ChatTask, mpsc::Receiver<ChatEvent>) {
+    let (tx, rx) = mpsc::channel();
+    (
+        core.send_message(id, text, Arc::new(Listener(tx))).unwrap(),
+        rx,
+    )
+}
+pub(super) fn terminal(rx: &mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
+    let mut events = Vec::new();
+    loop {
+        let event = rx.recv_timeout(Duration::from_secs(180)).unwrap();
+        let done = matches!(
+            event.kind,
+            ChatEventKind::Completed | ChatEventKind::Failed | ChatEventKind::Cancelled
+        );
+        events.push(event);
+        if done {
+            return events;
+        }
+    }
+}
+pub(super) fn reopen(root: &Path) -> Core {
+    for _ in 0..100 {
+        match Core::open(root) {
+            Ok(core) => return core,
+            Err(Error::AlreadyOpen) => std::thread::sleep(Duration::from_millis(5)),
+            Err(e) => panic!("{e}"),
+        }
+    }
+    panic!("worker still owns root")
+}

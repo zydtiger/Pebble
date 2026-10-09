@@ -1,8 +1,8 @@
 # Durable private-chat history
 
-v0.0.2 uses one SQLite database and a deterministic local demo adapter. These
-are working storage and routing primitives; there is no provider request,
-group scheduler, classifier, memory writer, or work-agent integration yet.
+v0.0.3 uses one SQLite database and a live Chat Completions adapter. An
+unconfigured character uses a deterministic local demo. There is no group
+scheduler, classifier, memory writer, or work-agent integration.
 
 ## Records and ordering
 
@@ -12,7 +12,7 @@ group scheduler, classifier, memory writer, or work-agent integration yet.
 | `conversations` | One canonical `direct` room per persona; existing IDs survive migration |
 | `messages` | Visible content, explicit user/persona sender, status, timestamp; unique `(conversation_id, sequence)` |
 | `persona_events` | Received user messages and accepted sent replies; unique `(persona_id, sequence)` and `(persona_id, message_id)` |
-| `model_sessions` | One active context per persona; fixed demo protocol/model and contiguous covered-event frontier |
+| `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, and covered-event frontier |
 | `model_items` | Frozen prefix/input/output JSON BLOBs; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
 | `model_calls` | Session, reply room, trigger/reply message IDs, input item cutoff, event cutoff, status and error |
@@ -24,10 +24,16 @@ One session belongs to a persona, not an app launch or visible room.
 
 The first input initializes a session with a fixed application/SOUL/MEMORY
 snapshot. Reloading files changes the character panel, but does not rewrite
-that existing snapshot. Explicit context resets remain a later milestone.
-Provider configuration is validated but unused by this demo; sessions identify
-`pebble_demo_v1` / `local-demo` so a later network adapter cannot mistake this
-history for accepted provider state.
+that existing snapshot. Sessions identify `pebble_demo_v1` / `local-demo` or
+`chat_completions` / the configured model. The credential-free `base_url` is
+stored on the session; keys are resolved at runtime and never persisted.
+
+Changing the API root, model, or protocol retires the previous session. The new
+session's `event_start_sequence` is the prior persona-event maximum, so its
+request includes only later events. This fresh context does not import old demo
+or provider output. Old visible messages and frozen items remain preserved. A
+notice is derived from the stored boundary and is visible after restart too.
+General user-triggered resets remain a later milestone.
 
 ## One turn
 
@@ -41,10 +47,10 @@ send(persona, text)
     frozen input I1 + link I1 -> E1
   commit
   load C1's items from S ordered by sequence: P, I1
-  deterministic demo reads that stored request outside the transaction
+  live adapter (or demo) reads that stored request outside the transaction
   checkpoint each text delta before notifying the UI
   completion transaction
-    finalize A1 + native demo output O1
+    finalize A1 + native assistant output O1
     sent event E2 + link O1 -> E2
     finalize C1 and advance contiguous event coverage
   commit, then notify completion
@@ -57,7 +63,8 @@ envelope. Its `events` include source event/message/room IDs, event sequence,
 speaker kind/ID, and text. `reply_request` contains the target room and trigger
 message. These are fields inside content, not imaginary provider API fields.
 The prefix defines this attribution. Participant text is serialized as data.
-The demo output is `role: assistant` plus content; it is stored once.
+The completed output is `role: assistant` plus content and supported native
+`reasoning_content`/`refusal` fields; it is stored once. Only content is rendered.
 
 The builder appends events without a representation in the active session.
 Its own sent event already links to the original output, so it never becomes
@@ -68,7 +75,7 @@ A call records the last input item sequence. Reconstructing that call loads
 items through this cutoff, retaining the exact saved bytes. It excludes its
 own future output and later turns. There is no full-request copy per call,
 transcript re-rendering, dynamic timestamp in the prefix, or server KV cache
-management. v0.0.2 stores raw JSON; compression and context limits come later.
+management. v0.0.3 stores raw JSON; compression and configurable context limits come later.
 
 ## Failure and lifetime boundaries
 
@@ -95,8 +102,10 @@ remaining streaming messages/calls interrupted, preserving their last durable
 text and accepted input. It never invents a completed model output. This is
 basic restart consistency; retry/reconciliation workflows remain v0.0.7.
 
-Schema version 1 migrates to 2 in one transaction by adding six tables and
-indexes. Persona/room records and editable files remain intact. A database
+Schema version 1 adds the six history tables and indexes; version 2 adds
+credential-free API-root binding and an event-start boundary, reaching schema 3
+in one transaction. Existing IDs, records, frozen bytes, and editable files
+remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.
 
@@ -106,7 +115,10 @@ Rust integration tests cover migration, exact request replay after later
 turns, session reuse, frozen prefix bytes after a file edit, own-output
 association, persona isolation, cancellation, rollback during acceptance and
 publication, exclusive ownership, and abrupt process exit followed by restart.
-The Swift bridge test covers typed records/errors, durable identity, Unicode
+Mock HTTP/SSE tests also cover authentication, two-turn native replay after
+restart, UTF-8 fragmentation, content/reasoning isolation, early and idle-stream
+cancellation, failure publication, and changed connection boundaries. The Swift
+bridge test covers typed records/errors, durable identity, Unicode
 streaming, early cancellation, callback release, subscription closure, and a
 fresh presentation model restoring and continuing history. Native render
 checks exercise the real composer, including marked text and keyboard events.
