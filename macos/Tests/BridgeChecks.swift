@@ -57,6 +57,8 @@ struct BridgeChecks {
         model.sendMessage("Cancel queued Mira input")
         for _ in 0..<100 where model.bubbles.count < 6 { try await Task.sleep(for: .milliseconds(5)) }
         try require(model.bubbles.count == 6 && model.bubbles.last?.status == .queued, "Queued bubble was not visible")
+        let resetWhileQueued = await model.startFreshContext()
+        try require(!resetWhileQueued, "Fresh context accepted outstanding queued work")
         model.cancelReply(model.bubbles.last!.id)
         model.select(kai)
         model.stopReply()
@@ -71,6 +73,15 @@ struct BridgeChecks {
         try require(model.bubbles[3].text.contains("Mira first private input"), "Followup did not use predecessor history")
         try require(!model.bubbles.contains { $0.text.contains("Kai private input") }, "Kai output leaked into Mira room")
         try require(model.draft == "Mira's unsent draft", "Background stream cleared another draft")
+        let saved = model.bubbles.map(\.id)
+        let reset = await model.startFreshContext()
+        try require(reset && model.error == nil, "Fresh context failed after terminal replies")
+        try require(model.bubbles.map(\.id) == saved, "Fresh context deleted visible messages")
+        try require(model.selected?.contextNotice.contains("Fresh model context") == true, "Fresh context notice was missing")
+        try require(model.draft == "Mira's unsent draft", "Fresh context cleared the unsent draft")
+        model.sendMessage("New context input")
+        for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.last?.status == .complete && !model.bubbles.last!.text.contains("Mira first private input"), "Fresh context reused earlier model context")
         model.closeChat()
     }
 

@@ -23,6 +23,7 @@ fn network(error: reqwest::Error) -> Error {
 pub(crate) async fn generate(
     chat: &ChatConnection,
     request: &ModelRequest,
+    output_tokens: u64,
     control: Arc<Control>,
     mut delta: impl FnMut(&str) -> Result<(), Error>,
 ) -> Result<Vec<Value>, Error> {
@@ -41,11 +42,11 @@ pub(crate) async fn generate(
     let (route, body) = match chat.api.as_str() {
         "chat_completions" => (
             "chat/completions",
-            json!({"model":request.model, "messages":messages, "stream":true, "max_tokens":4096}),
+            json!({"model":request.model, "messages":messages, "stream":true, "max_tokens":output_tokens}),
         ),
         "responses" => (
             "responses",
-            json!({"model":request.model, "input":messages, "stream":true, "store":false, "include":["reasoning.encrypted_content"], "max_output_tokens":4096}),
+            json!({"model":request.model, "input":messages, "stream":true, "store":false, "include":["reasoning.encrypted_content"], "max_output_tokens":output_tokens}),
         ),
         _ => return Err(failure("The configured model protocol is unsupported.")),
     };

@@ -18,6 +18,11 @@ actor CoreClient {
         return try backend.createPersona(name: name)
     }
 
+    func freshContext(persona: String) throws -> PersonaRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.freshContext(personaId: persona)
+    }
+
     func history(persona: String) throws -> [MessageRecord] {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble's character files first.") }
         return try backend.messages(personaId: persona)
@@ -81,6 +86,7 @@ final class ChatModel {
     var loading = true
     var showCharacter = false
     var showNewCharacter = false
+    var showFreshContext = false
     var replyRevision = 0
     private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
@@ -147,6 +153,17 @@ final class ChatModel {
         } catch { self.error = describe(error); return false }
     }
 
+    func startFreshContext() async -> Bool {
+        guard let id = selectedID else { return false }
+        let state = room(id)
+        do {
+            _ = try await client.freshContext(persona: id)
+            workspace = try await client.load()
+            state.error = nil
+            return true
+        } catch { state.error = describe(error); return false }
+    }
+
     func sendMessage(_ suggested: String? = nil) {
         guard let persona = selected, !loading else { return }
         let state = room(persona.id)
@@ -207,6 +224,7 @@ final class ChatModel {
         switch error {
         case let .Configuration(path, detail): return "Check \(URL(fileURLWithPath: path).lastPathComponent)\n\(detail)\n\n\(path)"
         case let .Storage(detail): return detail
+        case let .ContextLimit(detail): return detail
         case .Busy: return "Finish or stop the current reply first."
         case .UnknownPersona: return "This character is no longer available. Reload the character files."
         case .EmptyMessage: return "Write something before sending."

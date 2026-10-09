@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.0.5 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.0.6 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 
@@ -13,7 +13,7 @@ scheduler, classifier, memory writer, or work-agent integration.
 | `messages` | Visible content, explicit user/persona sender, status, timestamp; unique `(conversation_id, sequence)` |
 | `persona_events` | Received user messages and accepted sent replies; unique `(persona_id, sequence)` and `(persona_id, message_id)` |
 | `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, and covered-event frontier |
-| `model_items` | Frozen prefix/input/output JSON BLOBs; unique `(session_id, sequence)`; optional producing call |
+| `model_items` | Frozen raw/zstd prefix/input/output JSON BLOBs with decoded length; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
 | `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status and error |
 
@@ -34,7 +34,11 @@ event. Its requests include later received events in execution order; earlier
 sent events stay in their original native sessions. This fresh context does not import old demo
 or provider output. Old visible messages and frozen items remain preserved. A
 notice is derived from the stored boundary and is visible after restart too.
-General user-triggered resets remain a later milestone.
+An explicit fresh-context command saves a new prefix and boundary immediately,
+using current character files. It refuses queued/active calls for that persona;
+other personas are independent. The manual boundary and its notice survive
+restart, including a boundary before any received event. No earlier received
+or native sent event is reimported.
 
 ## One turn
 
@@ -88,7 +92,9 @@ A call records the last input item sequence. Reconstructing that call loads
 items through this cutoff, retaining the exact saved bytes. It excludes its
 own future output and later turns. There is no full-request copy per call,
 transcript re-rendering, dynamic timestamp in the prefix, or server KV cache
-management. v0.0.5 stores raw JSON; compression and configurable context limits come later.
+management. v0.0.6 stores each item as raw JSON or lossless zstd. The loader checks
+aggregate decoded size before materializing history and checks a conservative
+input estimate plus output reserve before HTTP. See [context and encoding](context.md).
 
 ## Failure and lifetime boundaries
 
@@ -125,8 +131,10 @@ upgrades to 3 with credential-free API-root binding and an event-start boundary.
 Schema 3 upgrades to 4 by rebuilding model_calls with a queued status and
 nullable session/input cutoff until activation. Migration preserves all IDs and
 payloads, checks foreign keys before commit, and restores enforcement on the
-runtime connection. v0.0.5 keeps schema 4 and all eight tables; multi-item output
-uses the existing item/event association. Existing IDs, records, frozen bytes, and editable files
+runtime connection. Schema 4 upgrades to 5 by rebuilding model_items to allow
+json/zstd with decoded_length, and adding a session context_reason for persistent
+manual-boundary notices. Existing raw bytes, IDs, and item/event links remain
+unchanged; migration does not compress old payloads. All eight tables remain. Existing IDs, records, frozen bytes, and editable files
 remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.

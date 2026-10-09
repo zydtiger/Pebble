@@ -6,11 +6,11 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.5 adds Responses and native output replay.** Configure an
-OpenAI-compatible API root and model for Chat Completions or Responses; without
-a connection, the app uses its clearly labeled deterministic local demo.
-Independent characters retain separate files, private rooms, model sessions,
-and serialized queues while different rooms reply concurrently.
+**v0.0.6 adds context budgets and fresh contexts.** Independent characters use
+Chat Completions or Responses with native replay, per-character queues, and
+lossless history compression. Configure a context window and output reserve,
+or deliberately start a fresh model context while keeping saved messages.
+Without a connection, the app uses its clearly labeled deterministic local demo.
 
 ## Run it
 
@@ -83,7 +83,7 @@ files. Existing files are never overwritten by the seed operation.
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 3 are upgraded transactionally to 4, preserving character, room, message,
+through 4 are upgraded transactionally to 5, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -117,7 +117,7 @@ Empty credentials omit Authorization. `api_key_env` is resolved when a request
 starts; a missing variable fails the reply. Redirects are disabled and the
 client honors environment proxy settings. Connection/header/idle waits are
 bounded at 10/45/45 seconds, with a 180-second request timeout and a 4096-token
-output budget. Reasoning-only, truncated, filtered, or budget-exhausted outputs
+default output budget, configurable below. Reasoning-only, truncated, filtered, or budget-exhausted outputs
 are failed replies; visible partial text stays saved. Provider reasoning stays
 in native model history and is never rendered as a message. Responses sends
 `store = false` and requests encrypted reasoning state. Completed native output
@@ -129,6 +129,43 @@ Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events
 are not silently imported into the new model session. Editing character files
 does not change an existing session's frozen SOUL/MEMORY prefix.
+
+## Context budgets and fresh contexts
+
+Configure app defaults in the local `config.toml`:
+
+```toml
+[defaults.context]
+context_window_tokens = 65536
+max_output_tokens = 4096
+```
+
+A persona's `[context]` table overrides either field independently; omitted
+fields inherit app defaults. Old configs use the defaults above. Both limits
+must be positive, and the output reserve must be smaller than the window.
+The output limit is sent as Chat Completions `max_tokens` or Responses
+`max_output_tokens`. Editing these limits does not replace existing history.
+
+Pebble estimates input conservatively from the entire frozen native JSON:
+one UTF-8 byte counts as one estimated token, with 64 more per item. This includes
+SOUL/MEMORY, envelopes, reasoning, and opaque state; the output reserve must fit
+too. It is **not exact provider token usage**. Tokenizers and encrypted provider
+state can differ, and providers may still reject a request. An independent
+8 MiB decoded context bound limits saved-history loading regardless of token
+settings. A context-full reply fails before HTTP and keeps its input and failed
+bubble, so you can increase limits or start fresh deliberately.
+
+Choose the **Start fresh context** sparkle button in the chat header and confirm
+its explanation. Earlier messages and native items remain saved, but subsequent
+requests exclude everything before that boundary and snapshot the current
+character files. The notice survives restart. Finish or cancel this character's
+active and queued replies first; other characters can continue replying.
+This does not summarize history or clear the transcript.
+
+History items use raw JSON or zstd individually. Compression changes storage
+bytes only; decoded native bytes and IDs remain stable. Existing raw items are
+not rewritten. See [context and encoding](docs/context.md) for the loader bounds,
+estimate limitations, and synthetic size measurements.
 
 ## Architecture
 

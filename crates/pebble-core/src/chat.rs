@@ -87,6 +87,11 @@ pub(crate) struct Chats {
 }
 
 impl Chats {
+    pub(crate) fn fresh_context(&self, db: &Database, persona: &Persona) -> Result<(), Error> {
+        let _queues = self.queues.lock().expect("generation queues lock");
+        db.fresh_context(persona)
+    }
+
     pub(crate) fn start(
         &self,
         db: Arc<Database>,
@@ -119,7 +124,14 @@ impl Chats {
                     );
                 } else {
                     match worker_db.activate_turn(&persona, &worker_turn) {
-                        Ok(turn) => run(worker_db, turn, control, listener, persona.chat),
+                        Ok(turn) => run(
+                            worker_db,
+                            turn,
+                            control,
+                            listener,
+                            persona.chat,
+                            persona.context,
+                        ),
                         Err(error) => finish_pending(
                             &worker_db,
                             &worker_turn,
@@ -190,6 +202,7 @@ fn run(
     control: Arc<Control>,
     listener: Arc<dyn ChatListener>,
     chat: Option<crate::ChatConnection>,
+    budget: crate::ContextBudget,
 ) {
     let emit = |sequence, kind, text, messages| {
         listener.on_event(ChatEvent {
@@ -234,6 +247,7 @@ fn run(
         Ok(())
     };
     let generated = db.request(&turn.call_id).and_then(|request| {
+        budget.check(&request)?;
         if let Some(chat) = chat {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
                 .map_err(|_| Error::Generation("Could not initialize the model worker.".into()))?;
@@ -241,7 +255,7 @@ fn run(
                 tokio::select! {
                     biased;
                     _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
-                    result = crate::live::generate(&chat, &request, control.clone(), &mut checkpoint) => result.map(Some),
+                    result = crate::live::generate(&chat, &request, budget.max_output_tokens, control.clone(), &mut checkpoint) => result.map(Some),
                 }
             })
         } else {

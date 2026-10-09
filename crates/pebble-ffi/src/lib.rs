@@ -16,6 +16,8 @@ pub enum BackendError {
     EmptyMessage,
     #[error("Could not start the reply: {detail}")]
     Generation { detail: String },
+    #[error("{detail}")]
+    ContextLimit { detail: String },
 }
 
 impl From<pebble_core::Error> for BackendError {
@@ -25,6 +27,7 @@ impl From<pebble_core::Error> for BackendError {
                 Self::Configuration { path, detail }
             }
             pebble_core::Error::Busy => Self::Busy,
+            pebble_core::Error::ContextLimit(detail) => Self::ContextLimit { detail },
             pebble_core::Error::UnknownPersona => Self::UnknownPersona,
             pebble_core::Error::EmptyMessage => Self::EmptyMessage,
             pebble_core::Error::Generation(detail) => Self::Generation { detail },
@@ -48,6 +51,8 @@ pub struct PersonaRecord {
     pub api: Option<String>,
     pub connection_label: String,
     pub context_notice: String,
+    pub context_window_tokens: u64,
+    pub max_output_tokens: u64,
 }
 
 #[derive(uniffi::Record)]
@@ -68,6 +73,8 @@ impl From<pebble_core::Persona> for PersonaRecord {
             memory: persona.memory,
             connection_label: persona.connection_label,
             context_notice: persona.context_notice,
+            context_window_tokens: persona.context.context_window_tokens,
+            max_output_tokens: persona.context.max_output_tokens,
             model: persona.chat.as_ref().map(|chat| chat.model.clone()),
             api: persona.chat.map(|chat| chat.api),
         }
@@ -238,6 +245,10 @@ impl PebbleBackend {
 
     pub fn create_persona(&self, name: String) -> Result<PersonaRecord, BackendError> {
         Ok(self.core.create_persona(&name)?.into())
+    }
+
+    pub fn fresh_context(&self, persona_id: String) -> Result<PersonaRecord, BackendError> {
+        Ok(self.core.fresh_context(&persona_id)?.into())
     }
 
     pub fn messages(&self, persona_id: String) -> Result<Vec<MessageRecord>, BackendError> {

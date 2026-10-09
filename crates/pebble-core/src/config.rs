@@ -21,6 +21,7 @@ pub struct Persona {
     pub soul: String,
     pub memory: String,
     pub chat: Option<ChatConnection>,
+    pub context: crate::ContextBudget,
     pub connection_label: String,
     pub context_notice: String,
 }
@@ -50,6 +51,8 @@ impl std::fmt::Debug for ChatConnection {
 #[derive(Deserialize, Default)]
 struct Defaults {
     chat: Option<ChatConnection>,
+    #[serde(default)]
+    context: crate::context::Overrides,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +64,8 @@ struct AppConfig {
 #[derive(Deserialize)]
 struct PersonaConfig {
     persona: Identity,
+    #[serde(default)]
+    context: crate::context::Overrides,
     chat: Option<ChatConnection>,
 }
 
@@ -183,6 +188,10 @@ pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
     if let Some(connection) = &app.defaults.chat {
         validate_connection(connection, &app_path)?;
     }
+    let default_context = app
+        .defaults
+        .context
+        .apply(crate::ContextBudget::default(), &app_path)?;
     let personas_path = root.join("personas");
     let directories =
         fs::read_dir(&personas_path).map_err(|error| file_error(&personas_path, error))?;
@@ -228,6 +237,7 @@ pub(crate) fn load(root: &Path) -> Result<Workspace, Error> {
             connection_label: String::new(),
             context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
+            context: config.context.apply(default_context, &config_path)?,
         });
     }
     personas.sort_by(|a, b| a.display_name.cmp(&b.display_name).then(a.id.cmp(&b.id)));

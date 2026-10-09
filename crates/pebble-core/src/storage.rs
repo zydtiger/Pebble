@@ -1,7 +1,10 @@
+mod codec;
+mod contexts;
+mod items;
 mod jobs;
 mod turns;
 
-use crate::{Error, Message, MessageStatus, ModelItem, ModelRequest, Persona, file_error};
+use crate::{Error, Message, MessageStatus, Persona, file_error};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fs::File;
 use std::path::Path;
@@ -34,11 +37,11 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version < 4 {
+        if version < 5 {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 4 {
+        if version > 5 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -66,6 +69,10 @@ impl Database {
         if version < 4 {
             tx.execute_batch(include_str!("storage/queue-migration.sql"))?;
             tx.execute_batch("PRAGMA user_version = 4;")?;
+        }
+        if version < 5 {
+            tx.execute_batch(include_str!("storage/codec-migration.sql"))?;
+            tx.execute_batch("PRAGMA user_version = 5;")?;
         }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
@@ -106,12 +113,14 @@ impl Database {
                 }
                 Some(chat) => format!("Live · {}", chat.model),
             };
-            let prior: Option<(String, String, String, i64)> = tx.query_row(
-                "SELECT protocol, model, base_url, event_start_sequence FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
-                [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            let prior: Option<(String, String, String, i64, String)> = tx.query_row(
+                "SELECT protocol, model, base_url, event_start_sequence, context_reason FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
+                [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
                 .optional()?;
             persona.context_notice = match prior {
-                Some((p, m, b, start)) if p != protocol || m != model || b != base_url || start > 0 =>
+                Some((_, _, _, _, reason)) if reason == "manual" =>
+                    "Fresh model context: earlier messages stay visible and are excluded from new requests.".into(),
+                Some((p, m, b, start, _)) if p != protocol || m != model || b != base_url || start > 0 =>
                     "Connection changed: earlier messages stay visible; this model uses a fresh context.".into(),
                 _ => String::new(),
             };
@@ -136,44 +145,6 @@ impl Database {
         Ok(query
             .query_map([conversation_id], read_message)?
             .collect::<Result<_, _>>()?)
-    }
-
-    pub(crate) fn request(&self, call_id: &str) -> Result<ModelRequest, Error> {
-        let connection = self.connection.lock().expect("database lock");
-        let (mut request, last): (ModelRequest, i64) = connection.query_row(
-            "SELECT c.session_id, c.conversation_id, c.trigger_message_id, c.event_cutoff,
-                    s.protocol, s.model, c.input_last_sequence
-             FROM model_calls c JOIN model_sessions s ON s.id = c.session_id WHERE c.id = ?1",
-            [call_id],
-            |row| {
-                Ok((
-                    ModelRequest {
-                        call_id: call_id.into(),
-                        session_id: row.get(0)?,
-                        conversation_id: row.get(1)?,
-                        trigger_message_id: row.get(2)?,
-                        event_cutoff: row.get(3)?,
-                        protocol: row.get(4)?,
-                        model: row.get(5)?,
-                        items: Vec::new(),
-                    },
-                    row.get(6)?,
-                ))
-            },
-        )?;
-        let mut query = connection.prepare(
-            "SELECT id, sequence, payload FROM model_items WHERE session_id = ?1 AND sequence <= ?2 ORDER BY sequence"
-        )?;
-        request.items = query
-            .query_map(params![request.session_id, last], |row| {
-                Ok(ModelItem {
-                    id: row.get(0)?,
-                    sequence: row.get(1)?,
-                    payload: row.get(2)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
-        Ok(request)
     }
 }
 

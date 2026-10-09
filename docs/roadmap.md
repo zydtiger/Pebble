@@ -14,24 +14,24 @@ small enough to inspect and reconsider independently.
 | v0.0.7 | Daily-use settings, retry/cancel, interruption recovery, and usability |
 | v0.1.0 | Consolidated private-chat release |
 
-## v0.0.5 review
+## v0.0.6 review
 
-v0.0.5 supports Chat Completions and Responses with independent persona queues.
-Responses stores the complete accepted reasoning/message item array, including
-opaque encrypted state and IDs, and replays it with the stable frozen prefix
-after restart. Streaming reasoning remains hidden. Failed, incomplete,
-reasoning-only, inconsistent, truncated, or unsupported tool output is never
-accepted as model continuation; visible partial text remains durable.
+v0.0.6 adds lossless per-item raw/zstd storage, an independent decoded context
+memory bound, and inherited TOML context/output budgets. Requests retain exact
+decoded native bytes and stable prefixes across restart. The documented input
+estimate is conservative byte accounting, not exact provider token usage.
+Oversized context fails before HTTP and preserves the visible accepted input.
 
-Protocol changes start a clearly marked fresh context while preserving earlier
-room history. The eight-table schema remains at version 4. Mock tests exercise
-native replay, queued followups, atomic multi-item publication, protocol
-boundaries, fragmented streams, and cancellation. Opt-in synthetic live tests
-cover both protocols across two turns and restart.
+An explicit fresh-context command preserves transcript and native history while
+starting after a durable event boundary with current SOUL/MEMORY. It refuses
+that persona's outstanding queued/active work without blocking other rooms.
+Schema 1–4 migration to 5 preserves IDs and old raw bytes in the same eight tables.
+Tests cover codecs, bounded corrupt-data handling, budget reserves, native replay,
+manual boundaries, cancellation, and both protocols.
 
-The next increment is v0.0.6: per-item raw/zstd encoding, context budgets, and
-explicit context reset. Settings, retry, and richer recovery remain v0.0.7.
-No automatic retry occurs.
+The next increment is v0.0.7: app/persona settings, safe credentials, retries,
+interruption recovery, and daily usability. No automatic retry or history
+summarization occurs.
 
 The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
 minimum-OS testing remain future work.

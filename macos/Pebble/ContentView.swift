@@ -41,9 +41,15 @@ struct ContentView: View {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
         .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
+        .confirmationDialog("Start a fresh context?", isPresented: $model.showFreshContext, titleVisibility: .visible) {
+            Button("Start fresh context") { Task { await model.startFreshContext() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Earlier messages stay saved and visible, but the model will no longer receive them. The new context uses the current character and memory files.")
+        }
         .task { await model.load() }
         .onDisappear { model.closeChat() }
-        .onChange(of: model.selectedID) { _, _ in composerFocused = true }
+        .onChange(of: model.selectedID) { _, _ in composerFocused = true; model.showFreshContext = false }
     }
 
     private var sidebar: some View {
@@ -93,7 +99,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.5").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.6").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")
@@ -119,6 +125,11 @@ struct ContentView: View {
                 Text("Just the two of you").font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             }
             Spacer()
+            Button { model.showFreshContext = true } label: { Image(systemName: "sparkles") }
+                .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
+                .disabled(model.isReplying || model.loading)
+                .help("Start a fresh model context; keep saved messages")
+                .accessibilityLabel("Start fresh context")
             Text(persona.connectionLabel).font(.system(size: 9, weight: .semibold)).tracking(1.2)
                 .foregroundStyle(PebbleTheme.sage)
                 .padding(.horizontal, 10).padding(.vertical, 6)

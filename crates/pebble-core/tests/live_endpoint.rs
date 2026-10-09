@@ -22,6 +22,9 @@ fn exercise(api: &str) {
     let key = std::env::var("PEBBLE_LIVE_API_KEY").unwrap_or_default();
     let (root, core, id) = isolated();
     configure(root.path(), &url, &model, api, &key);
+    let config_path = root.path().join("config.toml");
+    let connection = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(&config_path, format!("{connection}\n[defaults.context]\ncontext_window_tokens=65536\nmax_output_tokens=1024\n")).unwrap();
     let (task, rx) = start(&core, &id, "Reply with exactly: PEBBLE_OK");
     let events = terminal(&rx);
     assert_eq!(

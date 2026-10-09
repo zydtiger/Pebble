@@ -112,6 +112,14 @@ struct RenderChecks {
                 }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "responses-context")
+                let saved = model.bubbles.map(\.id)
+                let reset = await model.startFreshContext()
+                guard reset, model.bubbles.map(\.id) == saved,
+                      model.selected?.contextNotice.contains("Fresh model context") == true else {
+                    throw RenderError.failed("Fresh context presentation changed saved history")
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "fresh-context")
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closeChat()
                 app.terminate(nil)

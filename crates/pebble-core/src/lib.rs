@@ -1,6 +1,7 @@
 mod chat;
 mod config;
 mod connection;
+mod context;
 mod demo;
 mod history;
 mod live;
@@ -9,6 +10,7 @@ mod storage;
 
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
+pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
 
 use std::path::{Path, PathBuf};
@@ -36,6 +38,10 @@ pub enum Error {
     EmptyMessage,
     #[error("Could not start the reply: {0}")]
     Generation(String),
+    #[error("{0}")]
+    ContextLimit(String),
+    #[error("{0}")]
+    History(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -79,6 +85,21 @@ impl Core {
             .personas
             .into_iter()
             .find(|p| p.id == id)
+            .ok_or(Error::UnknownPersona)
+    }
+
+    pub fn fresh_context(&self, persona_id: &str) -> Result<Persona, Error> {
+        let persona = self
+            .workspace()?
+            .personas
+            .into_iter()
+            .find(|p| p.id == persona_id)
+            .ok_or(Error::UnknownPersona)?;
+        self.chats.fresh_context(&self.database, &persona)?;
+        self.workspace()?
+            .personas
+            .into_iter()
+            .find(|p| p.id == persona_id)
             .ok_or(Error::UnknownPersona)
     }
 

@@ -10,7 +10,7 @@ accepted assistant message retains supported reasoning and refusal fields.
 
 Responses sends the saved native input list to `/responses`, with `stream: true`,
 `store: false`, `include: ["reasoning.encrypted_content"]`, and
-`max_output_tokens: 4096`. It does not send `previous_response_id`. Each accepted
+the configured `max_output_tokens` (4096 by default). It does not send `previous_response_id`. Each accepted
 reasoning/message output item becomes one immutable history item. Replay retains
 the complete native object, including IDs, status, encrypted content, and
 unknown fields. No tool calls are executed or accepted in this milestone.

@@ -87,7 +87,7 @@ HTTP uses the configured API root plus `/chat/completions` or `/responses`, opti
 credentials, environment proxy settings, and no redirects. A cancellable future
 covers connection, headers, and idle stream waits. Connection timeout is 10
 seconds; headers and stream idle timeout are 45 seconds; the entire request has
-a 180-second deadline. Requests have a 4096-token completion budget. Credentials
+a 180-second deadline. Requests default to a 4096-token output reserve, configurable with the context window. Credentials
 never enter model history or call records, and provider bodies/URLs are not
 copied into error diagnostics.
 
@@ -113,7 +113,19 @@ Sessions bind protocol, model, and credential-free API root. A changed binding
 retires the previous context and starts after the current event frontier. Old
 transcript and model items remain intact; a persistent notice explains the fresh
 context. SOUL/MEMORY stays frozen inside an unchanged session after file reload.
-There is no background service, automatic memory writer, or delegated work.
+Explicit fresh context is a Rust operation serialized against queue acceptance.
+It refuses outstanding work for that persona, retires the active session, and
+atomically saves a new prefix with the current files and event boundary. Earlier
+transcript/native history stays intact and is excluded from new requests. Other
+personas can continue. Swift presents confirmation and the persistent notice.
+
+The request loader scans codec/size metadata before reading any payloads. Raw or
+zstd items decode into the exact saved JSON bytes under a fixed 8 MiB context
+bound; zstd window and output reads have independent bounds. A conservative
+byte-based input estimate plus configured output reserve is checked before the
+adapter starts. Budget edits alone leave the session and prefix unchanged.
+See [context and encoding](context.md). There is no background service, automatic
+memory writer, or delegated work.
 
 ## Build decisions
 
