@@ -27,23 +27,50 @@ struct RenderChecks {
                     throw RenderError.failed("Missing native text editor")
                 }
                 window.makeFirstResponder(editor)
+                try await Task.sleep(for: .milliseconds(100))
+                try capture(window, name: "composer-empty")
+                let emptyCaret = editor.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+                editor.insertText("Leave a little thought…", replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await Task.sleep(for: .milliseconds(100))
+                let typedCaret = editor.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+                guard abs(emptyCaret.minX - typedCaret.minX) < 1,
+                      abs(emptyCaret.minY - typedCaret.minY) < 1 else {
+                    throw RenderError.failed("The first line moved when typing into the empty composer")
+                }
+                try capture(window, name: "composer-typed")
+                editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+                editor.deleteBackward(nil)
                 editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
                                      replacementRange: NSRange(location: NSNotFound, length: 0))
                 guard editor.hasMarkedText(), model.bubbles.isEmpty else {
                     throw RenderError.failed("Composition unexpectedly sent a preview")
                 }
-                editor.insertText("你好", replacementRange: NSRange(location: NSNotFound, length: 0))
-                editor.insertNewline(nil)
+                try pressReturn(editor, in: window)
+                guard model.bubbles.isEmpty, !model.isPreviewing else {
+                    throw RenderError.failed("Return sent a draft while composing marked text")
+                }
+                editor.insertText("你好", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+                try pressReturn(editor, in: window, modifiers: .command)
+                try pressReturn(editor, in: window, modifiers: .shift)
                 try await Task.sleep(for: .milliseconds(100))
-                guard model.draft == "你好\n", model.bubbles.isEmpty else {
-                    throw RenderError.failed("Native composition/newline failed: \(model.draft.debugDescription)")
+                guard model.draft == "你好\n\n", model.bubbles.isEmpty else {
+                    throw RenderError.failed("Command–Enter/Shift–Enter failed to insert new lines: \(model.draft.debugDescription)")
                 }
                 editor.setSelectedRange(NSRange(location: 0, length: 2))
                 guard editor.selectedRange().length == 2 else {
                     throw RenderError.failed("Native input selection failed")
                 }
-                model.draft = ""
-                model.startPreview("Hi, Mira. Tell me a little about yourself.")
+                try await checkComposerSizing(window: window, model: model, editor: editor)
+                try pressReturn(editor, in: window)
+                guard model.draft.isEmpty, model.bubbles.isEmpty else {
+                    throw RenderError.failed("Enter should not send an empty draft")
+                }
+                let prompt = "Hi, Mira. Tell me a little about yourself."
+                editor.insertText(prompt, replacementRange: NSRange(location: 0, length: 0))
+                try pressReturn(editor, in: window)
+                guard model.isPreviewing, model.draft.isEmpty, model.bubbles.first?.text == prompt else {
+                    throw RenderError.failed("Enter did not send the draft")
+                }
                 for _ in 0..<150 where model.isPreviewing { try await Task.sleep(for: .milliseconds(30)) }
                 guard !model.isPreviewing, model.error == nil else { throw RenderError.failed("Preview did not finish") }
                 try await Task.sleep(for: .milliseconds(300))
@@ -51,7 +78,7 @@ struct RenderChecks {
                 window.setContentSize(NSSize(width: 820, height: 610))
                 try await Task.sleep(for: .milliseconds(300))
                 try capture(window, name: "compact")
-                print("Rendered actual SwiftUI views at 1000×730 and 820×610; native marked text, Chinese commit, newline, and input selection passed.")
+                print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closePreview()
                 app.terminate(nil)
             } catch {

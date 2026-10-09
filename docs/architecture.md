@@ -22,6 +22,17 @@ The host resolves the data directory and performs native actions such as
 opening Finder. The core receives the path; it does not hard-code a Mac home
 directory. This keeps product logic reusable with another frontend.
 
+The message composer embeds an AppKit `NSTextView` in an `NSScrollView`.
+TextKit measures the actual wrapped text, including a trailing empty line,
+to grow the editor from 33 to 160 points. Scrolling becomes available only
+when the text exceeds that height, and clearing the draft restores the compact
+size. The placeholder uses the same font and text-container origin as input.
+Native marked text and selection stay with AppKit. Enter sends the draft;
+Command–Enter and Shift–Enter insert new lines. While an input method has marked
+text, Enter stays with AppKit to confirm composition without sending. The surrounding
+SwiftUI layout keeps that button at the lower right and lets the introduction
+scroll when an expanded composer reduces its available space.
+
 ## First-stage storage
 
 Each character's UUID comes from its folder name. The database has exactly two

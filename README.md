@@ -41,7 +41,9 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 ## Try the first stage
 
 1. Open Mira's private space and choose **Say hello**, or type a thought and
-   press **Command–Return**. Return alone inserts a new line.
+   press **Enter**. **Command–Enter** or **Shift–Enter** inserts a new line. The composer grows
+   with your text, then scrolls at its maximum height; the send button stays at
+   the lower right.
 2. Stop a reply while it streams. This cancels the worker in Rust.
 3. Open the character information panel to read SOUL and MEMORY.
 4. Use **Open character folder**, edit the files, and choose **Reload Character

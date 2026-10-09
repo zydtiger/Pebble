@@ -2,7 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: ChatModel
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = true
+    @State private var composerHeight = ComposerScrollView.minimumHeight
 
     var body: some View {
         HStack(spacing: 0) {
@@ -14,7 +15,14 @@ struct ContentView: View {
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
                     if let error = model.error { errorBanner(error) }
                     if model.bubbles.isEmpty {
-                        introduction(persona).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        GeometryReader { geometry in
+                            ScrollView {
+                                introduction(persona)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(minHeight: geometry.size.height)
+                            }
+                            .scrollIndicators(.never)
+                        }
                     } else {
                         transcript(persona)
                     }
@@ -184,17 +192,11 @@ struct ContentView: View {
     private var composer: some View {
         VStack(spacing: 11) {
             HStack(alignment: .bottom, spacing: 12) {
-                ZStack(alignment: .topLeading) {
-                    if model.draft.isEmpty {
-                        Text("Leave a little thought…").foregroundStyle(PebbleTheme.muted.opacity(0.8))
-                            .padding(.top, 8).padding(.leading, 5).allowsHitTesting(false)
-                    }
-                    TextEditor(text: $model.draft)
-                        .font(.system(size: 13)).scrollContentBackground(.hidden)
-                        .focused($composerFocused).disabled(model.isPreviewing)
-                        .accessibilityLabel("Message").accessibilityIdentifier("message-composer")
+                MessageEditor(text: $model.draft, height: $composerHeight,
+                              isFocused: $composerFocused, isEditable: !model.isPreviewing) {
+                    model.startPreview()
                 }
-                .font(.system(size: 13)).frame(height: 49)
+                    .frame(height: composerHeight)
                 Button {
                     if model.isPreviewing { model.stopPreview() } else { model.startPreview() }
                 } label: {
@@ -206,10 +208,8 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.isPreviewing && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(model.isPreviewing ? "Stop preview" : "Preview reply (⌘ Return)")
+                .help(model.isPreviewing ? "Stop preview" : "Preview reply (Enter)")
                 .accessibilityLabel(model.isPreviewing ? "Stop preview" : "Preview reply")
-                .padding(.bottom, 4)
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
