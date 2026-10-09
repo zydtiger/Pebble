@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.0.7 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.1.0 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 

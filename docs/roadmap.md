@@ -1,7 +1,7 @@
 # Roadmap
 
-The first private-chat release is **v0.1.0**. Early milestones are intentionally
-small enough to inspect and reconsider independently.
+The first local private-chat milestone, **v0.1.0**, is implemented. The preceding
+increments remain recorded below so the architecture can be inspected in stages.
 
 | Stage | Outcome |
 | --- | --- |
@@ -14,7 +14,7 @@ small enough to inspect and reconsider independently.
 | v0.0.7 | Daily-use settings, retry/cancel, interruption recovery, and usability |
 | v0.1.0 | Consolidated private-chat release |
 
-## v0.0.7 review
+## v0.1.0 private-chat baseline
 
 v0.0.7 provides native app-default and character settings, safe explicit
 credential updates, and latest-reply retry/recovery. TOML and Markdown remain
@@ -28,8 +28,28 @@ chains are covered without duplicate users, native outputs, or altered old calls
 Schema 1–5 upgrades to 6 in the same eight tables. Both real protocol probes use
 synthetic isolated roots and exercise settings save, restart/replay, cancel/retry.
 
-The next increment is v0.1.0 consolidation of the completed private-chat stages.
-No automatic retry, transcript clearing, or history summarization occurs.
+v0.1.0 consolidates these stages without adding another subsystem. The validated
+private-chat flow covers:
+
+- Character creation, independent queues, room switching, scoped cancellation,
+  and drafts retained while switching, through Rust and Swift bridge checks.
+- Both live protocols: settings save, two turns across restart, native replay,
+  cancellation, and explicit retry through the actual adapters using isolated
+  synthetic characters. The selected llama-server passed both protocols.
+- Configuration repair, credential preservation, manual SOUL/MEMORY edits,
+  interrupted active/queued calls, and retry without duplicate user messages.
+- Stable compressed native bytes, schema migration, context-full failure, and
+  explicit fresh contexts with preserved transcript.
+
+The native settings and failure/retry screens have been rendered and reviewed.
+Composer checks cover growth, scrolling, marked text, Enter to send, and the
+Command/Shift–Enter newline shortcuts. See README for the runnable checks and
+local data paths; provider, history, context, and settings docs own their details.
+
+No automatic retry, transcript clearing, or history summarization occurs. Drafts
+do not survive app restart. Retry is limited to the latest unsuccessful reply,
+settings saves are atomic per file, and context estimates are not exact provider
+token usage. These limits are explicit parts of the first local milestone.
 
 The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
 minimum-OS testing remain future work.

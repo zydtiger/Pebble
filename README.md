@@ -6,11 +6,12 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.7 adds native settings and explicit recovery.** Edit app defaults and
-character files in the app, repair a connection, and retry the latest failed,
-stopped, or interrupted reply without duplicating the original user message.
-Independent characters retain native Chat Completions/Responses history,
-per-character queues, bounded context budgets, and lossless item compression.
+**v0.1.0 is the first local private-chat milestone.** Create independent
+characters, configure their models, and continue saved conversations after
+restart. Native settings edit app defaults and character files. Streaming,
+per-character queues, cancellation, and explicit retry keep each private room
+independent. Chat Completions/Responses retain native history with bounded
+context budgets and lossless item compression.
 Without a connection, the app uses its clearly labeled deterministic local demo.
 
 ## Run it
@@ -53,9 +54,12 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 3. Choose **New character**, enter a name, and create a separate private room.
    Switch between characters while both reply. Drafts and stream state stay in
    their own rooms.
-4. Open the character information panel to read SOUL and MEMORY.
-5. Use **Open character folder**, edit the files, and choose **Reload Character
-   Files** from the app menu or sidebar. Character and room IDs remain stable.
+4. Open the character information panel to read SOUL and MEMORY, or use
+   **Character settings** to edit them and the character's connection.
+5. After editing SOUL/MEMORY, choose **Start fresh context** when you want the
+   model to use the new files. Earlier messages remain visible. Advanced file
+   editing and **Reload Character Files** remain available; character and room
+   IDs stay stable.
 6. Send a thought, then quit and reopen the app. The messages and their IDs
    survive. The next request reuses the saved prefix and completed native
    assistant output. The unconfigured demo quotes the preceding user message.
@@ -64,7 +68,9 @@ Cancelled replies retain their partial text with a **Stopped** label. An abrupt
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
-The interface is an early light-theme design with a starter character. Groups, automated memory, and work delegation belong to later milestones. See [the roadmap](docs/roadmap.md).
+The interface uses a light theme and includes a starter character. Groups,
+automated memory, and work delegation belong to later milestones. See
+[the roadmap](docs/roadmap.md).
 
 ## Local data
 
