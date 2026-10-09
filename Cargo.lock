@@ -546,10 +546,11 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "pebble-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "rusqlite",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",
@@ -559,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "pebble-ffi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "pebble-core",
  "thiserror",

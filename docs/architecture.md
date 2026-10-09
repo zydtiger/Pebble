@@ -3,8 +3,8 @@
 ## Boundaries
 
 `pebble-core` is an ordinary Rust library. It owns TOML parsing and validation,
-SOUL/MEMORY loading, stable persona/private-room IDs, SQLite, and the preview
-worker's lifecycle. It can be tested without a UI or language bridge.
+SOUL/MEMORY loading, stable persona/private-room IDs, SQLite, frozen model history, and the
+demo worker's lifecycle. It can be tested without a UI or language bridge.
 
 `pebble-ffi` wraps the core with UniFFI 0.32.2 records, typed errors, objects, and
 a foreign-trait observer. It builds one static library. Bindings are generated
@@ -33,52 +33,42 @@ text, Enter stays with AppKit to confirm composition without sending. The surrou
 SwiftUI layout keeps that button at the lower right and lets the introduction
 scroll when an expanded composer reduces its available space.
 
-## First-stage storage
+## Durable storage and generation
 
-Each character's UUID comes from its folder name. The database has exactly two
-application tables:
-
-- `personas`: stable ID, display name, relative directory, creation time.
-- `conversations`: stable room ID, `direct` kind, unique persona peer, creation
-  time. One canonical private room belongs to each persona.
-
-Foreign keys and WAL are enabled. The filesystem is authoritative for editable
-persona content. Loading validates files before reconciling identity records
-in one transaction. Editing a display name preserves both IDs. The database
-schema version starts at 1; this stage has no legacy schema to migrate.
-
-Preview bubbles are temporary presentation state. They are not a replacement
-for the message/event/session model planned for v0.0.2.
-
-## Preview lifecycle
+Rust owns the eight private-chat/history tables and schema migration. Visible
+messages and frozen model items are distinct records; the UI never reconstructs
+model context from bubbles. See [durable history](history.md) for table ownership,
+ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 
 ```text
-Swift creates AsyncStream and observer
-    → Rust validates the character and starts a preview
-    → Rust returns a cancellable handle
-    → Rust emits started / textDelta / completed or cancelled
-    → Swift consumes events in order on MainActor
+Swift sends text and observer
+    → Rust accepts messages/events/request items in one transaction
+    → Rust returns a cancellable handle and authoritative message IDs
+    → local demo consumes the stored request outside the transaction
+    → Rust checkpoints visible deltas, then notifies Swift
+    → Rust atomically publishes output/event links and terminal state
+    → Swift reloads the saved transcript
 ```
 
-Each event carries run, persona, conversation, and sequence IDs. The listener
-only enqueues events; it never mutates SwiftUI from the Rust worker thread.
-The UI rejects an event whose run or room does not match its active preview.
+Each event carries call, persona, conversation, message, and event-sequence
+IDs. Swift only renders matching output, reconciles authoritative snapshots,
+and retains an unaccepted draft on error. MainActor never opens SQLite. The
+actor bridge keeps blocking core calls off the UI thread, and listeners only
+enqueue events. A bounded, disconnected subscription cancels generation.
 
-Rust emits small Unicode-safe chunks on a worker thread. A condition variable
-wakes that thread promptly on cancellation. Only one preview runs at a time.
-Dropping its handle also cancels it. The worker releases its listener on
-completion, cancellation, or a disconnected consumer.
+Only one call runs at a time in v0.0.2; the UI disables character switching
+during a reply. An early cancel request is retained until Rust returns the
+handle. Closing the view cancels the worker and subscription. A process-level
+data-root lock prevents another app instance from interrupting live work during
+startup recovery. Basic recovery marks unfinished replies interrupted without
+accepting their partial content into model history.
 
-The Swift adapter remembers cancellation requested before the Rust handle has
-returned. Closing the view explicitly cancels Rust work, cancels the consumer,
-and finishes its stream. Cancelling a Swift Task alone is not used as a Rust
-cancellation mechanism. The stream buffer is bounded; this fixed short preview
-fits inside it, and a dropped update disconnects the listener rather than
-silently presenting incomplete text as a complete reply.
-
-The app process owns the core lifetime. There is no background service, network
-client, model reasoning, automatic memory writer, or work-agent execution in
-this milestone.
+The demo protocol is distinct from Chat Completions and Responses. Provider
+configuration has no effect on this stage's runtime. The fixed persona/memory
+snapshot stays unchanged for the session, including after manual file reload.
+Live inference and explicit fresh-context transitions remain later increments.
+There is no background service, model network client, automatic memory writer,
+or delegated work in this milestone.
 
 ## Build decisions
 

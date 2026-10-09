@@ -1,9 +1,6 @@
 import Foundation
 
-struct CheckFailure: Error, CustomStringConvertible {
-    let description: String
-}
-
+struct CheckFailure: Error, CustomStringConvertible { let description: String }
 func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw CheckFailure(description: message) }
 }
@@ -14,38 +11,63 @@ struct BridgeChecks {
     static func main() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pebble-bridge-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
+        let (personaID, roomID, messageIDs) = try await exerciseBridge(root)
+        try await Task.sleep(for: .milliseconds(100))
+        do {
+            let reopened = try PebbleBackend(dataRoot: root.path)
+            let persona = try reopened.workspace().personas[0]
+            let messages = try reopened.messages(personaId: personaID)
+            try require(persona.id == personaID && persona.conversationId == roomID, "Identity changed on restart")
+            try require(messages.map(\.id) == messageIDs, "Message IDs changed on restart")
+            try require(messages[1].status == .complete && messages[3].status == .cancelled, "Terminal states were not saved")
+        }
+        let uiRoot = root.appendingPathComponent("ui")
+        let savedIDs = try await exercisePresentation(uiRoot)
+        try await Task.sleep(for: .milliseconds(100))
+        let reopened = ChatModel(dataRoot: uiRoot)
+        await reopened.load()
+        try require(reopened.error == nil, "Could not reopen presentation: \(reopened.error ?? "")")
+        try require(reopened.bubbles.map(\.id) == savedIDs, "UI did not restore the durable transcript")
+        try require(reopened.bubbles.last?.status == .complete, "UI lost the completed reply")
+        reopened.closeChat()
+        print("Swift 6 FFI checks passed: durable IDs/history, native records, Unicode deltas, cancellation, listener release, UI restart and close lifecycle.")
+    }
+
+    static func exerciseBridge(_ root: URL) async throws -> (String, String, [String]) {
         let client = CoreClient(root: root.path)
         let first = try await client.load()
-        let reopened = try PebbleBackend(dataRoot: root.path).workspace()
         try require(first.personas.count == 1, "Expected the starter character")
         let persona = first.personas[0]
-        try require(persona.id == reopened.personas[0].id, "Persona identity changed on restart")
-        try require(persona.conversationId == reopened.personas[0].conversationId, "Private room changed on restart")
-
-        let (stream, sink) = AsyncStream<PreviewUpdate>.makeStream(bufferingPolicy: .bufferingOldest(256))
+        let (stream, sink) = AsyncStream<ChatUpdate>.makeStream(bufferingPolicy: .bufferingOldest(256))
         var observer: StreamObserver? = StreamObserver(sink)
         weak let weakObserver = observer
-        var handle: PreviewHandle? = try await client.preview(persona: persona.id, prompt: "你好", observer: observer!)
+        var handle: ChatHandle? = try await client.send(persona: persona.id, prompt: "你好", observer: observer!)
         let runID = handle!.id()
+        let acceptedIDs = handle!.messages().map(\.id)
         observer = nil
         var sequence: UInt64 = 0
         var text = ""
         var terminal = false
         for await update in stream {
             try require(update.sequence == sequence, "Event order changed at the Swift boundary")
-            try require(update.runId == runID, "Wrong preview ID")
-            try require(update.conversationId == persona.conversationId, "Wrong room")
+            try require(update.runId == runID && update.conversationId == persona.conversationId, "Wrong call or room")
+            try require(update.messageId == acceptedIDs[1], "Delta changed message identity")
             sequence += 1
-            text += update.text
-            if update.kind == .completed { terminal = true }
+            if update.kind == .textDelta { text += update.text }
+            if update.kind == .completed {
+                terminal = true
+                try require(update.messages[0].content == text, "Final durable content differs from streamed text")
+            }
         }
-        try require(terminal && text.contains("你好，我是 Mira。"), "Unicode stream did not complete")
+        try require(terminal && text.contains("本地演示"), "Unicode demo stream did not complete")
+        let saved = try await client.history(persona: persona.id)
+        try require(saved.map(\.id) == acceptedIDs && saved[1].content == text, "History differs from visible output")
         handle = nil
         for _ in 0..<50 where weakObserver != nil { try await Task.sleep(for: .milliseconds(10)) }
-        try require(weakObserver == nil, "Rust retained the Swift listener after completion")
+        try require(weakObserver == nil, "Rust retained the Swift listener")
 
-        let (cancelStream, cancelSink) = AsyncStream<PreviewUpdate>.makeStream()
-        let cancelled = try await client.preview(persona: persona.id, prompt: "hello", observer: StreamObserver(cancelSink))
+        let (cancelStream, cancelSink) = AsyncStream<ChatUpdate>.makeStream()
+        let cancelled = try await client.send(persona: persona.id, prompt: "hello", observer: StreamObserver(cancelSink))
         cancelled.cancel()
         var cancelledTerminal = false
         for await update in cancelStream {
@@ -53,28 +75,38 @@ struct BridgeChecks {
             try require(update.kind != .completed, "Cancellation became completion")
         }
         try require(cancelledTerminal, "Rust did not acknowledge cancellation")
-
         do {
-            let (unused, unusedSink) = AsyncStream<PreviewUpdate>.makeStream()
+            let (unused, unusedSink) = AsyncStream<ChatUpdate>.makeStream()
             _ = unused
-            _ = try await client.preview(persona: "not-a-persona", prompt: "hello", observer: StreamObserver(unusedSink))
+            _ = try await client.send(persona: "not-a-persona", prompt: "hello", observer: StreamObserver(unusedSink))
             throw CheckFailure(description: "Missing typed error")
         } catch BackendError.UnknownPersona { }
+        return (persona.id, persona.conversationId, try await client.history(persona: persona.id).map(\.id))
+    }
 
-        // Exercise the real UI adapter's cancellation before a handle returns.
-        let model = ChatModel()
+    @MainActor
+    static func exercisePresentation(_ root: URL) async throws -> [String] {
+        let model = ChatModel(dataRoot: root)
         await model.load()
-        try require(model.selected != nil, "Presentation adapter did not load a character")
-        model.startPreview("hello")
-        model.stopPreview()
-        for _ in 0..<100 where model.isPreviewing { try await Task.sleep(for: .milliseconds(20)) }
-        try require(!model.isPreviewing, "Early UI cancellation was lost")
-        try require(model.bubbles.last?.stopped == true, "UI did not show cancellation")
-        model.startPreview("another hello")
-        model.closePreview()
-        try await Task.sleep(for: .milliseconds(100))
-        try require(!model.isPreviewing, "Closing the subscription left a preview running")
-
-        print("Swift 6 FFI checks passed: typed records/errors, restart IDs, Unicode events, cancellation, listener release, view lifecycle.")
+        try require(model.selected != nil, "Presentation did not load a character")
+        model.draft = "hello"
+        model.sendMessage()
+        model.stopReply()
+        for _ in 0..<100 where model.isReplying { try await Task.sleep(for: .milliseconds(20)) }
+        try require(!model.isReplying && model.bubbles.last?.status == .cancelled, "Early UI cancellation was lost")
+        try require(model.draft.isEmpty, "Accepted draft was not cleared")
+        model.sendMessage("another hello")
+        model.closeChat()
+        try await Task.sleep(for: .milliseconds(150))
+        try require(!model.isReplying, "Closing left a reply running")
+        await model.load()
+        try require(model.bubbles.count == 4 && model.bubbles.last?.status == .cancelled, "Closing lost durable accepted messages")
+        model.sendMessage("After reopening")
+        for _ in 0..<150 where model.isReplying { try await Task.sleep(for: .milliseconds(20)) }
+        try require(model.error == nil && model.bubbles.count == 6, "Could not continue saved history")
+        try require(Set(model.bubbles.map(\.id)).count == 6, "UI duplicated a saved message")
+        let ids = model.bubbles.map(\.id)
+        model.closeChat()
+        return ids
     }
 }

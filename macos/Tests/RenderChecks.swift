@@ -43,10 +43,10 @@ struct RenderChecks {
                 editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
                                      replacementRange: NSRange(location: NSNotFound, length: 0))
                 guard editor.hasMarkedText(), model.bubbles.isEmpty else {
-                    throw RenderError.failed("Composition unexpectedly sent a preview")
+                    throw RenderError.failed("Composition unexpectedly sent a message")
                 }
                 try pressReturn(editor, in: window)
-                guard model.bubbles.isEmpty, !model.isPreviewing else {
+                guard model.bubbles.isEmpty, !model.isReplying else {
                     throw RenderError.failed("Return sent a draft while composing marked text")
                 }
                 editor.insertText("你好", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
@@ -68,18 +68,19 @@ struct RenderChecks {
                 let prompt = "Hi, Mira. Tell me a little about yourself."
                 editor.insertText(prompt, replacementRange: NSRange(location: 0, length: 0))
                 try pressReturn(editor, in: window)
-                guard model.isPreviewing, model.draft.isEmpty, model.bubbles.first?.text == prompt else {
+                try await Task.sleep(for: .milliseconds(100))
+                guard model.isReplying, model.draft.isEmpty, model.bubbles.first?.text == prompt else {
                     throw RenderError.failed("Enter did not send the draft")
                 }
-                for _ in 0..<150 where model.isPreviewing { try await Task.sleep(for: .milliseconds(30)) }
-                guard !model.isPreviewing, model.error == nil else { throw RenderError.failed("Preview did not finish") }
+                for _ in 0..<150 where model.isReplying { try await Task.sleep(for: .milliseconds(30)) }
+                guard !model.isReplying, model.error == nil else { throw RenderError.failed("Demo reply did not finish") }
                 try await Task.sleep(for: .milliseconds(300))
                 try capture(window, name: "conversation")
                 window.setContentSize(NSSize(width: 820, height: 610))
                 try await Task.sleep(for: .milliseconds(300))
                 try capture(window, name: "compact")
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
-                model.closePreview()
+                model.closeChat()
                 app.terminate(nil)
             } catch {
                 FileHandle.standardError.write(Data("UI render failed: \(error)\n".utf8))

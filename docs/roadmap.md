@@ -14,15 +14,27 @@ small enough to inspect and reconsider independently.
 | v0.0.7 | Daily-use settings, retry/cancel, interruption recovery, and usability |
 | v0.1.0 | Consolidated private-chat release |
 
-## v0.0.1 review
+## v0.0.2 review
 
-Open the app and inspect the visual direction, text input, scrolling, character
-panel, and cancellation. The preview is scripted and temporary. The stage
-demonstrates that Rust can own persistence and stream events into a thin native
-frontend; it is not an implemented chat-history engine.
+v0.0.1 established the native shell and static bridge; v0.0.2 now runs the
+private-chat pipeline with an explicitly labeled local demo. Send a message,
+restart, and continue with the same visible message IDs and model session.
+The demo references the preceding user message from stored request items.
 
-The project currently uses one starter persona, local ad-hoc signing, and
-Apple Silicon. Wider distribution and minimum-OS testing remain future work.
+Inspect the compact/growing composer, Enter to send, Command–Enter or
+Shift–Enter for new lines, saved transcript, character panel, and cancellation.
+The app still makes no model calls. Existing v0.0.1 identities migrate without
+reseeding files. Cancelled/interrupted replies remain visible but are not
+accepted as complete model outputs.
+
+The next increment is v0.0.3: one real Chat Completions connection, streaming,
+and provider-native request replay. Demo sessions use their own protocol and
+must not be passed to a live provider unchanged. Per-persona concurrency,
+Responses, compression/context limits, settings, and richer recovery retain
+their later milestones. No automatic retry occurs in v0.0.2.
+
+The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
+minimum-OS testing remain future work.
 
 ## After v0.1.0
 

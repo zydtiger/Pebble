@@ -1,10 +1,10 @@
-use pebble_core::{Core, Error, PreviewEvent, PreviewEventKind, PreviewListener};
+use pebble_core::{ChatEvent, ChatEventKind, ChatListener, Core, Error};
 use std::fs;
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 #[test]
-fn restart_keeps_identity_and_only_two_tables() {
+fn restart_keeps_identity_and_eight_tables() {
     let root = tempfile::tempdir().unwrap();
     let first = Core::open(root.path()).unwrap().workspace().unwrap();
     let second = Core::open(root.path()).unwrap().workspace().unwrap();
@@ -23,7 +23,19 @@ fn restart_keeps_identity_and_only_two_tables() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(tables, ["conversations", "personas"]);
+    assert_eq!(
+        tables,
+        [
+            "conversations",
+            "messages",
+            "model_calls",
+            "model_item_events",
+            "model_items",
+            "model_sessions",
+            "persona_events",
+            "personas"
+        ]
+    );
 }
 
 #[test]
@@ -47,6 +59,7 @@ fn manual_edits_reload_without_reseeding_or_changing_room() {
     assert!(after.memory.contains("rainy walks"));
     assert_eq!(before.id, after.id);
     assert_eq!(before.conversation_id, after.conversation_id);
+    drop(core);
     assert_eq!(
         Core::open(root.path())
             .unwrap()
@@ -92,12 +105,12 @@ fn invalid_and_missing_files_remain_visible_errors() {
 }
 
 struct Observer {
-    events: mpsc::Sender<PreviewEvent>,
+    events: mpsc::Sender<ChatEvent>,
     released: mpsc::Sender<()>,
 }
 
-impl PreviewListener for Observer {
-    fn on_event(&self, event: PreviewEvent) -> Result<(), String> {
+impl ChatListener for Observer {
+    fn on_event(&self, event: ChatEvent) -> Result<(), String> {
         self.events.send(event).map_err(|error| error.to_string())
     }
 }
@@ -109,8 +122,8 @@ impl Drop for Observer {
 }
 
 fn observer() -> (
-    Arc<dyn PreviewListener>,
-    mpsc::Receiver<PreviewEvent>,
+    Arc<dyn ChatListener>,
+    mpsc::Receiver<ChatEvent>,
     mpsc::Receiver<()>,
 ) {
     let (events, incoming) = mpsc::channel();
@@ -118,13 +131,13 @@ fn observer() -> (
     (Arc::new(Observer { events, released }), incoming, dropped)
 }
 
-fn receive_until_terminal(events: &mpsc::Receiver<PreviewEvent>) -> Vec<PreviewEvent> {
+fn receive_until_terminal(events: &mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
     let mut received = Vec::new();
     loop {
         let event = events.recv_timeout(Duration::from_secs(5)).unwrap();
         let terminal = matches!(
             event.kind,
-            PreviewEventKind::Completed | PreviewEventKind::Cancelled
+            ChatEventKind::Completed | ChatEventKind::Cancelled | ChatEventKind::Failed
         );
         received.push(event);
         if terminal {
@@ -139,10 +152,10 @@ fn stream_keeps_unicode_order_and_origin_and_releases_listener() {
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     let (observer, incoming, released) = observer();
-    let task = core.start_preview(&persona.id, "你好", observer).unwrap();
+    let task = core.send_message(&persona.id, "你好", observer).unwrap();
     let events = receive_until_terminal(&incoming);
-    assert_eq!(events[0].kind, PreviewEventKind::Started);
-    assert_eq!(events.last().unwrap().kind, PreviewEventKind::Completed);
+    assert_eq!(events[0].kind, ChatEventKind::Started);
+    assert_eq!(events.last().unwrap().kind, ChatEventKind::Completed);
     for (index, event) in events.iter().enumerate() {
         assert_eq!(event.sequence, index as u64);
         assert_eq!(event.run_id, task.id);
@@ -150,8 +163,8 @@ fn stream_keeps_unicode_order_and_origin_and_releases_listener() {
         assert_eq!(event.persona_id, persona.id);
     }
     let text: String = events.iter().map(|event| event.text.as_str()).collect();
-    assert!(text.starts_with("你好，我是 Mira。"));
-    assert!(text.ends_with("也不会保存聊天内容。"));
+    assert!(text.starts_with("本地演示 · 第 1 次对话"));
+    assert!(text.ends_with("没有调用模型。"));
     released.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(incoming.try_recv().is_err());
 }
@@ -163,27 +176,27 @@ fn cancellation_stops_stream_and_allows_another_preview() {
     let persona = core.workspace().unwrap().personas.remove(0);
     let (first_observer, incoming, released) = observer();
     let task = core
-        .start_preview(&persona.id, "hello", first_observer)
+        .send_message(&persona.id, "hello", first_observer)
         .unwrap();
     assert_eq!(
         incoming.recv_timeout(Duration::from_secs(1)).unwrap().kind,
-        PreviewEventKind::Started
+        ChatEventKind::Started
     );
     let (other, _, _) = observer();
     assert!(matches!(
-        core.start_preview(&persona.id, "again", other),
+        core.send_message(&persona.id, "again", other),
         Err(Error::Busy)
     ));
     task.cancel();
     task.cancel();
     assert_eq!(
         receive_until_terminal(&incoming).last().unwrap().kind,
-        PreviewEventKind::Cancelled
+        ChatEventKind::Cancelled
     );
     released.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(incoming.try_recv().is_err());
     let (next, _, released) = observer();
-    let next_task = core.start_preview(&persona.id, "again", next).unwrap();
+    let next_task = core.send_message(&persona.id, "again", next).unwrap();
     assert_ne!(task.id, next_task.id);
     drop(next_task);
     released.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -195,12 +208,12 @@ fn dropping_handle_cancels_and_releases_callback() {
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     let (observer, incoming, released) = observer();
-    let task = core.start_preview(&persona.id, "hello", observer).unwrap();
+    let task = core.send_message(&persona.id, "hello", observer).unwrap();
     incoming.recv_timeout(Duration::from_secs(1)).unwrap();
     drop(task);
     assert_eq!(
         receive_until_terminal(&incoming).last().unwrap().kind,
-        PreviewEventKind::Cancelled
+        ChatEventKind::Cancelled
     );
     released.recv_timeout(Duration::from_secs(1)).unwrap();
 }
@@ -211,11 +224,11 @@ fn preview_validates_input_and_persona() {
     let core = Core::open(root.path()).unwrap();
     let (listener, _, _) = observer();
     assert!(matches!(
-        core.start_preview("missing", "hello", listener.clone()),
+        core.send_message("missing", "hello", listener.clone()),
         Err(Error::UnknownPersona)
     ));
     assert!(matches!(
-        core.start_preview("missing", "  ", listener),
+        core.send_message("missing", "  ", listener),
         Err(Error::EmptyMessage)
     ));
 }

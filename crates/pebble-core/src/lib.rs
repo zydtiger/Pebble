@@ -1,9 +1,12 @@
+mod chat;
 mod config;
-mod preview;
+mod demo;
+mod history;
 mod storage;
 
+pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
-pub use preview::{PreviewEvent, PreviewEventKind, PreviewListener, PreviewTask};
+pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,16 +17,22 @@ pub enum Error {
     File { path: String, detail: String },
     #[error("Check {path}: {detail}")]
     Configuration { path: String, detail: String },
-    #[error("Could not open Pebble's database: {0}")]
+    #[error("Could not access Pebble's database: {0}")]
     Database(#[from] rusqlite::Error),
-    #[error("Finish or stop the current preview first.")]
+    #[error("Could not encode or read model history: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("Pebble's data is already open in another app instance.")]
+    AlreadyOpen,
+    #[error("Database version {0} is newer than this app supports.")]
+    Schema(u32),
+    #[error("Finish or stop the current reply first.")]
     Busy,
     #[error("This character is no longer available. Reload the character files.")]
     UnknownPersona,
-    #[error("Write something before starting a preview.")]
+    #[error("Write something before sending.")]
     EmptyMessage,
-    #[error("Could not start the preview: {0}")]
-    Preview(String),
+    #[error("Could not start the reply: {0}")]
+    Generation(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -35,16 +44,20 @@ fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
 
 pub struct Core {
     data_root: PathBuf,
-    previews: preview::Previews,
+    database: Arc<storage::Database>,
+    chats: chat::Chats,
 }
 
 impl Core {
     pub fn open(data_root: impl Into<PathBuf>) -> Result<Self, Error> {
         let data_root = data_root.into();
         config::initialize(&data_root)?;
+        config::load(&data_root)?;
+        let database = Arc::new(storage::Database::open(&data_root)?);
         let core = Self {
             data_root,
-            previews: preview::Previews::default(),
+            database,
+            chats: chat::Chats::default(),
         };
         core.workspace()?;
         Ok(core)
@@ -52,16 +65,17 @@ impl Core {
 
     pub fn workspace(&self) -> Result<Workspace, Error> {
         let mut workspace = config::load(&self.data_root)?;
-        storage::resolve_conversations(&self.data_root, &mut workspace.personas)?;
+        self.database
+            .resolve_conversations(&mut workspace.personas)?;
         Ok(workspace)
     }
 
-    pub fn start_preview(
+    pub fn send_message(
         &self,
         persona_id: &str,
         prompt: &str,
-        listener: Arc<dyn PreviewListener>,
-    ) -> Result<PreviewTask, Error> {
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatTask, Error> {
         if prompt.trim().is_empty() {
             return Err(Error::EmptyMessage);
         }
@@ -71,6 +85,21 @@ impl Core {
             .into_iter()
             .find(|persona| persona.id == persona_id)
             .ok_or(Error::UnknownPersona)?;
-        self.previews.start(persona, prompt, listener)
+        self.chats
+            .start(self.database.clone(), persona, prompt.trim(), listener)
+    }
+
+    pub fn messages(&self, persona_id: &str) -> Result<Vec<Message>, Error> {
+        let persona = self
+            .workspace()?
+            .personas
+            .into_iter()
+            .find(|persona| persona.id == persona_id)
+            .ok_or(Error::UnknownPersona)?;
+        self.database.messages(&persona.conversation_id)
+    }
+
+    pub fn model_request(&self, call_id: &str) -> Result<ModelRequest, Error> {
+        self.database.request(call_id)
     }
 }

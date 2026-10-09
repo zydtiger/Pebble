@@ -6,9 +6,9 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.1 is a working foundation and interface preview.** It loads one starter
-character, opens a private room, and streams a clearly labeled, scripted reply
-from Rust into SwiftUI. It does not call a model or save preview messages.
+**v0.0.2 adds durable private chats.** It loads one starter character and streams
+a clearly labeled local demo reply through the real Rust message/history pipeline.
+Messages survive restarting the app. No model or network service is called.
 
 ## Run it
 
@@ -38,7 +38,7 @@ Icon Composer, or `just preview-icon` to export appearance and small-size
 previews into `build/icon-preview/`. `just build` compiles the icon into the app.
 See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 
-## Try the first stage
+## Try the durable-chat stage
 
 1. Open Mira's private space and choose **Say hello**, or type a thought and
    press **Enter**. **Command–Enter** or **Shift–Enter** inserts a new line. The composer grows
@@ -48,11 +48,16 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 3. Open the character information panel to read SOUL and MEMORY.
 4. Use **Open character folder**, edit the files, and choose **Reload Character
    Files** from the app menu or sidebar. Character and room IDs remain stable.
-5. Quit and reopen the app. Character files and private-room identity survive;
-   preview bubbles intentionally disappear.
+5. Send “I like rainy walks,” then quit and reopen the app. The messages and
+   their IDs survive. Send another thought: the deterministic demo quotes the
+   preceding user message from its saved request history.
+
+Cancelled replies retain their partial text with a **Stopped** label. An abrupt
+exit leaves an **Interrupted** reply after restart; incomplete outputs are not
+accepted as assistant context. Empty drafts are not sent.
 
 The interface is an early light-theme design with a starter character. Groups,
-live inference, durable chat messages, automated memory, and work delegation
+live inference, automated memory, and work delegation
 belong to later milestones. See [the roadmap](docs/roadmap.md).
 
 ## Local data
@@ -68,10 +73,14 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── SOUL.md
 │   └── MEMORY.md
 └── data/
-    └── app.sqlite        # personas + conversations only at v0.0.1
+    ├── app.sqlite        # eight private-chat/history tables
+    └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
-SQLite may also create its own WAL and shared-memory sidecars. Keep this data
+SQLite may also create its own WAL and shared-memory sidecars. Schema version 1
+from v0.0.1 is upgraded transactionally, preserving character and room IDs. Only
+one app instance can open a data root at a time; a second instance reports an
+error without changing active calls. Keep this data
 outside the source checkout. `PEBBLE_DATA_DIR` selects an isolated root for
 development and tests; an existing, incomplete root reports an error instead
 of silently reseeding it.
@@ -79,7 +88,7 @@ of silently reseeding it.
 The app config optionally supplies `[defaults.chat]`. A persona can provide its
 own `[chat]` table, replacing the whole connection. Connections require `model`,
 `base_url`, and `api` (`chat_completions` or `responses`) together. `api_key_env`
-is an optional reference, never the key itself. v0.0.1 validates these files but
+is an optional reference, never the key itself. v0.0.2 validates these files but
 does not perform inference or read credentials. An omitted connection means
 no model is configured.
 
@@ -93,12 +102,12 @@ UniFFI Swift bindings → one Rust static library
           │
           ▼
 pebble-core
-  configuration · personas · private-room IDs · SQLite · preview lifecycle
+  configuration · personas · messages · events · model history · demo lifecycle
 ```
 
-Swift handles rendering, input, temporary preview bubbles, and platform paths.
-Rust owns authoritative identities, configuration validation, database access,
-and the simulated stream. The core has no dependency on Swift or UniFFI.
+Swift handles rendering, input, message snapshots, and platform paths.
+Rust owns authoritative identities, configuration, messages, events, frozen
+model history, database transactions, and the local demo stream. The core has no dependency on Swift or UniFFI.
 Read [the architecture](docs/architecture.md) for the boundary and lifecycle.
 
 ## Validate
@@ -117,7 +126,8 @@ pre-commit, pre-push, and commit-message hooks. Hooks are not installed globally
 Tests use isolated data roots; UI-check data stays under the ignored `build/`
 directory for inspection. The Rust tests cover restart
 identity, schema scope, file edits, connection inheritance, invalid files,
-Unicode event order, cancellation, and callback lifetime. The Swift executable
+Unicode event order, cancellation, callback lifetime, migration, frozen request
+prefixes, event links, transactional rollback, and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
 concurrency checking. The renderer captures this app's own content without
 capturing the desktop or other applications.

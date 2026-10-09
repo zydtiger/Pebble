@@ -1,4 +1,4 @@
-# Shared provider settings belong here. Preview mode needs no API key.
+# Shared provider settings belong here. Local demo mode needs no API key.
 [defaults]
 
 # Enable a complete connection when live model support arrives.

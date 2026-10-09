@@ -41,7 +41,7 @@ struct ContentView: View {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
         .task { await model.load() }
-        .onDisappear { model.closePreview() }
+        .onDisappear { model.closeChat() }
         .onChange(of: model.selectedID) { _, _ in composerFocused = true }
     }
 
@@ -77,6 +77,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("persona-\(persona.displayName)")
+                .disabled(model.isReplying)
             }
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
@@ -85,12 +86,12 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.1").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.2").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")
                     Button { Task { await model.load() } } label: { Image(systemName: "arrow.clockwise") }
-                        .disabled(model.isPreviewing || model.loading)
+                        .disabled(model.isReplying || model.loading)
                         .help("Reload character files")
                 }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
@@ -111,7 +112,7 @@ struct ContentView: View {
                 Text("Just the two of you").font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             }
             Spacer()
-            Text("PREVIEW").font(.system(size: 9, weight: .semibold)).tracking(1.2)
+            Text("LOCAL DEMO").font(.system(size: 9, weight: .semibold)).tracking(1.2)
                 .foregroundStyle(PebbleTheme.sage)
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(PebbleTheme.sage.opacity(0.08), in: Capsule())
@@ -140,10 +141,11 @@ struct ContentView: View {
                 .multilineTextAlignment(.center).lineSpacing(5)
                 .frame(maxWidth: 320).padding(.bottom, 28)
             HStack(spacing: 9) {
-                Button("Say hello") { model.startPreview("Hi, \(persona.displayName). Tell me a little about yourself.") }
-                Button("Share a small thought") { model.startPreview("What's something small worth noticing today?") }
+                Button("Say hello") { model.sendMessage("Hi, \(persona.displayName). Tell me a little about yourself.") }
+                Button("Share a small thought") { model.sendMessage("What's something small worth noticing today?") }
             }
             .buttonStyle(SoftButtonStyle())
+            .disabled(model.loading || model.isReplying)
             Spacer(minLength: 30)
         }
         .padding(.horizontal, 28)
@@ -153,7 +155,7 @@ struct ContentView: View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
-                    Text("A LITTLE PREVIEW").font(.system(size: 9, weight: .medium)).tracking(1.4)
+                    Text("SAVED ON THIS MAC").font(.system(size: 9, weight: .medium)).tracking(1.4)
                         .foregroundStyle(PebbleTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 8)
                     ForEach(model.bubbles) { bubble in
                         HStack(alignment: .top, spacing: 10) {
@@ -163,18 +165,18 @@ struct ContentView: View {
                                 Text(bubble.isUser ? "YOU" : persona.displayName.uppercased())
                                     .font(.system(size: 9, weight: .semibold)).tracking(1)
                                     .foregroundStyle(PebbleTheme.muted)
-                                if bubble.text.isEmpty && !bubble.isUser && !bubble.stopped {
+                                if bubble.text.isEmpty && bubble.status == .streaming {
                                     ProgressView().controlSize(.small).padding(17)
                                 } else {
-                                    Text(bubble.text.isEmpty ? "Preview stopped." : bubble.text)
+                                    Text(bubble.text.isEmpty ? "No reply text." : bubble.text)
                                         .font(.system(size: 14)).lineSpacing(6)
                                         .textSelection(.enabled)
                                         .padding(.horizontal, 18).padding(.vertical, 15)
                                         .background(bubble.isUser ? PebbleTheme.sage.opacity(0.11) : .white.opacity(0.85),
                                                     in: RoundedRectangle(cornerRadius: 18))
                                 }
-                                if bubble.stopped {
-                                    Text("Stopped").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                if let status = bubble.statusLabel {
+                                    Text(status).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                 }
                             }
                             if !bubble.isUser { Spacer(minLength: 28) }
@@ -184,8 +186,9 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 30).padding(.vertical, 20)
             }
+            .onAppear { reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
-            .onChange(of: model.previewRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
+            .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
         }
     }
 
@@ -193,28 +196,28 @@ struct ContentView: View {
         VStack(spacing: 11) {
             HStack(alignment: .bottom, spacing: 12) {
                 MessageEditor(text: $model.draft, height: $composerHeight,
-                              isFocused: $composerFocused, isEditable: !model.isPreviewing) {
-                    model.startPreview()
+                              isFocused: $composerFocused, isEditable: !model.isReplying && !model.loading) {
+                    model.sendMessage()
                 }
                     .frame(height: composerHeight)
                 Button {
-                    if model.isPreviewing { model.stopPreview() } else { model.startPreview() }
+                    if model.isReplying { model.stopReply() } else { model.sendMessage() }
                 } label: {
-                    Image(systemName: model.isPreviewing ? "stop.fill" : "arrow.up")
+                    Image(systemName: model.isReplying ? "stop.fill" : "arrow.up")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 33, height: 33)
                         .background(PebbleTheme.sage, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.isPreviewing && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help(model.isPreviewing ? "Stop preview" : "Preview reply (Enter)")
-                .accessibilityLabel(model.isPreviewing ? "Stop preview" : "Preview reply")
+                .disabled(model.loading || (!model.isReplying && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .help(model.isReplying ? "Stop reply" : "Send message (Enter)")
+                .accessibilityLabel(model.isReplying ? "Stop reply" : "Send message")
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(PebbleTheme.line.opacity(0.7), lineWidth: 1))
-            Text("Preview only · Replies are simulated · Messages aren't saved")
+            Text("Local demo · No model connected · Messages saved on this Mac")
                 .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
         }
         .padding(.horizontal, 30).padding(.bottom, 22).padding(.top, 12)
@@ -283,7 +286,7 @@ private struct CharacterSheet: View {
             Text("Edit SOUL.md and MEMORY.md in the character folder, then reload. Memory is maintained by hand in this version.")
                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             HStack {
-                Text(persona.model.map { "Configured: \($0) · Preview only" } ?? "No model connected · Preview only")
+                Text(persona.model.map { "Configured: \($0) · Local demo only" } ?? "No model connected · Local demo only")
                     .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                 Spacer()
                 Button("Open character folder") { model.openCharacterFiles() }

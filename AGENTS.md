@@ -1,19 +1,20 @@
 # Pebble
 
 Pebble is a macOS character-chat app. Read `README.md` and `docs/architecture.md`
-before changing the application. The current milestone is v0.0.1, leading to the
+before changing the application. The current milestone is v0.0.2, leading to the
 private-chat release v0.1.0.
 
 ## Ownership and scope
 
-- `crates/pebble-core` owns configuration, persona identity, SQLite, and preview
-  lifecycle. Keep it independent of Swift and UniFFI.
+- `crates/pebble-core` owns configuration, persona identity, SQLite, model history,
+  and generation lifecycle. Keep it independent of Swift and UniFFI.
 - `crates/pebble-ffi` owns typed binding conversion and foreign listeners.
 - `macos/Pebble` owns SwiftUI/AppKit presentation and platform glue only.
 - `macos/Generated`, `target`, and `build` are generated; edit their sources.
 - `docs/architecture.md` owns runtime boundaries; `docs/roadmap.md` owns scope.
-- v0.0.1 uses a visibly simulated, ephemeral preview. Do not add inference,
-  persisted messages, groups, compaction, or task delegation in this milestone.
+- v0.0.2 persists private messages and persona/model history using a clearly
+  labeled local demo responder. Do not add network inference, groups,
+  compaction, compression, or task delegation in this milestone.
 
 ## Development and validation
 
