@@ -6,4 +6,6 @@
 # model = "your-model"
 # base_url = "https://your-provider.example/v1"
 # api = "chat_completions"
+# api_key = "" # Empty for endpoints without authentication.
+# Or use an environment reference instead of a nonempty inline key:
 # api_key_env = "PEBBLE_API_KEY"

@@ -23,12 +23,26 @@ pub struct Persona {
     pub chat: Option<ChatConnection>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ChatConnection {
     pub model: String,
     pub base_url: String,
     pub api: String,
+    pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+}
+
+impl std::fmt::Debug for ChatConnection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChatConnection")
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api", &self.api)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("api_key_env", &self.api_key_env)
+            .finish()
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -89,6 +103,16 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
     }) {
         return Err(invalid(
             "chat.api_key_env must name an environment variable",
+        ));
+    }
+    if connection
+        .api_key
+        .as_ref()
+        .is_some_and(|key| !key.trim().is_empty())
+        && connection.api_key_env.is_some()
+    {
+        return Err(invalid(
+            "Set either chat.api_key or chat.api_key_env, not both",
         ));
     }
     Ok(())

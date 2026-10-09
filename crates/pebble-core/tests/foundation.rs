@@ -90,6 +90,33 @@ fn connections_inherit_as_a_whole_and_reject_partial_override() {
 }
 
 #[test]
+fn inline_api_key_accepts_blank_and_redacts_nonempty_values() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let config = root.path().join("config.toml");
+    let connection = "[defaults.chat]\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='chat_completions'\n";
+    for key in ["", "test-only-placeholder"] {
+        fs::write(&config, format!("{connection}api_key='{key}'\n")).unwrap();
+        let chat = core.workspace().unwrap().personas.remove(0).chat.unwrap();
+        assert_eq!(chat.api_key.as_deref(), Some(key));
+        assert!(chat.api_key_env.is_none());
+        assert!(!format!("{chat:?}").contains("test-only-placeholder"));
+    }
+    fs::write(
+        &config,
+        format!("{connection}api_key='test-only-placeholder'\napi_key_env='MODEL_KEY'\n"),
+    )
+    .unwrap();
+    assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
+    fs::write(
+        &config,
+        format!("{connection}api_key=''\napi_key_env='MODEL_KEY'\n"),
+    )
+    .unwrap();
+    assert!(core.workspace().is_ok());
+}
+
+#[test]
 fn invalid_and_missing_files_remain_visible_errors() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();

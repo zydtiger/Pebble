@@ -87,10 +87,14 @@ of silently reseeding it.
 
 The app config optionally supplies `[defaults.chat]`. A persona can provide its
 own `[chat]` table, replacing the whole connection. Connections require `model`,
-`base_url`, and `api` (`chat_completions` or `responses`) together. `api_key_env`
-is an optional reference, never the key itself. v0.0.2 validates these files but
-does not perform inference or read credentials. An omitted connection means
-no model is configured.
+`base_url`, and `api` (`chat_completions` or `responses`) together. `api_key = ""`
+is the placeholder for an endpoint without authentication. Authenticated endpoints
+can use a nonempty `api_key` in the local config, or an `api_key_env` reference;
+do not configure both at once. Base URLs are API roots, normally ending in `/v1`
+for Chat Completions. v0.0.2 validates this configuration but still runs the local
+demo; network inference and authentication arrive in v0.0.3. An omitted
+connection means no model is configured. Runtime configuration and actual keys
+stay outside the repository.
 
 ## Architecture
 
