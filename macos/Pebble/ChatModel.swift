@@ -13,6 +13,11 @@ actor CoreClient {
         return try backend!.workspace()
     }
 
+    func create(name: String) throws -> PersonaRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.createPersona(name: name)
+    }
+
     func history(persona: String) throws -> [MessageRecord] {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble's character files first.") }
         return try backend.messages(personaId: persona)
@@ -60,6 +65,7 @@ struct ChatBubble: Identifiable {
         case .cancelled: return "Stopped"
         case .interrupted: return "Interrupted"
         case .failed: return "Failed"
+        case .queued: return "Queued"
         case .complete, .streaming: return nil
         }
     }
@@ -73,17 +79,10 @@ final class ChatModel {
     var workspace: WorkspaceRecord?
     var selectedID: String?
     var loading = true
-    var error: String?
-    var draft = ""
-    var bubbles: [ChatBubble] = []
-    var isReplying = false
     var showCharacter = false
+    var showNewCharacter = false
     var replyRevision = 0
-    private var chatHandle: ChatHandle?
-    private var chatTask: Task<Void, Never>?
-    private var continuation: AsyncStream<ChatUpdate>.Continuation?
-    private var cancellationRequested = false
-    private var operation = UUID()
+    private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
 
     init(dataRoot: URL? = nil) {
@@ -98,136 +97,111 @@ final class ChatModel {
     }
 
     var selected: PersonaRecord? { workspace?.personas.first { $0.id == selectedID } }
+    private var selectedRoom: RoomState? { selectedID.map { room($0) } }
+    var draft: String { get { selectedRoom?.draft ?? "" } set { selectedRoom?.draft = newValue } }
+    var bubbles: [ChatBubble] { selectedRoom?.bubbles ?? [] }
+    var error: String? { get { if let selectedRoom { return selectedRoom.error }; return openingError } set { if let selectedRoom { selectedRoom.error = newValue } else { openingError = newValue } } }
+    private var openingError: String?
+    var isReplying: Bool { !(selectedRoom?.runs.isEmpty ?? true) }
+    var hasActiveReplies: Bool { rooms.values.contains { !$0.runs.isEmpty } }
+    func pendingCount(_ personaID: String) -> Int { rooms[personaID]?.runs.count ?? 0 }
+    private func room(_ id: String) -> RoomState {
+        if let room = rooms[id] { return room }
+        let state = RoomState(); rooms[id] = state; return state
+    }
 
     func load() async {
-        guard !isReplying else { return }
-        let revision = UUID()
-        selectionRevision = revision
-        loading = true
-        error = nil
+        let revision = UUID(); selectionRevision = revision
+        loading = true; openingError = nil
         do {
             let loaded = try await client.load()
             guard selectionRevision == revision else { return }
             workspace = loaded
-            if !loaded.personas.contains(where: { $0.id == selectedID }) {
-                selectedID = loaded.personas.first?.id
-                bubbles = []
-            }
+            if !loaded.personas.contains(where: { $0.id == selectedID }) { selectedID = loaded.personas.first?.id }
             if let id = selectedID {
-                let messages = try await client.history(persona: id)
-                guard selectionRevision == revision else { return }
-                bubbles = messages.map(ChatBubble.init)
+                let state = room(id)
+                if state.runs.isEmpty {
+                    let messages = try await client.history(persona: id)
+                    guard selectionRevision == revision else { return }
+                    if state.runs.isEmpty { state.bubbles = messages.map(ChatBubble.init) }
+                }
+                state.loaded = true
             }
-        } catch {
-            guard selectionRevision == revision else { return }
-            self.error = describe(error)
-        }
-        loading = false
+        } catch { if selectionRevision == revision { self.error = describe(error) } }
+        if selectionRevision == revision { loading = false }
     }
 
     func select(_ id: String) {
-        guard selectedID != id, !isReplying else { return }
-        selectedID = id
-        bubbles = []
-        draft = ""
-        loading = true
-        Task { await load() }
+        guard selectedID != id else { return }
+        selectionRevision = UUID(); selectedID = id
+        loading = !room(id).loaded
+        if loading { Task { await load() } }
+    }
+
+    func createCharacter(_ name: String) async -> Bool {
+        do {
+            let persona = try await client.create(name: name)
+            workspace = try await client.load()
+            select(persona.id)
+            return true
+        } catch { self.error = describe(error); return false }
     }
 
     func sendMessage(_ suggested: String? = nil) {
-        guard let persona = selected, !isReplying, !loading else { return }
-        let prompt = (suggested ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let persona = selected, !loading else { return }
+        let state = room(persona.id)
+        let prompt = (suggested ?? state.draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
-        error = nil
-        let token = UUID()
-        operation = token
+        state.error = nil
+        let run = RoomRun()
         let (stream, sink) = AsyncStream<ChatUpdate>.makeStream(bufferingPolicy: .bufferingOldest(256))
-        continuation = sink
+        run.sink = sink; state.runs.append(run)
         let observer = StreamObserver(sink)
-        cancellationRequested = false
-        isReplying = true
-        chatTask = Task { [weak self, client] in
+        run.task = Task { [weak self, client] in
             do {
                 let handle = try await client.send(persona: persona.id, prompt: prompt, observer: observer)
-                guard !Task.isCancelled, self?.operation == token else { handle.cancel(); sink.finish(); return }
-                self?.chatHandle = handle
-                self?.draft = ""
-                self?.apply(handle.messages())
-                if self?.cancellationRequested == true { handle.cancel() }
+                guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handle.cancel(); sink.finish(); return }
+                run.handle = handle
+                // A room switch must not clear another room's draft.
+                if state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
+                state.apply(handle.messages(), conversation: persona.conversationId)
+                if run.cancelRequested { handle.cancel() }
                 for await update in stream {
-                    guard !Task.isCancelled, self?.operation == token else { break }
+                    guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { break }
                     guard update.runId == handle.id(), update.conversationId == persona.conversationId,
                           update.personaId == persona.id else { continue }
-                    self?.consume(update)
+                    state.consume(update, conversation: persona.conversationId)
+                    if self?.selectedID == persona.id { self?.replyRevision += 1 }
                 }
-                if !Task.isCancelled, self?.operation == token {
-                    // The final snapshot also reconciles a disconnected callback with durable state.
+                if !Task.isCancelled, state.runs.count == 1, state.runs.first?.id == run.id {
                     let messages = try await client.history(persona: persona.id)
-                    guard !Task.isCancelled, self?.operation == token else { return }
-                    self?.bubbles = messages.map(ChatBubble.init)
-                    self?.finishReply()
+                    if state.runs.count == 1, state.runs.first?.id == run.id { state.bubbles = messages.map(ChatBubble.init) }
                 }
             } catch {
                 sink.finish()
-                guard !Task.isCancelled, self?.operation == token else { return }
-                self?.error = self?.describe(error)
-                if let messages = try? await client.history(persona: persona.id), self?.operation == token {
-                    self?.bubbles = messages.map(ChatBubble.init)
-                }
-                if self?.operation == token { self?.finishReply() }
+                if !Task.isCancelled { state.error = self?.describe(error) }
             }
+            state.runs.removeAll { $0.id == run.id }
+            run.handle = nil; run.sink = nil; run.task = nil
         }
     }
 
-    private func apply(_ messages: [MessageRecord]) {
-        guard let conversation = selected?.conversationId else { return }
-        for message in messages where message.conversationId == conversation {
-            let bubble = ChatBubble(message)
-            if let index = bubbles.firstIndex(where: { $0.id == message.id }) { bubbles[index] = bubble }
-            else { bubbles.append(bubble) }
-        }
-        bubbles.sort { $0.sequence < $1.sequence }
+    func stopReply() { selectedRoom?.runs.first?.cancel() }
+    func cancelReply(_ messageID: String) {
+        selectedRoom?.runs.first(where: { $0.handle?.messages().last?.id == messageID })?.cancel()
     }
-
-    private func consume(_ update: ChatUpdate) {
-        apply(update.messages)
-        if update.kind == .textDelta, let index = bubbles.firstIndex(where: { $0.id == update.messageId }) {
-            bubbles[index].text += update.text
-        }
-        if update.kind == .failed {
-            error = update.text
-            if let index = bubbles.firstIndex(where: { $0.id == update.messageId }) { bubbles[index].status = .failed }
-        }
-        replyRevision += 1
-    }
-
-    func stopReply() {
-        cancellationRequested = true
-        chatHandle?.cancel()
-    }
-
-    private func finishReply() {
-        isReplying = false
-        chatHandle = nil
-        continuation = nil
-        chatTask = nil
-    }
-
     func closeChat() {
-        operation = UUID()
         selectionRevision = UUID()
-        chatHandle?.cancel()
-        chatTask?.cancel()
-        continuation?.finish()
-        finishReply()
+        for state in rooms.values {
+            for run in state.runs { run.cancel(); run.task?.cancel(); run.sink?.finish() }
+            state.runs.removeAll()
+        }
     }
-
     func openFiles() { NSWorkspace.shared.open(dataRoot) }
     func openCharacterFiles() {
         guard let selected else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: selected.directory, isDirectory: true))
     }
-
     private func describe(_ error: Error) -> String {
         guard let error = error as? BackendError else { return error.localizedDescription }
         switch error {

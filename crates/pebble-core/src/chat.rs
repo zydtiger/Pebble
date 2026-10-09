@@ -1,6 +1,7 @@
 use crate::{Error, Message, MessageStatus, Persona, demo, history::Turn, storage::Database};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, Condvar, Mutex};
+mod queue;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,6 @@ pub trait ChatListener: Send + Sync {
 pub(crate) struct Control {
     cancelled: Mutex<bool>,
     wake: Condvar,
-    finished: AtomicBool,
     signal: tokio::sync::Notify,
 }
 
@@ -83,7 +83,7 @@ impl Drop for ChatTask {
 
 #[derive(Default)]
 pub(crate) struct Chats {
-    active: Mutex<Option<Weak<Control>>>,
+    queues: Mutex<HashMap<String, Arc<queue::Queue>>>,
 }
 
 impl Chats {
@@ -94,41 +94,94 @@ impl Chats {
         prompt: &str,
         listener: Arc<dyn ChatListener>,
     ) -> Result<ChatTask, Error> {
-        let mut active = self.active.lock().expect("generation lock");
-        if active
-            .as_ref()
-            .and_then(Weak::upgrade)
-            .is_some_and(|control| !control.finished.load(Ordering::Acquire))
-        {
-            return Err(Error::Busy);
-        }
-        let turn = db.begin_turn(&persona, prompt)?;
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        let queue = queues.entry(persona.id.clone()).or_default().clone();
+        let turn = db.enqueue_turn(&persona, prompt)?;
         let control = Arc::new(Control::default());
         let task = ChatTask {
             id: turn.call_id.clone(),
             messages: vec![turn.user.clone(), turn.reply.clone()],
             control: control.clone(),
         };
+        let reservation = queue.reserve(&turn.call_id, &control);
         let worker_db = db.clone();
         let worker_turn = turn.clone();
         let spawn = std::thread::Builder::new()
             .name("pebble-chat".into())
             .spawn(move || {
-                run(worker_db, worker_turn, control, listener, persona.chat);
+                if !reservation.wait(&control) {
+                    finish_pending(
+                        &worker_db,
+                        &worker_turn,
+                        &listener,
+                        MessageStatus::Cancelled,
+                        None,
+                    );
+                } else {
+                    match worker_db.activate_turn(&persona, &worker_turn) {
+                        Ok(turn) => run(worker_db, turn, control, listener, persona.chat),
+                        Err(error) => finish_pending(
+                            &worker_db,
+                            &worker_turn,
+                            &listener,
+                            MessageStatus::Failed,
+                            Some(error.to_string()),
+                        ),
+                    }
+                }
+                drop(reservation);
             });
         if let Err(error) = spawn {
-            db.finish_turn(
-                &turn,
-                "",
-                MessageStatus::Failed,
-                Some(&error.to_string()),
-                None,
-            )?;
+            db.finish_pending(&turn, MessageStatus::Failed, Some(&error.to_string()))?;
             return Err(Error::Generation(error.to_string()));
         }
-        *active = Some(Arc::downgrade(&task.control));
         Ok(task)
     }
+}
+
+impl Drop for Chats {
+    fn drop(&mut self) {
+        for queue in self
+            .queues
+            .get_mut()
+            .expect("generation queues lock")
+            .values()
+        {
+            queue.cancel_all();
+        }
+    }
+}
+
+fn finish_pending(
+    db: &Database,
+    turn: &Turn,
+    listener: &Arc<dyn ChatListener>,
+    status: MessageStatus,
+    error: Option<String>,
+) {
+    let result = db.finish_pending(turn, status, error.as_deref());
+    let (kind, messages, detail) = match result {
+        Ok(message) => (
+            if status == MessageStatus::Cancelled {
+                ChatEventKind::Cancelled
+            } else {
+                ChatEventKind::Failed
+            },
+            vec![message],
+            error.unwrap_or_default(),
+        ),
+        Err(error) => (ChatEventKind::Failed, Vec::new(), error.to_string()),
+    };
+    let _ = listener.on_event(ChatEvent {
+        run_id: turn.call_id.clone(),
+        conversation_id: turn.conversation_id.clone(),
+        persona_id: turn.persona_id.clone(),
+        message_id: turn.reply.id.clone(),
+        sequence: 0,
+        kind,
+        text: detail,
+        messages,
+    });
 }
 
 fn run(
@@ -234,8 +287,7 @@ fn run(
             (ChatEventKind::Failed, messages, detail)
         }
     };
-    // Persist the terminal outcome before another call or the terminal UI event.
-    control.finished.store(true, Ordering::Release);
+    // The queue releases this slot after durable terminal publication.
     if connected {
         let _ = emit(sequence + 1, kind, error, messages);
     }

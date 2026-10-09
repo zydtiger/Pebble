@@ -1,3 +1,4 @@
+mod jobs;
 mod turns;
 
 use crate::{Error, Message, MessageStatus, ModelItem, ModelRequest, Persona, file_error};
@@ -32,9 +33,12 @@ impl Database {
         let mut connection = Connection::open(data.join("app.sqlite"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+        let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version < 4 {
+            connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        }
         let tx = connection.transaction()?;
-        let version: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -59,13 +63,21 @@ impl Database {
                 ALTER TABLE model_sessions ADD COLUMN event_start_sequence INTEGER NOT NULL DEFAULT 0;
                 PRAGMA user_version = 3;")?;
         }
+        if version < 4 {
+            tx.execute_batch(include_str!("storage/queue-migration.sql"))?;
+            tx.execute_batch("PRAGMA user_version = 4;")?;
+        }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
             "UPDATE messages SET status = 'interrupted' WHERE status = 'streaming';
              UPDATE model_calls SET status = 'interrupted', error = 'Application stopped before completion',
-                 finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'streaming';"
+                 finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status IN ('streaming', 'queued');"
         )?;
+        if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
+            return Err(Error::Database(rusqlite::Error::InvalidQuery));
+        }
         tx.commit()?;
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(Self {
             connection: Mutex::new(connection),
             _lock: lock,
@@ -114,8 +126,10 @@ impl Database {
     pub(crate) fn messages(&self, conversation_id: &str) -> Result<Vec<Message>, Error> {
         let connection = self.connection.lock().expect("database lock");
         let mut query = connection.prepare(
-            "SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at
-             FROM messages WHERE conversation_id = ?1 ORDER BY sequence"
+            "SELECT m.id, m.conversation_id, m.sequence, m.sender_kind, m.sender_id, m.content,
+                CASE WHEN m.status = 'streaming' AND j.status = 'queued' THEN 'queued' ELSE m.status END,
+                m.created_at FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
+                WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;
         Ok(query
             .query_map([conversation_id], read_message)?
@@ -166,6 +180,7 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     let status = match status.as_str() {
         "complete" => MessageStatus::Complete,
         "streaming" => MessageStatus::Streaming,
+        "queued" => MessageStatus::Queued,
         "cancelled" => MessageStatus::Cancelled,
         "interrupted" => MessageStatus::Interrupted,
         "failed" => MessageStatus::Failed,

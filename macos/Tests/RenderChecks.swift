@@ -79,6 +79,22 @@ struct RenderChecks {
                 window.setContentSize(NSSize(width: 820, height: 610))
                 try await Task.sleep(for: .milliseconds(300))
                 try capture(window, name: "compact")
+                let miraID = model.selected!.id
+                guard await model.createCharacter("Kai") else { throw RenderError.failed("Could not create a second character") }
+                for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+                let kaiID = model.selected!.id
+                model.sendMessage("Kai's concurrent thought")
+                model.select(miraID)
+                model.sendMessage("Mira's next thought")
+                model.sendMessage("A queued followup")
+                try await Task.sleep(for: .milliseconds(150))
+                guard model.pendingCount(miraID) == 2, model.pendingCount(kaiID) == 1,
+                      model.bubbles.last?.status == .queued else { throw RenderError.failed("Concurrent queue presentation was missing") }
+                try capture(window, name: "queued-rooms")
+                for _ in 0..<500 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+                guard !model.hasActiveReplies, model.error == nil else { throw RenderError.failed("Concurrent preview replies did not finish") }
+                try await Task.sleep(for: .milliseconds(100))
+                try capture(window, name: "multi-persona")
                 try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
                     .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
                 await model.load()

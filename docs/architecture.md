@@ -42,7 +42,8 @@ ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 
 ```text
 Swift sends text and observer
-    → Rust accepts messages/events/request items in one transaction
+    → Rust accepts messages, receipt event, and queued call atomically
+    → persona queue activates the call and freezes its request atomically
     → Rust returns a cancellable handle and authoritative message IDs
     → Chat Completions (or unconfigured demo) consumes the stored request
     → Rust checkpoints visible deltas, then notifies Swift
@@ -56,12 +57,26 @@ and retains an unaccepted draft on error. MainActor never opens SQLite. The
 actor bridge keeps blocking core calls off the UI thread, and listeners only
 enqueue events. A bounded, disconnected subscription cancels generation.
 
-Only one call runs at a time in v0.0.3; the UI disables character switching
-during a reply. An early cancel request is retained until Rust returns the
-handle. Closing the view cancels the worker and subscription. A process-level
-data-root lock prevents another app instance from interrupting live work during
-startup recovery. Basic recovery marks unfinished replies interrupted without
-accepting their partial content into model history.
+Each persona has one ordered execution queue; different personas can generate
+concurrently. Accepted user/reply messages and a received event are durable
+before the call starts. A queued call has no session or frozen input yet.
+Activation builds its request after the predecessor publishes accepted output,
+while limiting incoming events to that call's receipt cutoff. Thus an earlier
+call cannot consume later queued inputs, and a followup sees its predecessor's
+native assistant output even when that output event was recorded later.
+
+Swift keeps a presentation cache and run handles per private room. Room switching
+changes the displayed cache without disconnecting other streams. Drafts, output,
+errors, and Stop belong to that room. Queued bubbles expose individual cancel;
+Stop targets the selected persona's oldest outstanding reply. Closing the view
+cancels every retained handle/subscription; dropping the core cancels its queues.
+Early cancellation is retained until a handle arrives. Startup marks both queued
+and active calls interrupted, with no accepted partial output or hidden resubmit.
+
+Rust character creation atomically publishes a UUID directory containing
+config.toml, SOUL.md, and MEMORY.md. It inherits the app's default connection,
+creates a stable private room, and exposes a minimal name form in Swift. General
+editing/settings and deletion are outside this milestone.
 
 The demo protocol is distinct from Chat Completions and Responses. Configured
 Chat Completions always runs its real HTTP adapter; Responses fails explicitly.

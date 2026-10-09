@@ -40,6 +40,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showCharacter) {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
+        .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
         .task { await model.load() }
         .onDisappear { model.closeChat() }
         .onChange(of: model.selectedID) { _, _ in composerFocused = true }
@@ -58,27 +59,33 @@ struct ContentView: View {
             Text("YOUR PEOPLE")
                 .font(.system(size: 10, weight: .semibold)).tracking(1.6)
                 .foregroundStyle(PebbleTheme.muted).padding(.bottom, 13)
-            ForEach(model.workspace?.personas ?? [], id: \.id) { persona in
-                Button { model.select(persona.id) } label: {
-                    HStack(spacing: 11) {
-                        CharacterAvatar(size: 38)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(persona.displayName).font(.system(size: 13, weight: .semibold))
-                            Text("Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(model.workspace?.personas ?? [], id: \.id) { persona in
+                        Button { model.select(persona.id) } label: {
+                            HStack(spacing: 11) {
+                                CharacterAvatar(size: 38)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(persona.displayName).font(.system(size: 13, weight: .semibold))
+                                    Text(model.pendingCount(persona.id) > 0 ? "\(model.pendingCount(persona.id)) pending" : "Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                }
+                                Spacer(minLength: 0)
+                                if persona.id == model.selectedID {
+                                    Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
+                                }
+                            }
+                            .padding(11)
+                            .background(persona.id == model.selectedID ? .white.opacity(0.72) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 14))
                         }
-                        Spacer(minLength: 0)
-                        if persona.id == model.selectedID {
-                            Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
-                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("persona-\(persona.displayName)")
                     }
-                    .padding(11)
-                    .background(persona.id == model.selectedID ? .white.opacity(0.72) : .clear,
-                                in: RoundedRectangle(cornerRadius: 14))
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("persona-\(persona.displayName)")
-                .disabled(model.isReplying)
-            }
+            }.scrollIndicators(.hidden)
+            Button { model.showNewCharacter = true } label: {
+                Label("New character", systemImage: "plus").font(.system(size: 11))
+            }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 14)
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
                 Text("Every friendship starts\nwith a small hello.")
@@ -86,12 +93,12 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.0.3").font(.system(size: 10, design: .monospaced))
+                    Text("v0.0.4").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
                         .help("Open Pebble's data folder")
                     Button { Task { await model.load() } } label: { Image(systemName: "arrow.clockwise") }
-                        .disabled(model.isReplying || model.loading)
+                        .disabled(model.hasActiveReplies || model.loading)
                         .help("Reload character files")
                 }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
@@ -168,7 +175,7 @@ struct ContentView: View {
                                 if bubble.text.isEmpty && bubble.status == .streaming {
                                     ProgressView().controlSize(.small).padding(17)
                                 } else {
-                                    Text(bubble.text.isEmpty ? "No reply text." : bubble.text)
+                                    Text(bubble.status == .queued ? "Waiting for earlier reply…" : (bubble.text.isEmpty ? "No reply text." : bubble.text))
                                         .font(.system(size: 14)).lineSpacing(6)
                                         .textSelection(.enabled)
                                         .padding(.horizontal, 18).padding(.vertical, 15)
@@ -176,7 +183,10 @@ struct ContentView: View {
                                                     in: RoundedRectangle(cornerRadius: 18))
                                 }
                                 if let status = bubble.statusLabel {
-                                    Text(status).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                    HStack {
+                                        Text(status).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                        if bubble.status == .queued { Button("Cancel") { model.cancelReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
+                                    }
                                 }
                             }
                             if !bubble.isUser { Spacer(minLength: 28) }
@@ -196,23 +206,23 @@ struct ContentView: View {
         VStack(spacing: 11) {
             HStack(alignment: .bottom, spacing: 12) {
                 MessageEditor(text: $model.draft, height: $composerHeight,
-                              isFocused: $composerFocused, isEditable: !model.isReplying && !model.loading) {
+                              isFocused: $composerFocused, isEditable: !model.loading) {
                     model.sendMessage()
                 }
                     .frame(height: composerHeight)
-                Button {
-                    if model.isReplying { model.stopReply() } else { model.sendMessage() }
-                } label: {
-                    Image(systemName: model.isReplying ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 33, height: 33)
-                        .background(PebbleTheme.sage, in: Circle())
+                if model.isReplying {
+                    Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
+                        .buttonStyle(.plain).foregroundStyle(PebbleTheme.sage)
+                        .help("Stop this character's current reply").accessibilityLabel("Stop reply")
                 }
-                .buttonStyle(.plain)
-                .disabled(model.loading || (!model.isReplying && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                .help(model.isReplying ? "Stop reply" : "Send message (Enter)")
-                .accessibilityLabel(model.isReplying ? "Stop reply" : "Send message")
+                Button { model.sendMessage() } label: {
+                    Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white).frame(width: 33, height: 33)
+                        .background(PebbleTheme.sage, in: Circle())
+                }.buttonStyle(.plain)
+                    .disabled(model.loading || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help(model.isReplying ? "Queue message (Enter)" : "Send message (Enter)")
+                    .accessibilityLabel(model.isReplying ? "Queue message" : "Send message")
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))

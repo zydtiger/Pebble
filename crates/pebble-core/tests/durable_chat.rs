@@ -191,7 +191,7 @@ fn acceptance_rolls_back_as_one_transaction() {
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     let db = db(root.path());
-    db.execute_batch("CREATE TRIGGER reject_item BEFORE INSERT ON model_item_events BEGIN SELECT RAISE(ABORT, 'test rollback'); END;").unwrap();
+    db.execute_batch("CREATE TRIGGER reject_item BEFORE INSERT ON model_calls BEGIN SELECT RAISE(ABORT, 'test rollback'); END;").unwrap();
     let (tx, _) = mpsc::channel();
     assert!(
         core.send_message(&persona.id, "hello", Arc::new(Listener(tx)))
@@ -287,7 +287,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        3
+        4
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }

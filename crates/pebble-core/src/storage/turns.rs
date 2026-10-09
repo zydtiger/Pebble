@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 impl Database {
-    pub(crate) fn begin_turn(&self, persona: &Persona, prompt: &str) -> Result<Turn, Error> {
+    pub(crate) fn activate_turn(&self, persona: &Persona, pending: &Turn) -> Result<Turn, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         let (protocol, model, base_url) = crate::connection::identity(persona.chat.as_ref());
@@ -21,11 +21,7 @@ impl Database {
             (id, start)
         } else {
             tx.execute("UPDATE model_sessions SET status = 'retired' WHERE persona_id = ?1 AND status = 'active'", [&persona.id])?;
-            let start: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(sequence), 0) FROM persona_events WHERE persona_id = ?1",
-                [&persona.id],
-                |row| row.get(0),
-            )?;
+            let start = pending.receipt_cutoff - 1;
             let id = new_id();
             tx.execute(
                 "INSERT INTO model_sessions (id, persona_id, protocol, model, base_url, event_start_sequence, covered_event_sequence, status)
@@ -50,26 +46,13 @@ impl Database {
                         [&session_id], |row| row.get::<_, bool>(0))? {
             return Err(Error::Busy);
         }
-        let user_id = insert_message(
-            &tx,
-            persona,
-            "user",
-            "owner",
-            prompt,
-            MessageStatus::Complete,
-        )?;
-        let reply_id = insert_message(
-            &tx,
-            persona,
-            "persona",
-            &persona.id,
-            "",
-            MessageStatus::Streaming,
-        )?;
-        insert_event(&tx, persona, &user_id, "received")?;
+        let user_id = pending.user.id.clone();
+        let reply_id = pending.reply.id.clone();
+
         let cutoff: i64 = tx.query_row(
-            "SELECT MAX(sequence) FROM persona_events WHERE persona_id = ?1",
-            [&persona.id],
+            "SELECT MAX(e.sequence) FROM persona_events e WHERE e.persona_id = ?1 AND
+                (e.sequence <= ?2 OR EXISTS (SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id WHERE x.event_id = e.id AND i.session_id = ?3))",
+            params![persona.id, pending.receipt_cutoff, session_id],
             |row| row.get(0),
         )?;
         let mut events = Vec::new();
@@ -78,13 +61,21 @@ impl Database {
             let mut query = tx.prepare(
                 "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content
                  FROM persona_events e JOIN messages m ON m.id = e.message_id
-                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND e.sequence > ?4 AND NOT EXISTS (
+                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND e.sequence > ?4 AND e.kind = 'received' AND e.sequence <= ?5
+                 AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed'))
+                 AND NOT EXISTS (
                      SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                      WHERE x.event_id = e.id AND i.session_id = ?3)
                  ORDER BY e.sequence"
             )?;
             let rows = query.query_map(
-                params![persona.id, cutoff, session_id, event_start],
+                params![
+                    persona.id,
+                    cutoff,
+                    session_id,
+                    event_start,
+                    pending.receipt_cutoff
+                ],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -106,25 +97,15 @@ impl Database {
                 event_ids.push(id);
             }
         }
-        let call_id = new_id();
+        let call_id = pending.call_id.clone();
         let input_sequence: i64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence), -1) + 1 FROM model_items WHERE session_id = ?1",
             [&session_id],
             |row| row.get(0),
         )?;
         tx.execute(
-            "INSERT INTO model_calls (id, session_id, conversation_id, trigger_message_id,
-                reply_message_id, input_last_sequence, event_cutoff, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'streaming')",
-            params![
-                call_id,
-                session_id,
-                persona.conversation_id,
-                user_id,
-                reply_id,
-                input_sequence,
-                cutoff
-            ],
+            "UPDATE model_calls SET session_id = ?2, input_last_sequence = ?3, event_cutoff = ?4, status = 'streaming' WHERE id = ?1 AND status = 'queued'",
+            params![call_id, session_id, input_sequence, cutoff],
         )?;
         let envelope = json!({"events":events, "reply_request":{
             "conversation_id":persona.conversation_id, "trigger_message_id":user_id}});
@@ -142,6 +123,7 @@ impl Database {
         let turn = Turn {
             call_id,
             session_id,
+            receipt_cutoff: pending.receipt_cutoff,
             persona_id: persona.id.clone(),
             conversation_id: persona.conversation_id.clone(),
             user: message(&tx, &user_id)?,
@@ -209,16 +191,16 @@ impl Database {
     }
 }
 
-fn new_id() -> String {
+pub(super) fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn message(db: &Connection, id: &str) -> Result<Message, Error> {
+pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
     Ok(db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1",
                     [id], read_message)?)
 }
 
-fn insert_message(
+pub(super) fn insert_message(
     db: &Connection,
     persona: &Persona,
     kind: &str,
@@ -235,7 +217,7 @@ fn insert_message(
     Ok(id)
 }
 
-fn insert_event(
+pub(super) fn insert_event(
     db: &Connection,
     persona: &Persona,
     message: &str,
@@ -287,7 +269,7 @@ fn link(db: &Connection, item: &str, event: &str) -> Result<(), Error> {
 fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
     db.execute(
         "UPDATE model_sessions SET covered_event_sequence = COALESCE(
-            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (
+            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed')) AND NOT EXISTS (
                 SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                 WHERE x.event_id = e.id AND i.session_id = ?1)),
             (SELECT COALESCE(MAX(sequence), 0) FROM persona_events WHERE persona_id = ?2)) WHERE id = ?1",

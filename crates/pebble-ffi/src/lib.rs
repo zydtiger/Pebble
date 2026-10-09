@@ -56,27 +56,28 @@ pub struct WorkspaceRecord {
     pub personas: Vec<PersonaRecord>,
 }
 
+impl From<pebble_core::Persona> for PersonaRecord {
+    fn from(persona: pebble_core::Persona) -> Self {
+        Self {
+            id: persona.id,
+            conversation_id: persona.conversation_id,
+            display_name: persona.display_name,
+            subtitle: persona.subtitle,
+            directory: persona.directory,
+            soul: persona.soul,
+            memory: persona.memory,
+            connection_label: persona.connection_label,
+            context_notice: persona.context_notice,
+            model: persona.chat.as_ref().map(|chat| chat.model.clone()),
+            api: persona.chat.map(|chat| chat.api),
+        }
+    }
+}
 impl From<pebble_core::Workspace> for WorkspaceRecord {
     fn from(workspace: pebble_core::Workspace) -> Self {
         Self {
             data_root: workspace.data_root,
-            personas: workspace
-                .personas
-                .into_iter()
-                .map(|persona| PersonaRecord {
-                    id: persona.id,
-                    conversation_id: persona.conversation_id,
-                    display_name: persona.display_name,
-                    subtitle: persona.subtitle,
-                    directory: persona.directory,
-                    soul: persona.soul,
-                    memory: persona.memory,
-                    connection_label: persona.connection_label,
-                    context_notice: persona.context_notice,
-                    model: persona.chat.as_ref().map(|chat| chat.model.clone()),
-                    api: persona.chat.map(|chat| chat.api),
-                })
-                .collect(),
+            personas: workspace.personas.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -94,6 +95,7 @@ pub enum ChatKind {
 pub enum MessageStatus {
     Complete,
     Streaming,
+    Queued,
     Cancelled,
     Interrupted,
     Failed,
@@ -116,6 +118,7 @@ impl From<pebble_core::Message> for MessageRecord {
         let status = match message.status {
             pebble_core::MessageStatus::Complete => MessageStatus::Complete,
             pebble_core::MessageStatus::Streaming => MessageStatus::Streaming,
+            pebble_core::MessageStatus::Queued => MessageStatus::Queued,
             pebble_core::MessageStatus::Cancelled => MessageStatus::Cancelled,
             pebble_core::MessageStatus::Interrupted => MessageStatus::Interrupted,
             pebble_core::MessageStatus::Failed => MessageStatus::Failed,
@@ -231,6 +234,10 @@ impl PebbleBackend {
 
     pub fn workspace(&self) -> Result<WorkspaceRecord, BackendError> {
         Ok(self.core.workspace()?.into())
+    }
+
+    pub fn create_persona(&self, name: String) -> Result<PersonaRecord, BackendError> {
+        Ok(self.core.create_persona(&name)?.into())
     }
 
     pub fn messages(&self, persona_id: String) -> Result<Vec<MessageRecord>, BackendError> {

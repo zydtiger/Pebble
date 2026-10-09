@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.0.3 uses one SQLite database and a live Chat Completions adapter. An
+v0.0.4 uses one SQLite database and a live Chat Completions adapter. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 
@@ -15,7 +15,7 @@ scheduler, classifier, memory writer, or work-agent integration.
 | `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, and covered-event frontier |
 | `model_items` | Frozen prefix/input/output JSON BLOBs; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
-| `model_calls` | Session, reply room, trigger/reply message IDs, input item cutoff, event cutoff, status and error |
+| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status and error |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
 they do not reorder stored history. A message ID identifies the same bubble
@@ -29,8 +29,9 @@ that existing snapshot. Sessions identify `pebble_demo_v1` / `local-demo` or
 stored on the session; keys are resolved at runtime and never persisted.
 
 Changing the API root, model, or protocol retires the previous session. The new
-session's `event_start_sequence` is the prior persona-event maximum, so its
-request includes only later events. This fresh context does not import old demo
+session's `event_start_sequence` is immediately before the triggering received
+event. Its requests include later received events in execution order; earlier
+sent events stay in their original native sessions. This fresh context does not import old demo
 or provider output. Old visible messages and frozen items remain preserved. A
 notice is derived from the stored boundary and is visible after restart too.
 General user-triggered resets remain a later milestone.
@@ -41,10 +42,13 @@ General user-triggered resets remain a later milestone.
 send(persona, text)
   transaction
     user message U1 + streaming reply placeholder A1
-    received event E1
+    received event E1 + queued call C1 (receipt cutoff; no session/input yet)
+  commit
+  wait for this persona's preceding call to reach terminal state
+  activation transaction
     session S (resolve or create fixed prefix P)
-    call C1 (reply room, trigger U1, event cutoff, input sequence cutoff)
     frozen input I1 + link I1 -> E1
+    activate C1 with session/input/event cutoffs
   commit
   load C1's items from S ordered by sequence: P, I1
   live adapter (or demo) reads that stored request outside the transaction
@@ -67,15 +71,19 @@ The completed output is `role: assistant` plus content and supported native
 `reasoning_content`/`refusal` fields; it is stored once. Only content is rendered.
 
 The builder appends events without a representation in the active session.
-Its own sent event already links to the original output, so it never becomes
-an extra incoming user message. The covered frontier stops before the first
+Received events later than this call's acceptance cutoff are excluded, even if
+later assistant output has a larger event sequence. Queued calls freeze only
+when executing, so the predecessor's native output is already in the prefix.
+Own sent events enter a session only through their native output links.
+Unlinked sent events from an earlier connection are excluded from catch-up and
+do not block the frontier; they never become incoming user messages. The covered frontier stops before the first
 unrepresented event instead of jumping to the largest linked sequence.
 
 A call records the last input item sequence. Reconstructing that call loads
 items through this cutoff, retaining the exact saved bytes. It excludes its
 own future output and later turns. There is no full-request copy per call,
 transcript re-rendering, dynamic timestamp in the prefix, or server KV cache
-management. v0.0.3 stores raw JSON; compression and configurable context limits come later.
+management. v0.0.4 stores raw JSON; compression and configurable context limits come later.
 
 ## Failure and lifetime boundaries
 
@@ -86,11 +94,16 @@ item and a sent event. Stopped/failed/interrupted bubbles are explicit in the
 UI and do not masquerade as accepted assistant context. The accepted user
 input stays in the session even when its reply is cancelled.
 
-One worker runs at a time in this milestone. Rust owns cancellation and durable
-terminal states; Swift consumes typed message snapshots and output deltas.
+One worker runs per persona at a time; different personas run concurrently.
+Queued replies are typed `queued` snapshots derived from their call state.
+Cancelling a queued call leaves visible messages and its received event, with a
+terminal call and no session/model input. Builders explicitly skip these
+unconsumed cancelled/interrupted inputs; the covered frontier can pass them.
+Rust owns cancellation and durable terminal states; Swift consumes typed message
+snapshots and output deltas.
 The draft is cleared after Rust accepts it, and callback IDs prevent updating
-the wrong visible message. Character switching is disabled while replying;
-independent persona queues and background room routing belong to v0.0.4.
+the wrong visible message. Character switching keeps each room
+stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
 reloads the final transcript from Rust. No retry or resubmission is automatic.
 
@@ -98,13 +111,16 @@ An advisory lock on `data/app.lock` reserves the data root for the core and any
 worker still using its database. The file contains no chat state; OS ownership
 is released on normal or abrupt exit. A second opener fails without touching
 running calls. After acquiring ownership, startup transactionally marks any
-remaining streaming messages/calls interrupted, preserving their last durable
+remaining queued or streaming replies/calls interrupted, preserving their durable
 text and accepted input. It never invents a completed model output. This is
 basic restart consistency; retry/reconciliation workflows remain v0.0.7.
 
-Schema version 1 adds the six history tables and indexes; version 2 adds
-credential-free API-root binding and an event-start boundary, reaching schema 3
-in one transaction. Existing IDs, records, frozen bytes, and editable files
+Schema 1 upgrades to 2 by adding the six history tables and indexes. Schema 2
+upgrades to 3 with credential-free API-root binding and an event-start boundary.
+Schema 3 upgrades to 4 by rebuilding model_calls with a queued status and
+nullable session/input cutoff until activation. Migration preserves all IDs and
+payloads, checks foreign keys before commit, and restores enforcement on the
+runtime connection. Existing IDs, records, frozen bytes, and editable files
 remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.

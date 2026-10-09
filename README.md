@@ -6,10 +6,11 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.0.3 adds live Chat Completions.** Configure one character with an
-OpenAI-compatible API root and model to stream real replies. Rust saves native
-assistant history for restart and continuation. Without a configured connection,
-the app uses its clearly labeled deterministic local demo.
+**v0.0.4 adds independent character conversations.** Create another character,
+queue followups, and switch rooms while replies continue. Each character has its
+own files, private room, model session, and serialized queue. Configure an
+OpenAI-compatible API root and model for live Chat Completions; without a
+connection, the app uses its clearly labeled deterministic local demo.
 
 ## Run it
 
@@ -39,17 +40,22 @@ Icon Composer, or `just preview-icon` to export appearance and small-size
 previews into `build/icon-preview/`. `just build` compiles the icon into the app.
 See [the icon design notes](docs/app-icon.md) for artwork and material settings.
 
-## Try the live-chat stage
+## Try independent private chats
 
 1. Open Mira's private space and choose **Say hello**, or type a thought and
    press **Enter**. **Command–Enter** or **Shift–Enter** inserts a new line. The composer grows
    with your text, then scrolls at its maximum height; the send button stays at
    the lower right.
-2. Stop a reply while it streams. This cancels the worker in Rust.
-3. Open the character information panel to read SOUL and MEMORY.
-4. Use **Open character folder**, edit the files, and choose **Reload Character
+2. Type another message while a reply streams and press **Enter** to queue a
+   followup. **Stop** cancels this room's current reply; a queued bubble has its
+   own **Cancel** action.
+3. Choose **New character**, enter a name, and create a separate private room.
+   Switch between characters while both reply. Drafts and stream state stay in
+   their own rooms.
+4. Open the character information panel to read SOUL and MEMORY.
+5. Use **Open character folder**, edit the files, and choose **Reload Character
    Files** from the app menu or sidebar. Character and room IDs remain stable.
-5. Send a thought, then quit and reopen the app. The messages and their IDs
+6. Send a thought, then quit and reopen the app. The messages and their IDs
    survive. The next request reuses the saved prefix and completed native
    assistant output. The unconfigured demo quotes the preceding user message.
 
@@ -57,9 +63,8 @@ Cancelled replies retain their partial text with a **Stopped** label. An abrupt
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
-The interface is an early light-theme design with a starter character. Concurrent
-personas, Responses, groups, automated memory, and work delegation belong to
-later milestones. See [the roadmap](docs/roadmap.md).
+The interface is an early light-theme design with a starter character. Responses, groups, automated memory, and work delegation belong to later
+milestones. See [the roadmap](docs/roadmap.md).
 
 ## Local data
 
@@ -79,7 +84,7 @@ files. Existing files are never overwritten by the seed operation.
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-and 2 are upgraded transactionally to 3, preserving character, room, message,
+through 3 are upgraded transactionally to 4, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -96,7 +101,8 @@ do not configure both at once. Base URLs are API roots, normally ending in `/v1`
 for Chat Completions. Responses is validated as a protocol choice but reports
 “not implemented” when sent in this version. A configured connection calls that
 endpoint or reports an error; it never falls back to the demo. An omitted
-connection means no model is configured. Runtime configuration and actual keys
+connection means no model is configured. New characters inherit the app default
+connection until their own local config supplies a `[chat]` table. Runtime configuration and actual keys
 stay outside the repository.
 
 For example, edit the local app config (replace the sample root and model):
@@ -158,7 +164,8 @@ directory for inspection. The Rust tests cover restart
 identity, schema scope, file edits, connection inheritance, invalid files,
 Unicode event order, cancellation, callback lifetime, migration, frozen request
 prefixes, native assistant replay, fragmented SSE, model failure states, event
-links, transactional rollback, and abrupt-process-exit recovery. The Swift executable
+links, concurrent persona queues, queued cancellation, transactional rollback,
+and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
 concurrency checking. The renderer captures this app's own content without
 capturing the desktop or other applications.

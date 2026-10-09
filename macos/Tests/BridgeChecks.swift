@@ -30,7 +30,48 @@ struct BridgeChecks {
         try require(reopened.bubbles.map(\.id) == savedIDs, "UI did not restore the durable transcript")
         try require(reopened.bubbles.last?.status == .complete, "UI lost the completed reply")
         reopened.closeChat()
+        try await exerciseConcurrentRooms(root.appendingPathComponent("concurrent"))
         print("Swift 6 FFI checks passed: durable IDs/history, native records, Unicode deltas, cancellation, listener release, UI restart and close lifecycle.")
+    }
+
+    @MainActor
+    static func exerciseConcurrentRooms(_ root: URL) async throws {
+        let model = ChatModel(dataRoot: root)
+        await model.load()
+        let mira = model.selected!.id
+        model.draft = "Mira's unsent draft"
+        let created = await model.createCharacter("Kai")
+        try require(created, "Character creation failed")
+        for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+        let kai = model.selected!.id
+        model.draft = "Kai's unsent draft"
+        model.select(mira)
+        try require(model.draft == "Mira's unsent draft", "Switch lost Mira draft")
+        model.sendMessage("Mira first private input")
+        model.select(kai)
+        try require(model.draft == "Kai's unsent draft", "Switch lost Kai draft")
+        model.sendMessage("Kai private input")
+        try require(model.pendingCount(mira) == 1 && model.pendingCount(kai) == 1, "Personas did not remain independently active")
+        model.select(mira)
+        model.sendMessage("Mira followup")
+        model.sendMessage("Cancel queued Mira input")
+        for _ in 0..<100 where model.bubbles.count < 6 { try await Task.sleep(for: .milliseconds(5)) }
+        try require(model.bubbles.count == 6 && model.bubbles.last?.status == .queued, "Queued bubble was not visible")
+        model.cancelReply(model.bubbles.last!.id)
+        model.select(kai)
+        model.stopReply()
+        for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        try require(!model.hasActiveReplies, "Concurrent rooms did not terminate")
+        try require(model.bubbles.count == 2 && model.bubbles.last?.status == .cancelled, "Stop did not cancel selected Kai room")
+        try require(model.bubbles.first?.text == "Kai private input", "Mira output leaked into Kai room")
+        model.select(mira)
+        try require(model.bubbles[1].status == .complete && model.bubbles[3].status == .complete,
+                    "Stopping Kai cancelled Mira or lost queued followup")
+        try require(model.bubbles[5].status == .cancelled, "Queued cancel was lost")
+        try require(model.bubbles[3].text.contains("Mira first private input"), "Followup did not use predecessor history")
+        try require(!model.bubbles.contains { $0.text.contains("Kai private input") }, "Kai output leaked into Mira room")
+        try require(model.draft == "Mira's unsent draft", "Background stream cleared another draft")
+        model.closeChat()
     }
 
     static func exerciseBridge(_ root: URL) async throws -> (String, String, [String]) {

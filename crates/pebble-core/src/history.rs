@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum MessageStatus {
     Complete,
     Streaming,
+    Queued,
     Cancelled,
     Interrupted,
     Failed,
@@ -14,7 +15,7 @@ impl MessageStatus {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
-            Self::Streaming => "streaming",
+            Self::Streaming | Self::Queued => "streaming",
             Self::Cancelled => "cancelled",
             Self::Interrupted => "interrupted",
             Self::Failed => "failed",
@@ -58,6 +59,7 @@ pub struct ModelRequest {
 pub(crate) struct Turn {
     pub call_id: String,
     pub session_id: String,
+    pub receipt_cutoff: i64,
     pub persona_id: String,
     pub conversation_id: String,
     pub user: Message,

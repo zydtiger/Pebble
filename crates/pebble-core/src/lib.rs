@@ -4,6 +4,7 @@ mod connection;
 mod demo;
 mod history;
 mod live;
+mod personas;
 mod storage;
 
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
@@ -70,6 +71,15 @@ impl Core {
         self.database
             .resolve_conversations(&mut workspace.personas)?;
         Ok(workspace)
+    }
+
+    pub fn create_persona(&self, name: &str) -> Result<Persona, Error> {
+        let id = personas::create(&self.data_root, name)?;
+        self.workspace()?
+            .personas
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or(Error::UnknownPersona)
     }
 
     pub fn send_message(

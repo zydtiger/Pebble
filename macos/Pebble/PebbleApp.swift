@@ -18,7 +18,7 @@ struct PebbleApp: App {
                 Button("Open Data Folder") { model.openFiles() }
                 Button("Reload Character Files") { Task { await model.load() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
-                    .disabled(model.isReplying)
+                    .disabled(model.hasActiveReplies)
             }
         }
     }

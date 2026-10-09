@@ -209,11 +209,17 @@ fn cancellation_stops_stream_and_allows_another_preview() {
         incoming.recv_timeout(Duration::from_secs(1)).unwrap().kind,
         ChatEventKind::Started
     );
-    let (other, _, _) = observer();
-    assert!(matches!(
-        core.send_message(&persona.id, "again", other),
-        Err(Error::Busy)
-    ));
+    let (other, queued_events, _) = observer();
+    let queued = core.send_message(&persona.id, "again", other).unwrap();
+    assert_eq!(
+        queued.messages[1].status,
+        pebble_core::MessageStatus::Queued
+    );
+    queued.cancel();
+    assert_eq!(
+        receive_until_terminal(&queued_events).last().unwrap().kind,
+        ChatEventKind::Cancelled
+    );
     task.cancel();
     task.cancel();
     assert_eq!(
