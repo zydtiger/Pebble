@@ -1,5 +1,6 @@
 use crate::{
-    BackendError, ChatHandle, ChatObserver, MessageRecord, ObserverAdapter, PebbleBackend,
+    BackendError, ChatHandle, ChatObserver, GroupHandle, MessageRecord, ObserverAdapter,
+    ParticipationRecord, PebbleBackend,
 };
 use std::sync::Arc;
 
@@ -40,6 +41,8 @@ impl From<pebble_core::Room> for RoomRecord {
 pub struct ChatSubmissionRecord {
     pub message: MessageRecord,
     pub handles: Vec<Arc<ChatHandle>>,
+    pub group: Option<Arc<GroupHandle>>,
+    pub participation: Vec<ParticipationRecord>,
 }
 #[uniffi::export]
 impl PebbleBackend {
@@ -76,6 +79,12 @@ impl PebbleBackend {
         )?;
         Ok(ChatSubmissionRecord {
             message: submission.message.into(),
+            group: submission.group.map(|task| Arc::new(GroupHandle { task })),
+            participation: submission
+                .participation
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             handles: submission
                 .tasks
                 .into_iter()

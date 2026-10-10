@@ -1,0 +1,134 @@
+use crate::{ClassifierConnection, Error};
+use serde_json::{Value, json};
+use std::time::Duration;
+
+fn failed(message: &str) -> Error {
+    Error::Participation(message.into())
+}
+pub(crate) async fn classify(config: &ClassifierConnection, input: &str) -> Result<bool, Error> {
+    let connection = &config.connection;
+    let messages = vec![
+        crate::storage::input_message(&connection.api, "system", super::PROMPT.trim_end()),
+        crate::storage::input_message(&connection.api, "user", input),
+    ];
+    let (route, mut body) = if connection.api == "responses" {
+        (
+            "responses",
+            json!({"model":connection.model,"input":messages,"temperature":0,"stream":false,"store":false,"max_output_tokens":64}),
+        )
+    } else {
+        (
+            "chat/completions",
+            json!({"model":connection.model,"messages":messages,"temperature":0,"stream":false,"max_tokens":64}),
+        )
+    };
+    let schema = super::schema();
+    if connection.api == "chat_completions"
+        || connection.responses_schema_format.as_deref() == Some("response_format")
+    {
+        body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"participation","strict":true,"schema":schema}});
+    } else {
+        body["text"]["format"] =
+            json!({"type":"json_schema","name":"participation","strict":true,"schema":schema});
+    }
+    if config.request_profile.as_deref() == Some("qwen_non_thinking") {
+        body["chat_template_kwargs"] = json!({"enable_thinking":false});
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|_| failed("Could not initialize participation connection."))?;
+    let mut request = client
+        .post(format!(
+            "{}/{route}",
+            connection.base_url.trim_end_matches('/')
+        ))
+        .json(&body);
+    if let Some(key) = crate::connection::credential(connection)? {
+        request = request.bearer_auth(key);
+    }
+    let mut response=request.send().await.map_err(|_|failed("Participation connection failed or timed out; check its independent connection settings."))?;
+    if !response.status().is_success() {
+        return Err(failed(&format!(
+            "Participation endpoint returned HTTP {}; check its connection and credentials.",
+            response.status().as_u16()
+        )));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| failed("Participation response was interrupted."))?
+    {
+        if bytes.len() + chunk.len() > 1024 * 1024 {
+            return Err(failed("Participation response exceeded the 1 MiB limit."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| failed("Participation endpoint returned invalid JSON."))?;
+    let text = if connection.api == "responses" {
+        if value["status"] != "completed"
+            || value.get("error").is_some_and(|v| !v.is_null())
+            || value
+                .get("incomplete_details")
+                .is_some_and(|v| !v.is_null())
+        {
+            return Err(failed("Participation response was incomplete or refused."));
+        }
+        let output = value["output"]
+            .as_array()
+            .ok_or_else(|| failed("Participation output is missing."))?;
+        if output.iter().any(|item| {
+            !matches!(item["type"].as_str(), Some("message" | "reasoning"))
+                || item.get("status").is_some_and(|v| v != "completed")
+        }) {
+            return Err(failed(
+                "Participation output has an unsupported or incomplete item.",
+            ));
+        }
+        if output
+            .iter()
+            .filter(|item| item["type"] == "message")
+            .any(|item| {
+                item["role"] != "assistant"
+                    || item["status"] != "completed"
+                    || item["content"].as_array().is_none_or(|parts| {
+                        parts.iter().any(|part| {
+                            !matches!(part["type"].as_str(), Some("output_text" | "refusal"))
+                        })
+                    })
+            })
+        {
+            return Err(failed(
+                "Participation message has an unsupported role, content, or status.",
+            ));
+        }
+        crate::live::output_text(output)?
+    } else {
+        let choices = value["choices"]
+            .as_array()
+            .filter(|v| v.len() == 1)
+            .ok_or_else(|| failed("Participation endpoint must return one choice."))?;
+        let choice = &choices[0];
+        let message = &choice["message"];
+        if choice["finish_reason"] != "stop"
+            || message["role"] != "assistant"
+            || message
+                .get("tool_calls")
+                .is_some_and(|v| v.as_array().is_none_or(|v| !v.is_empty()))
+            || message.get("function_call").is_some_and(|v| !v.is_null())
+            || message["content"].as_array().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|part| !matches!(part["type"].as_str(), Some("output_text" | "refusal")))
+            })
+        {
+            return Err(failed("Participation output was truncated or unsupported."));
+        }
+        crate::live::output_text(std::slice::from_ref(message))?
+    };
+    super::answer(&text)
+}

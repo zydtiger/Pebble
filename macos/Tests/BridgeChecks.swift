@@ -36,6 +36,9 @@ struct BridgeChecks {
         let retryModel = ChatModel(dataRoot: root.appendingPathComponent("group-retry"))
         await retryModel.load()
         try await GroupRetryChecks.run(retryModel, retryAvailable: { retryModel.retryReply($0) }, retryBusy: { _ in })
+        let classifierModel = ChatModel(dataRoot: root.appendingPathComponent("classifier"))
+        await classifierModel.load()
+        try await ClassifierChecks.run(classifierModel)
         print("Swift 6 FFI checks passed: durable IDs/history, native records, validated Unicode replies, cancellation, listener release, UI restart and close lifecycle.")
     }
 
@@ -43,6 +46,9 @@ struct BridgeChecks {
     static func exerciseGroups(_ root: URL) async throws {
         let model = ChatModel(dataRoot: root)
         await model.load()
+        var classifier = try await model.readClassifierSettings(nil)
+        classifier.connection.enabled = false
+        try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
         let a = model.selected!.id
         let created = await model.createCharacter("Kai"); try require(created, "Could not create group member")
         for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }

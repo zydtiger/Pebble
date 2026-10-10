@@ -34,7 +34,7 @@ fn files(root: &Path, id: &str) -> (Vec<u8>, Vec<u8>) {
 fn state(core: &Core, id: &str) -> Value {
     serde_json::from_str(&core.response_settings(id).unwrap().current_state_json).unwrap()
 }
-fn accepted(core: &Core, id: &str) -> pebble_core::ChatTask {
+fn accepted(core: &Core, id: &str) -> std::sync::Arc<pebble_core::ChatTask> {
     let (task, rx) = start(core, id, "synthetic user");
     assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
     task

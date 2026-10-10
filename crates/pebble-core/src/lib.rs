@@ -1,10 +1,12 @@
 mod chat;
+mod classifier_settings;
 mod config;
 mod connection;
 mod context;
 mod demo;
 mod history;
 mod live;
+mod participation;
 mod personas;
 mod response_settings;
 mod rooms;
@@ -13,9 +15,11 @@ mod storage;
 mod structured;
 
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatSubmission, ChatTask};
-pub use config::{ChatConnection, Persona, Workspace};
+pub use classifier_settings::ClassifierSettings;
+pub use config::{ChatConnection, ClassifierConnection, Persona, Workspace};
 pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
+pub use participation::{GroupTask, Participation};
 pub use response_settings::{ResponseAction, ResponseSettings, ResponseUpdate};
 pub use rooms::{Room, RoomMember};
 pub use settings::{ChatSettings, CredentialChange, PersonaUpdate, Settings, SettingsUpdate};
@@ -37,7 +41,7 @@ pub enum Error {
     AlreadyOpen,
     #[error("Database version {0} is newer than this app supports.")]
     Schema(u32),
-    #[error("Finish or stop the current reply first.")]
+    #[error("Finish or stop pending replies and participation checks first.")]
     Busy,
     #[error("This character is no longer available. Reload the character files.")]
     UnknownPersona,
@@ -55,6 +59,8 @@ pub enum Error {
     RetryUnavailable(String),
     #[error("{0}")]
     Room(String),
+    #[error("{0}")]
+    Participation(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -67,7 +73,7 @@ fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
 pub struct Core {
     data_root: PathBuf,
     database: Arc<storage::Database>,
-    chats: chat::Chats,
+    chats: Arc<chat::Chats>,
 }
 
 impl Core {
@@ -80,7 +86,7 @@ impl Core {
         let core = Self {
             data_root,
             database,
-            chats: chat::Chats::default(),
+            chats: Arc::new(chat::Chats::default()),
         };
         core.workspace()?;
         Ok(core)
@@ -147,6 +153,27 @@ impl Core {
         settings::read(&self.data_root, persona_id)
     }
 
+    pub fn classifier_settings(
+        &self,
+        persona_id: Option<&str>,
+    ) -> Result<ClassifierSettings, Error> {
+        classifier_settings::read(&self.data_root, persona_id)
+    }
+    pub fn save_classifier_settings(
+        &self,
+        persona_id: Option<&str>,
+        update: &ClassifierSettings,
+        credential: &CredentialChange,
+    ) -> Result<Workspace, Error> {
+        self.chats.settings(&self.database, persona_id, || {
+            classifier_settings::save(&self.data_root, persona_id, update, credential)
+        })?;
+        self.workspace()
+    }
+    pub fn participation(&self, room: &str) -> Result<Vec<Participation>, Error> {
+        self.database.participation(room)
+    }
+
     fn persona(&self, id: &str) -> Result<Persona, Error> {
         self.workspace()?
             .personas
@@ -188,7 +215,7 @@ impl Core {
         persona_id: &str,
         reply_id: &str,
         listener: Arc<dyn ChatListener>,
-    ) -> Result<ChatTask, Error> {
+    ) -> Result<Arc<ChatTask>, Error> {
         self.chats.retry(
             self.database.clone(),
             || self.persona(persona_id),
@@ -212,7 +239,7 @@ impl Core {
         persona_id: &str,
         prompt: &str,
         listener: Arc<dyn ChatListener>,
-    ) -> Result<ChatTask, Error> {
+    ) -> Result<Arc<ChatTask>, Error> {
         if prompt.trim().is_empty() {
             return Err(Error::EmptyMessage);
         }
@@ -236,5 +263,11 @@ impl Core {
 
     pub fn model_request(&self, call_id: &str) -> Result<ModelRequest, Error> {
         self.database.request(call_id)
+    }
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.chats.cancel_all();
     }
 }

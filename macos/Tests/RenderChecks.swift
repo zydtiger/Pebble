@@ -22,6 +22,9 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                var classifier = try await model.readClassifierSettings(nil)
+                classifier.connection.enabled = false
+                try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
                 try capture(window, name: "home")
                 guard let editor = findEditor(window.contentView!) else {
                     throw RenderError.failed("Missing native text editor")
@@ -192,6 +195,19 @@ struct RenderChecks {
                     }
                     retryBusyChecks += 1
                     try capture(window, name: retryBusyChecks == 1 ? "group-retry-persona-busy" : "group-retry-superseded")
+                })
+                let classifierModel = ChatModel(dataRoot: model.dataRoot.appendingPathComponent("classifier-check"))
+                window.setContentSize(NSSize(width: 1000, height: 730))
+                window.contentView = NSHostingView(rootView: ContentView(model: classifierModel))
+                for _ in 0..<100 where classifierModel.selected == nil || classifierModel.loading { try await Task.sleep(for: .milliseconds(10)) }
+                guard classifierModel.selected != nil else { throw RenderError.failed("Classifier UI fixture failed to load") }
+                try await ClassifierChecks.run(classifierModel, phase: { phase in
+                    if phase == "participation-settings" {
+                        window.setContentSize(NSSize(width: 600, height: 600))
+                        window.contentView = NSHostingView(rootView: ClassifierSheet(model: classifierModel, target: SettingsTarget(personaID: nil)))
+                        try await Task.sleep(for: .milliseconds(300))
+                    } else { try await Task.sleep(for: .milliseconds(100)) }
+                    try capture(window, name: phase)
                 })
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 app.terminate(nil)

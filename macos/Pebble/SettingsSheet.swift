@@ -4,6 +4,7 @@ struct SettingsSheet: View {
     @Bindable var model: ChatModel
     let target: SettingsTarget
     @Environment(\.dismiss) private var dismiss
+    @State private var showClassifier = false
     @State private var loaded = false
     @State private var loading = true
     @State private var saving = false
@@ -88,6 +89,7 @@ struct SettingsSheet: View {
                 }.disabled(!loaded || saving).textFieldStyle(.roundedBorder).padding(.trailing, 4)
             }
             HStack {
+                Button("Participation model…") { showClassifier = true }
                 Button("Open data folder") { model.openFiles() }
                 if character { Button("Open character folder") { model.openCharacterFiles() } }
                 Spacer()
@@ -95,6 +97,7 @@ struct SettingsSheet: View {
         }
         .padding(24).frame(width: 560, height: character ? 690 : 560)
         .background(PebbleTheme.canvas).foregroundStyle(PebbleTheme.ink)
+        .sheet(isPresented: $showClassifier) { ClassifierSheet(model: model, target: target) }
         .task { await load() }
     }
     private func load() async {

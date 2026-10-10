@@ -52,7 +52,7 @@ pub struct SettingsUpdate {
     pub max_output_tokens: Option<u64>,
     pub persona: Option<PersonaUpdate>,
 }
-fn path(root: &Path, persona: Option<&str>) -> Result<PathBuf, Error> {
+pub(crate) fn path(root: &Path, persona: Option<&str>) -> Result<PathBuf, Error> {
     if let Some(id) = persona {
         if !config::load(root)?.personas.iter().any(|p| p.id == id) {
             return Err(Error::UnknownPersona);
@@ -62,7 +62,7 @@ fn path(root: &Path, persona: Option<&str>) -> Result<PathBuf, Error> {
         Ok(root.join("config.toml"))
     }
 }
-fn document(path: &Path) -> Result<DocumentMut, Error> {
+pub(crate) fn document(path: &Path) -> Result<DocumentMut, Error> {
     std::fs::read_to_string(path)
         .map_err(|e| crate::file_error(path, e))?
         .parse()
@@ -132,7 +132,7 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error
         persona,
     })
 }
-fn put(table: &mut Item, key: &str, text: &str) {
+pub(crate) fn put(table: &mut Item, key: &str, text: &str) {
     let decor = table
         .get(key)
         .and_then(Item::as_value)

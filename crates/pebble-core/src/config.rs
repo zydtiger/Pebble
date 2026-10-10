@@ -22,11 +22,19 @@ pub struct Persona {
     pub soul: String,
     pub memory: String,
     pub chat: Option<ChatConnection>,
+    pub classifier: Option<ClassifierConnection>,
     pub context: crate::ContextBudget,
     pub response_schema: serde_json::Value,
     pub initial_state: serde_json::Value,
     pub connection_label: String,
     pub context_notice: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClassifierConnection {
+    #[serde(flatten)]
+    pub connection: ChatConnection,
+    pub request_profile: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -57,6 +65,7 @@ impl std::fmt::Debug for ChatConnection {
 #[derive(Deserialize, Default)]
 struct Defaults {
     chat: Option<ChatConnection>,
+    classifier: Option<ClassifierConnection>,
     #[serde(default)]
     context: crate::context::Overrides,
 }
@@ -74,6 +83,7 @@ struct PersonaConfig {
     #[serde(default)]
     context: crate::context::Overrides,
     chat: Option<ChatConnection>,
+    classifier: Option<ClassifierConnection>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +180,26 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
     Ok(())
 }
 
+fn validate_classifier(connection: &ClassifierConnection, path: &Path) -> Result<(), Error> {
+    validate_connection(&connection.connection, path).map_err(|error| match error {
+        Error::Configuration { path, detail } => Error::Configuration {
+            path,
+            detail: detail.replace("chat.", "classifier."),
+        },
+        error => error,
+    })?;
+    if connection
+        .request_profile
+        .as_deref()
+        .is_some_and(|profile| {
+            profile != "qwen_non_thinking" || connection.connection.api != "chat_completions"
+        })
+    {
+        return Err(Error::Configuration { path: path.display().to_string(), detail: "classifier.request_profile supports only qwen_non_thinking with chat_completions; omit it for standard requests.".into() });
+    }
+    Ok(())
+}
+
 pub(crate) fn initialize(root: &Path) -> Result<(), Error> {
     // Only seed an empty directory. Existing user files are never overwritten.
     let empty = if root.exists() {
@@ -229,6 +259,9 @@ pub(crate) fn load_candidate(
     if let Some(connection) = &app.defaults.chat {
         validate_connection(connection, &app_path)?;
     }
+    if let Some(connection) = &app.defaults.classifier {
+        validate_classifier(connection, &app_path)?;
+    }
     let default_context = app
         .defaults
         .context
@@ -267,6 +300,9 @@ pub(crate) fn load_candidate(
         if let Some(connection) = &config.chat {
             validate_connection(connection, &config_path)?;
         }
+        if let Some(connection) = &config.classifier {
+            validate_classifier(connection, &config_path)?;
+        }
         personas.push(Persona {
             id,
             conversation_id: String::new(),
@@ -278,6 +314,9 @@ pub(crate) fn load_candidate(
             connection_label: String::new(),
             context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
+            classifier: config
+                .classifier
+                .or_else(|| app.defaults.classifier.clone()),
             context: config.context.apply(default_context, &config_path)?,
             response_schema: crate::structured::parse(
                 &path.join("response_schema.json"),

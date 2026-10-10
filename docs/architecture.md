@@ -35,7 +35,7 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the eleven chat/history/state/membership tables and schema migration. Visible
+Rust owns the twelve chat/history/state/membership/decision tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
@@ -70,8 +70,8 @@ Swift keeps a presentation cache, draft, mention selection, and run handles per 
 changes the displayed cache without disconnecting other streams. Drafts, output,
 errors, and Stop belong to that room. Queued bubbles expose individual cancel;
 Stop cancels the selected room's oldest submission, including its remaining handles. Closing the view
-cancels every retained handle/subscription; dropping the core cancels its queues.
-Early cancellation is retained until handles arrive. A group observer remains open until every selected call terminates; one character finishing cannot disconnect another. Startup marks both queued
+cancels every retained handle/subscription; dropping the core cancels its queues and participation workers.
+Early cancellation is retained until handles arrive. A group observer adopts dynamically admitted speaker handles and remains open until every participation decision and selected call terminates; one character finishing cannot disconnect another. Startup marks both queued
 and active calls interrupted, with no accepted partial output or hidden resubmit.
 
 Rust character creation atomically publishes a UUID directory containing
@@ -202,3 +202,27 @@ author's own accepted output remains native replay. Existing frozen prefixes and
 old request items are never rewritten to introduce group instructions. New
 prefixes explain shared history and public disclosure boundaries. See
 [group rules](groups.md) and [history](history.md).
+
+## Selective participation
+
+A group user-acceptance transaction also records one participation decision per
+member. Explicit mentions have their already accepted calls; unmentioned members
+with a configured classifier start independent cancellable HTTP workers. Rust
+freezes a bounded, persona-scoped read view in memory at acceptance. SQLite stores
+only identity, cutoff, revision, lifecycle, bounded diagnostics, and optional call
+link, without another copy of SOUL/MEMORY/transcript payloads.
+
+A validated true result atomically selects the decision and creates one reply/call
+in that persona's ordinary queue. Original room/root/interval/cutoff never change.
+Actual generation freezes later from the current accepted native prefix and state;
+classification does not reserve the queue, consume events, or write model history.
+A false result becomes Listening without a reply. New user posts cancel older
+pending decisions in that room; accepted calls continue. Callback ordering admits
+the dynamic handle before Started/terminal events and before the final decision
+settles the observer. No callback wait holds the cancellation mutex.
+
+Restart interrupts pending decisions and never resends them. Failure and stopped
+checks retain their public observations and expose manual mention recovery.
+Classifier connections, credentials, protocol constraints, and time/input limits
+are detailed in [participation](participation.md). Bot-triggered decisions and a
+room scheduler remain later stages.

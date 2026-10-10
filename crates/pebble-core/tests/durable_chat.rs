@@ -11,7 +11,7 @@ impl ChatListener for Listener {
         self.0.send(event).map_err(|error| error.to_string())
     }
 }
-fn start(core: &Core, persona: &str, text: &str) -> (ChatTask, mpsc::Receiver<ChatEvent>) {
+fn start(core: &Core, persona: &str, text: &str) -> (Arc<ChatTask>, mpsc::Receiver<ChatEvent>) {
     let (tx, rx) = mpsc::channel();
     (
         core.send_message(persona, text, Arc::new(Listener(tx)))
@@ -276,7 +276,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        8
+        9
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }

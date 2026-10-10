@@ -72,8 +72,11 @@ They preserve all previous messages, session contracts, native bytes, and calls.
 A reset does not rewrite historical snapshots. Ordinary settings, model changes,
 restart, and the existing fresh-context action continue to preserve state.
 
-Reads and saves serialize with queue acceptance. Pending work for this persona
-blocks applying changes; other personas can continue. The save compares the
+Reads and saves serialize with queue acceptance. Pending replies or participation
+checks for this persona block every apply mode, including defaults-only, and
+**Start fresh context**; other personas can continue. Rejected operations leave
+files, accepted state, and context unchanged, so a pending decision retains its
+original observed input. The save compares the
 panel's schema/defaults, accepted state, and active session against current data.
 A stale snapshot reports **Reload** instead of overwriting newer state or edits.
 Send/retry/fresh-context configuration is loaded inside the same gate, so a turn

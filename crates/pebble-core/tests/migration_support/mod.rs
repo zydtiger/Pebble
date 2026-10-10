@@ -2,6 +2,7 @@
 pub fn v7(root: &std::path::Path) {
     let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
     db.execute_batch("PRAGMA foreign_keys=OFF;
+        DROP TABLE participation_decisions;
         DROP INDEX persona_call_order; DROP INDEX pending_persona_calls;
         ALTER TABLE model_calls DROP COLUMN membership_id;
         ALTER TABLE model_calls DROP COLUMN persona_sequence;

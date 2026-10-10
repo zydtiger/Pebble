@@ -81,7 +81,7 @@ fn populated_v012_upgrade_preserves_every_existing_identity_native_byte_state_an
         .map(Result::unwrap)
         .collect();
     assert_eq!(links, saved_links);
-    assert_eq!(count(&db, "PRAGMA user_version"), 8);
+    assert_eq!(count(&db, "PRAGMA user_version"), 9);
     assert!(
         !db.prepare("PRAGMA foreign_key_check")
             .unwrap()
@@ -109,6 +109,103 @@ fn populated_v012_upgrade_preserves_every_existing_identity_native_byte_state_an
     );
     assert!(
         !db.prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
+}
+
+#[test]
+fn populated_v013_additive_upgrade_preserves_group_memberships_and_publication_history() {
+    let (root, core, a) = isolated();
+    let b = core.create_persona("Kai").unwrap();
+    let room = core
+        .create_group("Existing group", &[a.clone(), b.id.clone()])
+        .unwrap();
+    let (post, rx) = submit(
+        &core,
+        &room.id,
+        "Existing group observation",
+        &[a.clone(), b.id],
+    );
+    finish(&rx, 2);
+    let messages = core.room_messages(&room.id).unwrap();
+    let state = core.response_settings(&a).unwrap();
+    let request = core.model_request(&post.tasks[0].id).unwrap();
+    let storage = db(root.path());
+    let observations = count(&storage, "SELECT COUNT(*) FROM persona_events");
+    let links = count(&storage, "SELECT COUNT(*) FROM model_item_events");
+    let publications = count(
+        &storage,
+        "SELECT COUNT(*) FROM messages WHERE publication_sequence IS NOT NULL",
+    );
+    drop((post, core));
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    storage
+        .execute_batch("DROP TABLE participation_decisions; PRAGMA user_version=8;")
+        .unwrap();
+    let core = reopen(root.path());
+    let restored_room = core
+        .workspace()
+        .unwrap()
+        .rooms
+        .into_iter()
+        .find(|r| r.id == room.id)
+        .unwrap();
+    assert_eq!(
+        (&restored_room.id, &restored_room.title, &restored_room.kind),
+        (&room.id, &room.title, &room.kind)
+    );
+    assert_eq!(
+        restored_room
+            .members
+            .iter()
+            .map(|m| (&m.persona_id, &m.membership_id))
+            .collect::<Vec<_>>(),
+        room.members
+            .iter()
+            .map(|m| (&m.persona_id, &m.membership_id))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(core.room_messages(&room.id).unwrap(), messages);
+    assert_eq!(core.response_settings(&a).unwrap(), state);
+    let restored = core.model_request(&request.call_id).unwrap();
+    assert_eq!(restored.session_id, request.session_id);
+    assert_eq!(
+        restored
+            .items
+            .iter()
+            .map(|i| (&i.id, &i.payload))
+            .collect::<Vec<_>>(),
+        request
+            .items
+            .iter()
+            .map(|i| (&i.id, &i.payload))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        count(&storage, "SELECT COUNT(*) FROM persona_events"),
+        observations
+    );
+    assert_eq!(
+        count(&storage, "SELECT COUNT(*) FROM model_item_events"),
+        links
+    );
+    assert_eq!(
+        count(
+            &storage,
+            "SELECT COUNT(*) FROM messages WHERE publication_sequence IS NOT NULL"
+        ),
+        publications
+    );
+    assert_eq!(
+        count(&storage, "SELECT COUNT(*) FROM participation_decisions"),
+        0
+    );
+    assert_eq!(count(&storage, "PRAGMA user_version"), 9);
+    assert!(
+        !storage
+            .prepare("PRAGMA foreign_key_check")
             .unwrap()
             .exists([])
             .unwrap()

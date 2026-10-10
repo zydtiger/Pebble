@@ -7,6 +7,9 @@ enum GroupRetryChecks {
     static func run(_ model: ChatModel,
                     retryAvailable: (String) async throws -> Void,
                     retryBusy: (String) async throws -> Void) async throws {
+        var classifier = try await model.readClassifierSettings(nil)
+        classifier.connection.enabled = false
+        try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
         let a = model.selected!.id
         guard await model.createCharacter("Kai") else { throw GroupRetryFailure.failed("Could not create retry speaker") }
         try await wait { !model.loading }

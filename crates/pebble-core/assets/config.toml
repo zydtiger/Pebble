@@ -14,3 +14,11 @@
 [defaults.context]
 context_window_tokens = 65536
 max_output_tokens = 4096
+
+# Independent lightweight participation model; explicit mentions work without it.
+[defaults.classifier]
+model = "Qwen/Qwen3.5-2B"
+base_url = "http://beluga:4014/v1"
+api = "chat_completions"
+api_key = ""
+request_profile = "qwen_non_thinking"

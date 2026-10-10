@@ -43,6 +43,7 @@ pub(crate) fn save(
     update: &ResponseUpdate,
 ) -> Result<(), Error> {
     db.ensure_idle(Some(&persona.id))?;
+    db.ensure_decisions_idle(Some(&persona.id))?;
     let snapshot = db.response_settings(persona)?;
     if snapshot != update.expected {
         return Err(stale());

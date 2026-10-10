@@ -2,6 +2,7 @@ mod codec;
 mod contexts;
 mod items;
 mod jobs;
+mod participation;
 mod response_settings;
 mod retry;
 mod rooms;
@@ -46,7 +47,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 8 {
+        if version > 9 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -95,6 +96,10 @@ impl Database {
         if version < 8 {
             tx.execute_batch(include_str!("storage/groups-migration.sql"))?;
         }
+        if version < 9 {
+            tx.execute_batch(include_str!("storage/participation-migration.sql"))?;
+        }
+        tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
             "UPDATE messages SET status = 'interrupted' WHERE status = 'streaming';

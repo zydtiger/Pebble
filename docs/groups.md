@@ -1,4 +1,4 @@
-# Manual group chats
+# Group chats
 
 v0.1.3 creates named rooms from any nonempty selection of existing characters.
 One-member groups are supported; duplicate selections are deduplicated. A room
@@ -20,8 +20,10 @@ picked targets are deduplicated and stored with the current membership interval.
 Rename never changes a previously accepted target.
 
 Every user message is stored once in its room. All current characters receive
-one observation even when nobody is mentioned. Only mentioned characters get
-calls. A reply containing `@Name` is ordinary public text and never triggers
+one observation even when nobody is mentioned. Mentioned characters get calls immediately. In v0.1.4, unmentioned members
+with a participation connection independently decide whether to volunteer; true
+results admit a single ordinary persona call. Listening creates no reply. See
+[participation](participation.md). A reply containing `@Name` is ordinary public text and never triggers
 another call. Swift caches drafts, mention selection, errors and handles by room
 ID, and renders each reply's actual author. Switching/renaming rooms cannot
 redirect a call. The group header opens member private chats for settings/state
@@ -60,7 +62,7 @@ rooms and no queued/active call for that character. It reuses the original user,
 room, membership and compatible frozen request; another character replying in
 the same room does not supersede it. Fresh context/state/schema/connection edits
 also respect persona-wide busy checks. Group Stop cancels the selected room's
-oldest submission's outstanding handles; queued replies can be cancelled
+oldest submission's outstanding decisions and handles; queued replies can be cancelled
 individually. Other rooms and other submissions continue. Restart marks queued
 and active attempts interrupted, preserving observations and accepted output
 without automatic resubmission.
@@ -81,5 +83,7 @@ cargo test -p pebble-core --test group_live_endpoint -- --ignored --nocapture
 ```
 
 Responses schema dialect is explicit configuration; no hostname sniffing or
-silent fallback occurs. Selective participation, ordered/bounded bot chains and
-membership changes remain the reviewed v0.1.4–v0.1.6 stages.
+silent fallback occurs. Schema 9 adds durable decisions without rewriting existing
+messages, memberships, native items, coverage, or state. Selective participation
+is available; ordered/bounded bot chains and membership changes remain the
+reviewed v0.1.5–v0.1.6 stages.

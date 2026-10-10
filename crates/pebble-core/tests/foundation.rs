@@ -34,6 +34,7 @@ fn restart_keeps_identity_and_state_table() {
             "model_item_events",
             "model_items",
             "model_sessions",
+            "participation_decisions",
             "persona_events",
             "persona_states",
             "personas"

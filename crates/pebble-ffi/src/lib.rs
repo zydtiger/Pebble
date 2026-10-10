@@ -1,3 +1,5 @@
+mod participation_api;
+pub use participation_api::*;
 mod rooms_api;
 pub use rooms_api::*;
 mod settings_api;
@@ -14,7 +16,7 @@ pub enum BackendError {
     Configuration { path: String, detail: String },
     #[error("{detail}")]
     Storage { detail: String },
-    #[error("Finish or stop the current reply first.")]
+    #[error("Finish or stop pending replies and participation checks first.")]
     Busy,
     #[error("This character is no longer available. Reload the character files.")]
     UnknownPersona,
@@ -110,6 +112,9 @@ pub enum ChatKind {
     Completed,
     Cancelled,
     Failed,
+    Participation,
+    Admitted,
+    GroupSettled,
 }
 
 #[derive(Clone, uniffi::Enum)]
@@ -171,6 +176,7 @@ pub struct ChatUpdate {
     pub text: String,
     pub message_id: String,
     pub messages: Vec<MessageRecord>,
+    pub participation: Vec<ParticipationRecord>,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -202,6 +208,9 @@ impl pebble_core::ChatListener for ObserverAdapter {
             pebble_core::ChatEventKind::Completed => ChatKind::Completed,
             pebble_core::ChatEventKind::Cancelled => ChatKind::Cancelled,
             pebble_core::ChatEventKind::Failed => ChatKind::Failed,
+            pebble_core::ChatEventKind::Participation => ChatKind::Participation,
+            pebble_core::ChatEventKind::Admitted => ChatKind::Admitted,
+            pebble_core::ChatEventKind::GroupSettled => ChatKind::GroupSettled,
         };
         self.0
             .on_update(ChatUpdate {
@@ -213,6 +222,7 @@ impl pebble_core::ChatListener for ObserverAdapter {
                 text: event.text,
                 message_id: event.message_id,
                 messages: event.messages.into_iter().map(Into::into).collect(),
+                participation: event.participation.into_iter().map(Into::into).collect(),
             })
             .map_err(|error| error.to_string())
     }
@@ -220,7 +230,7 @@ impl pebble_core::ChatListener for ObserverAdapter {
 
 #[derive(uniffi::Object)]
 pub struct ChatHandle {
-    pub(crate) task: pebble_core::ChatTask,
+    pub(crate) task: Arc<pebble_core::ChatTask>,
 }
 
 #[uniffi::export]

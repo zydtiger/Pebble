@@ -13,6 +13,7 @@ struct ContentView: View {
                 if let conversation = model.selectedConversation {
                     if let persona = model.selected { chatHeader(persona) } else { groupHeader(conversation) }
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
+                    if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
                     if model.bubbles.isEmpty {
                         GeometryReader { geometry in
@@ -41,6 +42,7 @@ struct ContentView: View {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
         .sheet(item: $model.settingsTarget) { target in SettingsSheet(model: model, target: target) }
+        .sheet(item: $model.classifierTarget) { target in ClassifierSheet(model: model, target: target) }
         .sheet(item: $model.stateTarget) { target in
             if let id = target.personaID { StateSheet(model: model, personaID: id) }
         }
@@ -125,7 +127,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.3").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.4").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -312,7 +314,7 @@ struct ContentView: View {
                         }
                     }.scrollIndicators(.hidden)
                 }.foregroundStyle(PebbleTheme.sage)
-                Text(model.mentionedIDs.isEmpty ? "Type @Name or choose a member to request a reply. Without mentions, everyone listens." : "Selected mentions are sent with this message. Remove a chip to change who replies.")
+                Text(model.mentionedIDs.isEmpty ? "Type @Name or choose a member to request a reply. Characters can also choose to join." : "Selected mentions request a reply directly; others may also join. Remove a chip to change the request.")
                     .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
             }
             HStack(alignment: .bottom, spacing: 12) {

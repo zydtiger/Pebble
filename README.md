@@ -6,8 +6,9 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.3 adds manual group chats to persistent private conversations.** Create
-characters, choose group members, and mention who should reply. Each character
+**v0.1.4 adds selective participation to persistent group conversations.** Create
+characters, choose group members, and let each character decide when to join,
+or mention who should reply. Each character
 keeps one native model history, state, and execution queue across all its rooms;
 silent members observe public messages without generating. Native settings and
 state/schema controls remain available through each character's private chat.
@@ -80,13 +81,16 @@ accepted as assistant context. Empty drafts are not sent.
    recipients and remain selected while you edit the body; remove a chip to
    remove that selection. Duplicate names require choosing the member instead
    of an ambiguous typed token. Selected names are included in the saved message.
-3. Send without mentions to leave a public message that everyone listens to,
-   with no model call. Mentioned characters reply with their names shown above
-   each bubble. Multiple characters can reply concurrently in this stage.
+3. Send a public message. Unmentioned characters independently show **Deciding…**,
+   then **Listening** or **Reply requested**. Listening creates no empty bubble.
+   Mentioned characters bypass the participation model; others can still volunteer.
+   Replies show their authors. Multiple characters can reply concurrently in this stage.
+   **Participation settings** opens the separate small-model connection; a failed
+   check remains visible with **Mention** and **Settings** recovery actions.
 4. Switch rooms while replies run. Drafts and mention selections stay with each
    room; replies keep their original destination. The group header lets you
    rename the group or open a member's private chat/settings.
-5. Stop cancels the oldest submission's remaining replies in this room; queued
+5. Stop cancels the oldest submission's remaining decisions and replies in this room; queued
    bubbles have individual Cancel. Retry uses the original room and speaker,
    and is available only for that character's latest unsuccessful call across
    all rooms while the character is idle.
@@ -95,8 +99,12 @@ Only public user messages and accepted reply text fan out to current members.
 Native reasoning, state, and private exchanges are never copied to other
 characters. A character itself retains its private knowledge and may disclose
 it in a public reply; prompt instructions cannot guarantee secrecy from the
-same shared-context model. Membership changes, selective participation, and
-ordered automatic reply chains are later stages. See [group rules](docs/groups.md)
+same shared-context model. Membership changes and ordered automatic reply chains are later stages.
+Participation reads do not consume chat observations or change character state.
+An absent participation connection keeps manual mentions available. New roots
+seed the selected Qwen connection independently of the demo/live chat model;
+existing authored config is preserved. See [participation configuration and
+limits](docs/participation.md). See [group rules](docs/groups.md)
 and [the roadmap](docs/roadmap.md).
 
 
@@ -114,12 +122,12 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── MEMORY.md
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # eleven chat/history/state/membership tables
+    ├── app.sqlite        # twelve chat/history/state/membership/decision tables
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 7 are upgraded transactionally to 8, preserving character, room, message,
+through 8 are upgraded transactionally to 9, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data

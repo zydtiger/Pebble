@@ -13,7 +13,7 @@ impl Database {
         prompt: &str,
         picked: &[String],
         personas: &[Persona],
-    ) -> Result<(Message, Vec<Turn>), Error> {
+    ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         let room = super::rooms::room(&tx, room_id)?;
@@ -79,8 +79,41 @@ impl Database {
             });
         }
         let user = message(&tx, &user)?;
+        let mut decisions = Vec::new();
+        if room.kind == "group" {
+            tx.execute("UPDATE participation_decisions SET status='cancelled',error='A newer group message replaced this decision.' WHERE conversation_id=?1 AND status='pending'", [room_id])?;
+            for member in &room.members {
+                let persona = personas
+                    .iter()
+                    .find(|p| p.id == member.persona_id)
+                    .ok_or(Error::UnknownPersona)?;
+                let call_id = turns
+                    .iter()
+                    .find(|t| t.persona_id == member.persona_id)
+                    .map(|t| t.call_id.clone());
+                let status = if call_id.is_some() {
+                    "mentioned"
+                } else if persona.classifier.is_some() {
+                    "pending"
+                } else {
+                    "unconfigured"
+                };
+                let cutoff: i64 = tx.query_row("SELECT sequence FROM persona_events WHERE persona_id=?1 AND message_id=?2 AND kind='received'", params![member.persona_id,user.id], |r|r.get(0))?;
+                let id = new_id();
+                tx.execute("INSERT INTO participation_decisions(id,message_id,conversation_id,persona_id,membership_id,event_cutoff,revision,status,call_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![id,user.id,room_id,member.persona_id,member.membership_id,cutoff,user.sequence,status,call_id])?;
+                let input = if status == "pending" {
+                    crate::participation::compact_input(&tx, persona, room_id, cutoff)?
+                } else {
+                    String::new()
+                };
+                decisions.push(crate::participation::DecisionWork {
+                    decision: super::participation::read(&tx, &id)?,
+                    input,
+                });
+            }
+        }
         tx.commit()?;
-        Ok((user, turns))
+        Ok((user, turns, decisions))
     }
     pub(crate) fn enqueue_turn(&self, persona: &Persona, prompt: &str) -> Result<Turn, Error> {
         Ok(self

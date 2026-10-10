@@ -1,8 +1,9 @@
 # Durable chat history
 
-v0.1.3 uses one SQLite database and live Chat Completions/Responses adapters. An
-unconfigured character uses a deterministic local demo. Manual groups share persona histories. There is no ordered group
-scheduler, classifier, memory writer, or work-agent integration.
+v0.1.4 uses one SQLite database and live Chat Completions/Responses adapters. An
+unconfigured character uses a deterministic local demo. Groups share persona histories. Independent participation decisions do not
+create native sessions or consume event coverage. There is no ordered group
+scheduler, memory writer, or work-agent integration.
 
 ## Records and ordering
 
@@ -18,6 +19,7 @@ scheduler, classifier, memory writer, or work-agent integration.
 | `persona_states` | Persona-wide current accepted state; independent of model session |
 | `conversation_memberships` | Durable group/persona intervals, join/leave publication boundaries, stable interval IDs and member order |
 | `message_mentions` | Canonical user message, resolved persona ID and originating membership interval; deduplicated per message/persona |
+| `participation_decisions` | User-root/persona/member interval, original receipt cutoff and revision, pending/boolean/error/cancel/restart status, optional admitted call ID and elapsed milliseconds; unique `(message_id,persona_id)`. No copied classifier payload or private/native history. |
 | `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;

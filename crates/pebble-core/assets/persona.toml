@@ -6,6 +6,9 @@ subtitle = "A curious mind. A soft place to land."
 # Include model, base_url, and api together. api_key = "" means no authentication;
 # a nonempty api_key or an api_key_env reference can supply credentials later.
 
+# An optional [classifier] independently replaces the entire app classifier.
+# Use the same connection fields, plus explicit request_profile only when needed.
+
 [response.initial_state]
 affinity_user = 20
 mood = "calm"

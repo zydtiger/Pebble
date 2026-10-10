@@ -150,6 +150,11 @@ pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &st
 pub(super) fn isolated() -> (tempfile::TempDir, Core, String) {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        "# Classifier disabled in synthetic manual fixtures.\n",
+    )
+    .unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     std::fs::write(
         Path::new(&persona.directory).join("SOUL.md"),
@@ -167,7 +172,7 @@ pub(super) fn start(
     core: &Core,
     id: &str,
     text: &str,
-) -> (pebble_core::ChatTask, mpsc::Receiver<ChatEvent>) {
+) -> (Arc<pebble_core::ChatTask>, mpsc::Receiver<ChatEvent>) {
     let (tx, rx) = mpsc::channel();
     (
         core.send_message(id, text, Arc::new(Listener(tx))).unwrap(),
@@ -203,7 +208,7 @@ pub(super) fn retry(
     core: &Core,
     persona: &str,
     reply: &str,
-) -> (pebble_core::ChatTask, mpsc::Receiver<ChatEvent>) {
+) -> (Arc<pebble_core::ChatTask>, mpsc::Receiver<ChatEvent>) {
     let (tx, rx) = mpsc::channel();
     let task = core
         .retry_message(persona, reply, Arc::new(Listener(tx)))

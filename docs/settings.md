@@ -18,7 +18,8 @@ invalid URLs/protocols, and invalid budgets. Credentials remain absent from
 history, call records, and error text; replacement debug output is redacted.
 
 Queue acceptance and writes serialize. App-default writes require all personas
-idle; a character write requires only that persona idle. Before any authoritative
+idle; a character write requires only that persona idle. Pending participation
+decisions also block settings writes for their character (or app defaults). Before any authoritative
 mutation, candidate overlays validate the whole workspace and dependent inherited
 budgets. toml_edit preserves unrelated fields/comments and changed string-value
 decoration where practical. Turning off a chat override removes its entire table,
@@ -82,3 +83,18 @@ initial defaults, and applies explicit fresh-context keep/reset choices; see
 form exposes the standard text.format and explicit llama.cpp response_format
 dialects described in [providers](providers.md). Native protocol switches remove
 Responses-only fields; ordinary credential saves preserve the chosen dialect.
+
+## Independent participation settings
+
+App defaults and character settings link to a separate **Participation model**
+sheet, also available in each group. It edits `[defaults.classifier]` or the entire
+persona `[classifier]` override, leaving chat/SOUL/MEMORY/budgets untouched. Turning
+off a character override inherits the app classifier; turning off the app
+classifier leaves manual mentions. Credentials use the same explicit secure
+Keep/Replace/Clear/Environment choices and per-file atomic publication rules.
+
+Responses offers its standard/llama schema dialect. Chat Completions offers
+Standard or explicit Qwen non-thinking request mode. Saving a protocol switch
+removes the other protocol's exclusive field; ordinary saves preserve applicable
+fields and authored comments/unknown configuration. These changes do not retire
+chat sessions or reset state. See [request contracts](participation.md).

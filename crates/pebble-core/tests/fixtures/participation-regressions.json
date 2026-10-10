@@ -1,0 +1,88 @@
+[
+  {
+    "id": "zh_direct",
+    "expected": true,
+    "label_reason": "Latest message names the persona and requests her photo expertise.",
+    "soul": "小岚：喜欢摄影，耐心、简洁，尊重群聊节奏。",
+    "memory": "昨天一起拍过街景。当前在群里听大家聊天。",
+    "transcript": [
+      "阿杰：这张照片有点暗。",
+      "阿杰：小岚，你觉得应该调曝光还是提阴影？"
+    ]
+  },
+  {
+    "id": "zh_indirect",
+    "expected": true,
+    "label_reason": "Indirect address uniquely identifies this persona through a remembered event.",
+    "soul": "小岚：摄影爱好者，愿意分享自己的实际经验。",
+    "memory": "上周群里只有小岚去桥边拍了夜景，并发过成片。",
+    "transcript": [
+      "小吴：我今晚也想去桥边试试。",
+      "小吴：上周在那儿拍夜景的那位，用了多长曝光呀？"
+    ]
+  },
+  {
+    "id": "en_emotional_support",
+    "expected": true,
+    "label_reason": "A distressed friend invites companionship relevant to an established supportive relationship.",
+    "soul": "Nora: warm, attentive friend; offers emotional companionship without rushing to fix things.",
+    "memory": "Alex recently confided presentation anxiety to Nora and said her quiet company helps. Nora is present and free.",
+    "transcript": [
+      "Alex: I bombed the presentation. I feel awful and could really use a friend right now."
+    ]
+  },
+  {
+    "id": "en_roleplay",
+    "expected": true,
+    "label_reason": "Latest in-character line calls the persona by role and requires participation.",
+    "soul": "Captain Vega: stays in character as captain during the group spaceship roleplay.",
+    "memory": "Current scene: Vega and engineer Kai are trapped on a ship. Vega holds the hatch override key.",
+    "transcript": [
+      "Kai: The engine room is filling with smoke!",
+      "Kai: Captain, open the emergency hatch. You have the override key!"
+    ]
+  },
+  {
+    "id": "zh_unrelated",
+    "expected": false,
+    "label_reason": "Unrelated technical question gives this persona no useful or personal reason to join.",
+    "soul": "小岚：摄影爱好者，不懂量子物理，不喜欢无关插话。",
+    "memory": "当前只是听群聊，和这个话题没有相关经历。",
+    "transcript": [
+      "阿杰：量子纠缠里的贝尔不等式是怎么推导的？"
+    ]
+  },
+  {
+    "id": "en_support_already_handled",
+    "expected": false,
+    "label_reason": "Support was accepted and the latest message explicitly directs the conversation to another friend.",
+    "soul": "Nora: caring friend who respects requested space and avoids crowding emotional conversations.",
+    "memory": "Alex is getting support from Sam. Nora is quietly present.",
+    "transcript": [
+      "Alex: I feel terrible about today.",
+      "Sam: I am here. Want to tell me what happened?",
+      "Alex: Thanks, Sam. Just you and me for a bit, please. Everyone else, I need some space."
+    ]
+  },
+  {
+    "id": "ambiguous_persona_banter",
+    "expected": true,
+    "label_reason": "The banter loosely connects to the persona’s playful running joke. Under recall-first policy, uncertainty favors joining.",
+    "soul": "Faye: playful friend, fond of terrible puns about houseplants.",
+    "memory": "Faye often jokes that her fern is judging her. Currently relaxed and listening to the group.",
+    "transcript": [
+      "Lee: The office fern looks like it wants to lodge a formal complaint today."
+    ]
+  },
+  {
+    "id": "explicit_target_leave_alone",
+    "expected": false,
+    "label_reason": "The latest message directly asks this persona to stop and give space, overriding warmth and relevant experience.",
+    "soul": "宁宁：关心朋友，愿意倾听，也尊重明确边界。",
+    "memory": "宁宁与小乔关系亲近，也经历过失恋。小乔现在情绪低落。",
+    "transcript": [
+      "小乔：我今天不想聊这件事。",
+      "小乔：宁宁，请你先别回应，让我一个人安静一会儿。"
+    ]
+  }
+]

@@ -11,6 +11,9 @@ pub enum ChatEventKind {
     Completed,
     Cancelled,
     Failed,
+    Participation,
+    Admitted,
+    GroupSettled,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +26,7 @@ pub struct ChatEvent {
     pub kind: ChatEventKind,
     pub text: String,
     pub messages: Vec<Message>,
+    pub participation: Vec<crate::Participation>,
 }
 
 pub trait ChatListener: Send + Sync {
@@ -37,7 +41,7 @@ pub(crate) struct Control {
 }
 
 impl Control {
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         *self.cancelled.lock().expect("cancellation lock") = true;
         self.wake.notify_all();
         self.signal.notify_one();
@@ -47,10 +51,15 @@ impl Control {
         *self.cancelled.lock().expect("cancellation lock")
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         if !self.is_cancelled() {
             self.signal.notified().await;
         }
+    }
+
+    pub(crate) fn while_active<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
+        let cancelled = self.cancelled.lock().expect("cancellation lock");
+        if *cancelled { None } else { Some(operation()) }
     }
 
     fn wait(&self) -> bool {
@@ -65,7 +74,9 @@ impl Control {
 
 pub struct ChatSubmission {
     pub message: Message,
-    pub tasks: Vec<ChatTask>,
+    pub tasks: Vec<Arc<ChatTask>>,
+    pub group: Option<crate::GroupTask>,
+    pub participation: Vec<crate::Participation>,
 }
 
 pub struct ChatTask {
@@ -89,6 +100,7 @@ impl Drop for ChatTask {
 #[derive(Default)]
 pub(crate) struct Chats {
     queues: Mutex<HashMap<String, Arc<queue::Queue>>>,
+    pub(crate) groups: Mutex<Vec<std::sync::Weak<crate::participation::worker::GroupState>>>,
 }
 
 impl Chats {
@@ -105,7 +117,11 @@ impl Chats {
         db: &Database,
         load: impl FnOnce() -> Result<Persona, Error>,
     ) -> Result<(), Error> {
-        self.serialized(|| db.fresh_context(&load()?))
+        self.serialized(|| {
+            let persona = load()?;
+            db.ensure_decisions_idle(Some(&persona.id))?;
+            db.fresh_context(&persona)
+        })
     }
 
     pub(crate) fn settings(
@@ -116,6 +132,7 @@ impl Chats {
     ) -> Result<(), Error> {
         let _queues = self.queues.lock().expect("generation queues lock");
         db.ensure_idle(persona)?;
+        db.ensure_decisions_idle(persona)?;
         save()
     }
     pub(crate) fn retry(
@@ -124,12 +141,12 @@ impl Chats {
         load: impl FnOnce() -> Result<Persona, Error>,
         reply: &str,
         listener: Arc<dyn ChatListener>,
-    ) -> Result<ChatTask, Error> {
+    ) -> Result<Arc<ChatTask>, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_retry(&persona, reply)?;
-        Self::launch(db, persona, listener, queue, turn)
+        Self::launch(db, persona, listener, queue, turn, None)
     }
     pub(crate) fn start(
         &self,
@@ -137,15 +154,15 @@ impl Chats {
         load: impl FnOnce() -> Result<Persona, Error>,
         prompt: &str,
         listener: Arc<dyn ChatListener>,
-    ) -> Result<ChatTask, Error> {
+    ) -> Result<Arc<ChatTask>, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_turn(&persona, prompt)?;
-        Self::launch(db, persona, listener, queue, turn)
+        Self::launch(db, persona, listener, queue, turn, None)
     }
     pub(crate) fn start_room(
-        &self,
+        self: &Arc<Self>,
         db: Arc<Database>,
         load: impl FnOnce() -> Result<crate::Workspace, Error>,
         room: &str,
@@ -155,7 +172,8 @@ impl Chats {
     ) -> Result<ChatSubmission, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
-        let (message, turns) = db.enqueue_room(room, prompt, mentions, &workspace.personas)?;
+        let (message, turns, decisions) =
+            db.enqueue_room(room, prompt, mentions, &workspace.personas)?;
         let mut tasks = Vec::new();
         for turn in turns {
             let persona = workspace
@@ -166,7 +184,14 @@ impl Chats {
                 .clone();
             let queue = queues.entry(persona.id.clone()).or_default().clone();
             // Each accepted call is finalized even if a worker cannot start. Earlier workers remain owned.
-            match Self::launch(db.clone(), persona, listener.clone(), queue, turn.clone()) {
+            match Self::launch(
+                db.clone(),
+                persona,
+                listener.clone(),
+                queue,
+                turn.clone(),
+                None,
+            ) {
                 Ok(task) => tasks.push(task),
                 Err(error) => {
                     finish_pending(
@@ -179,7 +204,71 @@ impl Chats {
                 }
             }
         }
-        Ok(ChatSubmission { message, tasks })
+        drop(queues);
+        let participation = decisions.iter().map(|w| w.decision.clone()).collect();
+        let group = crate::participation::start(
+            self.clone(),
+            db,
+            decisions,
+            workspace.personas,
+            tasks.clone(),
+            listener,
+        );
+        Ok(ChatSubmission {
+            message,
+            tasks,
+            group,
+            participation,
+        })
+    }
+    pub(crate) fn admit_participation(
+        &self,
+        db: Arc<Database>,
+        persona: Persona,
+        decision: &str,
+        elapsed: u64,
+        group: &Arc<crate::participation::worker::GroupState>,
+    ) -> Result<Option<std::sync::mpsc::Receiver<()>>, Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        if let Some(turn) = db.admit_decision(decision, &persona, elapsed)? {
+            let queue = queues.entry(persona.id.clone()).or_default().clone();
+            let (ack, accepted) = std::sync::mpsc::sync_channel(1);
+            let launched = Self::launch(
+                db.clone(),
+                persona,
+                group.listener.clone(),
+                queue,
+                turn.clone(),
+                Some((group.clone(), decision.to_owned(), ack)),
+            );
+            drop(queues);
+            if let Err(error) = launched {
+                finish_pending(
+                    &db,
+                    &turn,
+                    &group.listener,
+                    MessageStatus::Failed,
+                    Some(error.to_string()),
+                );
+            } else {
+                return Ok(Some(accepted));
+            }
+        }
+        Ok(None)
+    }
+    pub(crate) fn cancel_all(&self) {
+        for queue in self.queues.lock().expect("generation queues lock").values() {
+            queue.cancel_all();
+        }
+        for group in self
+            .groups
+            .lock()
+            .expect("group controls lock")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+        {
+            group.cancel();
+        }
     }
     fn launch(
         db: Arc<Database>,
@@ -187,19 +276,33 @@ impl Chats {
         listener: Arc<dyn ChatListener>,
         queue: Arc<queue::Queue>,
         turn: Turn,
-    ) -> Result<ChatTask, Error> {
+        registration: Option<(
+            Arc<crate::participation::worker::GroupState>,
+            String,
+            std::sync::mpsc::SyncSender<()>,
+        )>,
+    ) -> Result<Arc<ChatTask>, Error> {
         let control = Arc::new(Control::default());
-        let task = ChatTask {
+        let task = Arc::new(ChatTask {
             id: turn.call_id.clone(),
             messages: vec![turn.user.clone(), turn.reply.clone()],
             control: control.clone(),
-        };
+        });
+        if let Some((group, _, _)) = &registration {
+            group.register(task.clone());
+        }
         let reservation = queue.reserve(&turn.call_id, &control);
         let worker_db = db.clone();
         let worker_turn = turn.clone();
         let spawn = std::thread::Builder::new()
             .name("pebble-chat".into())
             .spawn(move || {
+                if let Some((group, decision, ack)) = registration {
+                    if !group.admitted(&decision, &worker_turn) {
+                        control.cancel();
+                    }
+                    let _ = ack.send(());
+                }
                 if !reservation.wait(&control) {
                     finish_pending(
                         &worker_db,
@@ -279,6 +382,7 @@ fn finish_pending(
         kind,
         text: detail,
         messages,
+        participation: Vec::new(),
     });
 }
 
@@ -300,6 +404,7 @@ fn run(
             kind,
             text,
             messages,
+            participation: Vec::new(),
         })
     };
     let mut connected = emit(
