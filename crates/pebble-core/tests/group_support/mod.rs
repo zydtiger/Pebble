@@ -30,7 +30,8 @@ pub fn listener() -> Arc<dyn ChatListener> {
 pub fn finish(rx: &mpsc::Receiver<ChatEvent>, count: usize) -> Vec<ChatEvent> {
     let mut events = Vec::new();
     let mut done = 0;
-    while done < count {
+    let mut settled = false;
+    while done < count || !settled {
         let e = rx.recv_timeout(Duration::from_secs(180)).unwrap();
         if matches!(
             e.kind,
@@ -38,7 +39,15 @@ pub fn finish(rx: &mpsc::Receiver<ChatEvent>, count: usize) -> Vec<ChatEvent> {
         ) {
             done += 1;
         }
-        events.push(e);
+        if e.kind == ChatEventKind::GroupSettled {
+            settled = true;
+        }
+        if !matches!(
+            e.kind,
+            ChatEventKind::Participation | ChatEventKind::GroupSettled
+        ) {
+            events.push(e);
+        }
     }
     events
 }
@@ -64,4 +73,19 @@ pub fn db(root: &std::path::Path) -> rusqlite::Connection {
 }
 pub fn count(db: &rusqlite::Connection, sql: &str) -> i64 {
     db.query_row(sql, [], |r| r.get(0)).unwrap()
+}
+
+pub fn task(post: &ChatSubmission, index: usize) -> Arc<pebble_core::ChatTask> {
+    for _ in 0..500 {
+        let tasks = post
+            .group
+            .as_ref()
+            .map(|g| g.tasks())
+            .unwrap_or_else(|| post.tasks.clone());
+        if let Some(task) = tasks.get(index) {
+            return task.clone();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("Expected ready slot admission did not occur");
 }

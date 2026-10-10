@@ -17,6 +17,15 @@ impl Queue {
             id: id.into(),
         }
     }
+    pub(super) fn cancel_calls(&self, ids: &[String]) {
+        for (id, control) in self.entries.lock().expect("queue lock").iter() {
+            if ids.contains(id)
+                && let Some(control) = control.upgrade()
+            {
+                control.cancel();
+            }
+        }
+    }
     pub(super) fn cancel_all(&self) {
         for (_, control) in self.entries.lock().expect("queue lock").iter() {
             if let Some(control) = control.upgrade() {

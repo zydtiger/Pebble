@@ -37,14 +37,17 @@ fn both_protocols_share_persona_history_state_but_only_public_observations_with_
             .unwrap();
         let (silent, rx) = submit(&core, &room.id, "PUBLIC_LISTEN_ONLY", &[]);
         assert!(silent.tasks.is_empty());
-        assert!(rx.try_recv().is_err());
+        finish(&rx, 0);
         let (group, rx) = submit(&core, &room.id, "@Mira PUBLIC_GROUP_INPUT", &[]);
-        assert_eq!(group.tasks.len(), 1);
+        assert!(
+            group.tasks.is_empty(),
+            "Group calls are admitted only when ready"
+        );
         assert_eq!(
             finish(&rx, 1).last().unwrap().kind,
             ChatEventKind::Completed
         );
-        let request = core.model_request(&group.tasks[0].id).unwrap();
+        let request = core.model_request(&task(&group, 0).id).unwrap();
         assert_eq!(request.session_id, old.session_id);
         for (a, b) in old.items.iter().zip(&request.items) {
             assert_eq!(a.id, b.id);
@@ -123,7 +126,7 @@ fn both_protocols_share_persona_history_state_but_only_public_observations_with_
                 .exists([])
                 .unwrap()
         );
-        drop((private, group, b_private, continuation));
+        drop((private, silent, group, b_private, continuation));
         drop(core);
         let reopened = reopen(root.path());
         assert_eq!(reopened.room_messages(&room.id).unwrap(), messages);

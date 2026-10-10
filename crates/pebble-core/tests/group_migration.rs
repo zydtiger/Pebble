@@ -81,7 +81,7 @@ fn populated_v012_upgrade_preserves_every_existing_identity_native_byte_state_an
         .map(Result::unwrap)
         .collect();
     assert_eq!(links, saved_links);
-    assert_eq!(count(&db, "PRAGMA user_version"), 9);
+    assert_eq!(count(&db, "PRAGMA user_version"), 10);
     assert!(
         !db.prepare("PRAGMA foreign_key_check")
             .unwrap()
@@ -131,7 +131,7 @@ fn populated_v013_additive_upgrade_preserves_group_memberships_and_publication_h
     finish(&rx, 2);
     let messages = core.room_messages(&room.id).unwrap();
     let state = core.response_settings(&a).unwrap();
-    let request = core.model_request(&post.tasks[0].id).unwrap();
+    let request = core.model_request(&task(&post, 0).id).unwrap();
     let storage = db(root.path());
     let observations = count(&storage, "SELECT COUNT(*) FROM persona_events");
     let links = count(&storage, "SELECT COUNT(*) FROM model_item_events");
@@ -141,6 +141,7 @@ fn populated_v013_additive_upgrade_preserves_group_memberships_and_publication_h
     );
     drop((post, core));
     std::thread::sleep(std::time::Duration::from_millis(30));
+    migration_support::v9(root.path());
     storage
         .execute_batch("DROP TABLE participation_decisions; PRAGMA user_version=8;")
         .unwrap();
@@ -202,7 +203,95 @@ fn populated_v013_additive_upgrade_preserves_group_memberships_and_publication_h
         count(&storage, "SELECT COUNT(*) FROM participation_decisions"),
         0
     );
-    assert_eq!(count(&storage, "PRAGMA user_version"), 9);
+    assert_eq!(count(&storage, "PRAGMA user_version"), 10);
+    assert!(
+        !storage
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
+}
+
+#[test]
+fn populated_v014_upgrade_preserves_decisions_calls_native_bytes_and_contract_files() {
+    let (root, core, a) = isolated();
+    let b = core.create_persona("Kai").unwrap().id;
+    let room = core
+        .create_group("Existing v014 room", &[a.clone(), b])
+        .unwrap();
+    let (post, rx) = submit(
+        &core,
+        &room.id,
+        "Preserved explicit request",
+        std::slice::from_ref(&a),
+    );
+    finish(&rx, 1);
+    let messages = core.room_messages(&room.id).unwrap();
+    let request = core.model_request(&task(&post, 0).id).unwrap();
+    let state = core.response_settings(&a).unwrap();
+    let directory = core
+        .workspace()
+        .unwrap()
+        .personas
+        .into_iter()
+        .find(|p| p.id == a)
+        .unwrap()
+        .directory;
+    let files = [
+        "config.toml",
+        "response_schema.json",
+        "SOUL.md",
+        "MEMORY.md",
+    ]
+    .map(|f| std::fs::read(std::path::Path::new(&directory).join(f)).unwrap());
+    let storage = db(root.path());
+    let identities: Vec<(String, String, String, Option<String>)> = storage
+        .prepare("SELECT id,message_id,persona_id,call_id FROM participation_decisions ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    drop((post, core));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    migration_support::v9(root.path());
+    let core = reopen(root.path());
+    assert_eq!(core.room_messages(&room.id).unwrap(), messages);
+    assert_eq!(core.response_settings(&a).unwrap(), state);
+    let restored = core.model_request(&request.call_id).unwrap();
+    assert_eq!(
+        request
+            .items
+            .iter()
+            .map(|i| (&i.id, &i.payload))
+            .collect::<Vec<_>>(),
+        restored
+            .items
+            .iter()
+            .map(|i| (&i.id, &i.payload))
+            .collect::<Vec<_>>()
+    );
+    let after: Vec<(String, String, String, Option<String>)> = storage
+        .prepare("SELECT id,message_id,persona_id,call_id FROM participation_decisions ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(identities, after);
+    assert_eq!(
+        files,
+        [
+            "config.toml",
+            "response_schema.json",
+            "SOUL.md",
+            "MEMORY.md"
+        ]
+        .map(|f| std::fs::read(std::path::Path::new(&directory).join(f)).unwrap())
+    );
+    assert_eq!(count(&storage, "PRAGMA user_version"), 10);
+    assert_eq!(count(&storage, "SELECT COUNT(*) FROM group_rounds"), 0);
     assert!(
         !storage
             .prepare("PRAGMA foreign_key_check")

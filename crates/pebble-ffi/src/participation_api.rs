@@ -8,6 +8,8 @@ pub struct ParticipationRecord {
     pub persona_id: String,
     pub membership_id: String,
     pub status: String,
+    pub slot_status: String,
+    pub phase: String,
     pub error: String,
     pub call_id: Option<String>,
     pub elapsed_ms: Option<u64>,
@@ -23,6 +25,8 @@ impl From<pebble_core::Participation> for ParticipationRecord {
             persona_id: p.persona_id,
             membership_id: p.membership_id,
             status: p.status,
+            slot_status: p.slot_status,
+            phase: p.phase,
             error: p.error,
             call_id: p.call_id,
             elapsed_ms: p.elapsed_ms,
@@ -105,6 +109,9 @@ impl From<CredentialUpdate> for pebble_core::CredentialChange {
 }
 #[uniffi::export]
 impl PebbleBackend {
+    pub fn stop_room(&self, room_id: String) -> Result<(), BackendError> {
+        Ok(self.core.stop_room(&room_id)?)
+    }
     pub fn participation(&self, room_id: String) -> Result<Vec<ParticipationRecord>, BackendError> {
         Ok(self
             .core

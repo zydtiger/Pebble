@@ -136,7 +136,7 @@ impl Chats {
         save()
     }
     pub(crate) fn retry(
-        &self,
+        self: &Arc<Self>,
         db: Arc<Database>,
         load: impl FnOnce() -> Result<Persona, Error>,
         reply: &str,
@@ -146,10 +146,10 @@ impl Chats {
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_retry(&persona, reply)?;
-        Self::launch(db, persona, listener, queue, turn, None)
+        self.launch(db, persona, listener, queue, turn, None)
     }
     pub(crate) fn start(
-        &self,
+        self: &Arc<Self>,
         db: Arc<Database>,
         load: impl FnOnce() -> Result<Persona, Error>,
         prompt: &str,
@@ -159,7 +159,7 @@ impl Chats {
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_turn(&persona, prompt)?;
-        Self::launch(db, persona, listener, queue, turn, None)
+        self.launch(db, persona, listener, queue, turn, None)
     }
     pub(crate) fn start_room(
         self: &Arc<Self>,
@@ -184,7 +184,7 @@ impl Chats {
                 .clone();
             let queue = queues.entry(persona.id.clone()).or_default().clone();
             // Each accepted call is finalized even if a worker cannot start. Earlier workers remain owned.
-            match Self::launch(
+            match self.launch(
                 db.clone(),
                 persona,
                 listener.clone(),
@@ -210,7 +210,7 @@ impl Chats {
             self.clone(),
             db,
             decisions,
-            workspace.personas,
+            workspace.data_root,
             tasks.clone(),
             listener,
         );
@@ -221,40 +221,72 @@ impl Chats {
             participation,
         })
     }
-    pub(crate) fn admit_participation(
-        &self,
+    pub(crate) fn step_group(
+        self: &Arc<Self>,
         db: Arc<Database>,
-        persona: Persona,
-        decision: &str,
-        elapsed: u64,
+        round: &str,
+        root: &std::path::Path,
         group: &Arc<crate::participation::worker::GroupState>,
-    ) -> Result<Option<std::sync::mpsc::Receiver<()>>, Error> {
+    ) -> Result<crate::storage::rounds::Step, Error> {
+        use crate::storage::rounds::Step;
         let mut queues = self.queues.lock().expect("generation queues lock");
-        if let Some(turn) = db.admit_decision(decision, &persona, elapsed)? {
+        let personas = crate::config::load(root)?.personas;
+        let action = db.step_round(round, &personas)?;
+        if let Step::Admit(turn, decision) = action {
+            let persona = personas
+                .iter()
+                .find(|p| p.id == turn.persona_id)
+                .ok_or(Error::UnknownPersona)?
+                .clone();
             let queue = queues.entry(persona.id.clone()).or_default().clone();
-            let (ack, accepted) = std::sync::mpsc::sync_channel(1);
-            let launched = Self::launch(
+            let (ack, received) = std::sync::mpsc::sync_channel(1);
+            let launched = self.launch(
                 db.clone(),
                 persona,
                 group.listener.clone(),
                 queue,
-                turn.clone(),
-                Some((group.clone(), decision.to_owned(), ack)),
+                (*turn).clone(),
+                Some((group.clone(), decision, ack)),
             );
             drop(queues);
-            if let Err(error) = launched {
+            if launched.is_ok() {
+                let _ = received.recv();
+            } else {
                 finish_pending(
                     &db,
                     &turn,
                     &group.listener,
                     MessageStatus::Failed,
-                    Some(error.to_string()),
+                    Some("Could not start the reply worker.".into()),
                 );
-            } else {
-                return Ok(Some(accepted));
+                self.wake_groups();
             }
+            Ok(Step::Wait)
+        } else {
+            Ok(action)
         }
-        Ok(None)
+    }
+    pub(crate) fn wake_groups(&self) {
+        let groups = self
+            .groups
+            .lock()
+            .expect("group controls lock")
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect::<Vec<_>>();
+        for group in groups {
+            group.sync_cancelled();
+        }
+    }
+    pub(crate) fn stop_room(&self, db: &Database, room: &str) -> Result<(), Error> {
+        let queues = self.queues.lock().expect("generation queues lock");
+        let calls = db.stop_room(room)?;
+        for queue in queues.values() {
+            queue.cancel_calls(&calls);
+        }
+        drop(queues);
+        self.wake_groups();
+        Ok(())
     }
     pub(crate) fn cancel_all(&self) {
         for queue in self.queues.lock().expect("generation queues lock").values() {
@@ -271,6 +303,7 @@ impl Chats {
         }
     }
     fn launch(
+        self: &Arc<Self>,
         db: Arc<Database>,
         persona: Persona,
         listener: Arc<dyn ChatListener>,
@@ -292,6 +325,7 @@ impl Chats {
             group.register(task.clone());
         }
         let reservation = queue.reserve(&turn.call_id, &control);
+        let wake = Arc::downgrade(self);
         let worker_db = db.clone();
         let worker_turn = turn.clone();
         let spawn = std::thread::Builder::new()
@@ -312,7 +346,17 @@ impl Chats {
                         None,
                     );
                 } else {
-                    match worker_db.activate_turn(&persona, &worker_turn) {
+                    let ready = reassess_queued(&worker_db, &persona, &worker_turn, &control);
+                    let skipped = matches!(ready, Ok(false));
+                    match ready.and_then(|allowed| {
+                        if allowed {
+                            worker_db.activate_turn(&persona, &worker_turn)
+                        } else {
+                            Err(Error::Generation(
+                                "This optional reply is no longer needed.".into(),
+                            ))
+                        }
+                    }) {
                         Ok(turn) => run(
                             worker_db,
                             turn,
@@ -325,12 +369,19 @@ impl Chats {
                             &worker_db,
                             &worker_turn,
                             &listener,
-                            MessageStatus::Failed,
+                            if control.is_cancelled() || skipped {
+                                MessageStatus::Cancelled
+                            } else {
+                                MessageStatus::Failed
+                            },
                             Some(error.to_string()),
                         ),
                     }
                 }
                 drop(reservation);
+                if let Some(chats) = wake.upgrade() {
+                    chats.wake_groups();
+                }
             });
         if let Err(error) = spawn {
             db.finish_pending(&turn, MessageStatus::Failed, Some(&error.to_string()))?;
@@ -363,7 +414,7 @@ fn finish_pending(
     let result = db.finish_pending(turn, status, error.as_deref());
     let (kind, messages, detail) = match result {
         Ok(message) => (
-            if status == MessageStatus::Cancelled {
+            if message.status == MessageStatus::Cancelled {
                 ChatEventKind::Cancelled
             } else {
                 ChatEventKind::Failed
@@ -497,7 +548,7 @@ fn run(
     };
     let (kind, messages, error) = match result {
         Ok(message) => (
-            match status {
+            match message.status {
                 MessageStatus::Complete => ChatEventKind::Completed,
                 MessageStatus::Cancelled => ChatEventKind::Cancelled,
                 _ => ChatEventKind::Failed,
@@ -521,6 +572,42 @@ fn run(
     if connected {
         let _ = emit(sequence + 1, kind, error, messages);
     }
+}
+
+fn reassess_queued(
+    db: &Database,
+    persona: &Persona,
+    turn: &Turn,
+    control: &Arc<Control>,
+) -> Result<bool, Error> {
+    let Some(work) = db.queued_reassessment(persona, turn)? else {
+        return Ok(true);
+    };
+    let runtime = worker_runtime()?;
+    let result=runtime.block_on(async {tokio::select!{biased; _=control.cancelled()=>Err(Error::Generation("Cancelled".into())),result=crate::participation::classify(persona.classifier.as_ref().ok_or_else(||Error::Participation("Participation is no longer configured.".into()))?,&work.input,&work.phase)=>result}});
+    let accepted = control.while_active(|| match &result {
+        Ok(answer) => db.finish_decision(
+            &work.decision.id,
+            work.generation,
+            if *answer { "selected" } else { "listening" },
+            "",
+            Some(*answer),
+            None,
+        ),
+        Err(error) => db.finish_decision(
+            &work.decision.id,
+            work.generation,
+            "failed",
+            &error.to_string(),
+            None,
+            None,
+        ),
+    });
+    if accepted.is_none() {
+        db.cancel_reassessment(&work.decision.id, &turn.call_id, work.generation)?;
+        return Ok(false);
+    }
+    result
 }
 
 fn worker_runtime() -> Result<tokio::runtime::Runtime, Error> {

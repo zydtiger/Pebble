@@ -1,9 +1,9 @@
 # Durable chat history
 
-v0.1.4 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.1.5 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. Groups share persona histories. Independent participation decisions do not
-create native sessions or consume event coverage. There is no ordered group
-scheduler, memory writer, or work-agent integration.
+create native sessions or consume event coverage. Durable room rounds release
+only ready slots into the persona queues; no memory writer or work-agent integration exists.
 
 ## Records and ordering
 
@@ -19,8 +19,10 @@ scheduler, memory writer, or work-agent integration.
 | `persona_states` | Persona-wide current accepted state; independent of model session |
 | `conversation_memberships` | Durable group/persona intervals, join/leave publication boundaries, stable interval IDs and member order |
 | `message_mentions` | Canonical user message, resolved persona ID and originating membership interval; deduplicated per message/persona |
-| `participation_decisions` | User-root/persona/member interval, original receipt cutoff and revision, pending/boolean/error/cancel/restart status, optional admitted call ID and elapsed milliseconds; unique `(message_id,persona_id)`. No copied classifier payload or private/native history. |
-| `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional retry_of, frozen state_before, and validation_errors |
+| `participation_decisions` | User-root/persona/member interval, original receipt cutoff and revision, pending/boolean/error/cancel/restart status, optional admitted call ID, phase, generation, accepted-knowledge/predecessor versions and elapsed milliseconds; unique `(message_id,persona_id)`. No copied classifier payload or private/native history. |
+| `group_rounds` | Canonical user root/room/revision, active/superseded/terminal lifecycle, continuation, spent followup budget, last accepted public reply and fallback phase |
+| `group_reply_slots` | Round/decision identity and fixed ordinal, required/optional/followup/fallback kind, pending/admitted/terminal status; no model call before readiness |
+| `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional originating slot and retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
 they do not reorder stored history. A message ID identifies the same bubble
@@ -41,7 +43,8 @@ sent events stay in their original native sessions. This fresh context does not 
 or provider output. Old visible messages and frozen items remain preserved. A
 notice is derived from the stored boundary and is visible after restart too.
 An explicit fresh-context command saves a new prefix and boundary immediately,
-using current character files. It refuses queued/active calls for that persona;
+using current character files. It refuses queued/active calls, pending classifier
+decisions and still-admittable group slots for that persona;
 other personas are independent. The manual boundary and its notice survive
 restart, including a boundary before any received event. No earlier received
 or native sent event is reimported.
@@ -86,8 +89,9 @@ and unknown fields are retained without reconstructing reasoning. All output
 items link to the same sent event in one transaction. Only validated `reply` is rendered; the full native JSON retains state and reasoning.
 
 The builder appends events without a representation in the active session.
-Received events later than this call's acceptance cutoff are excluded, even if
-later assistant output has a larger event sequence. Queued calls freeze only
+Received events later than this call's acceptance cutoff are excluded, except
+explicit accepted earlier-slot public replies in its own round. This selective
+exception preserves coverage holes instead of raising the cutoff. Queued calls freeze only
 when executing, so the predecessor's native output is already in the prefix.
 Own sent events enter a session only through their native output links.
 Unlinked sent events from an earlier connection are excluded from catch-up and
@@ -125,7 +129,8 @@ the wrong visible message. Character switching keeps each room
 stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
 reloads the final transcript from Rust. No failed-call resubmission is automatic; only completed invalid structured candidates get bounded format repair. Latest-reply retry is persona-wide across rooms, uses the immutable original
-destination/membership, and requires no pending call for that persona. It adds a new reply/call
+destination/membership, and requires that persona idle, including pending
+decisions/slots. Retry never restores automatic round continuation/budget. It adds a new reply/call
 referencing retry_of and the existing user/receipt. In the unchanged active
 context it reuses the nearest frozen ancestor's input/event cutoff. An
 unactivated retry admits that receipt once; explicit retry after a fresh or
@@ -194,3 +199,10 @@ persona and old reply display sequence as the initial persona-wide call order.
 Future calls allocate from that persona's maximum, across all rooms. Schema 8
 adds memberships and mentions to the prior nine tables and verifies foreign keys
 before commit.
+
+Schema 10 adds `group_rounds`, `group_reply_slots`, optional `model_calls.slot_id`
+and decision generation/phase/knowledge versions. Populated schema 9 upgrades
+without rewriting calls, native bytes/links, decisions, state or character files.
+There are fourteen application tables; the inventory above is authoritative.
+Unfinished rounds/slots become interrupted on startup; no observer resumes them.
+See [room flow](group-flow.md) for admission/publication linearization.

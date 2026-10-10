@@ -17,6 +17,7 @@ pub struct Reply {
     pub body: Value,
     pub delay: Duration,
     pub status: u16,
+    pub stream_body: Option<String>,
 }
 impl Reply {
     pub fn json(body: Value) -> Self {
@@ -24,7 +25,13 @@ impl Reply {
             body,
             delay: Duration::ZERO,
             status: 200,
+            stream_body: None,
         }
+    }
+    pub fn stream(body: String) -> Self {
+        let mut reply = Self::json(Value::Null);
+        reply.stream_body = Some(body);
+        reply
     }
     pub fn delayed(mut self, ms: u64) -> Self {
         self.delay = Duration::from_millis(ms);
@@ -52,6 +59,7 @@ impl Server {
                 body: json!({"error":"unexpected request"}),
                 delay: Duration::ZERO,
                 status: 500,
+                stream_body: None,
             })
         })
     }
@@ -84,7 +92,8 @@ impl Server {
                             };
                             let reply=handler(&body);let _=tx.send((head,body));
                             std::thread::sleep(reply.delay);
-                            let body=reply.body.to_string();let response=format!("HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",reply.status,body.len(),body);
+                            let content_type=if reply.stream_body.is_some() {"text/event-stream"} else {"application/json"};
+                            let body=reply.stream_body.unwrap_or_else(||reply.body.to_string());let response=format!("HTTP/1.1 {} Test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",reply.status,body.len(),body);
                             let _=stream.write_all(response.as_bytes());
                         }));
                     }

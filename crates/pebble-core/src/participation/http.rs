@@ -5,10 +5,24 @@ use std::time::Duration;
 fn failed(message: &str) -> Error {
     Error::Participation(message.into())
 }
-pub(crate) async fn classify(config: &ClassifierConnection, input: &str) -> Result<bool, Error> {
+pub(crate) async fn classify(
+    config: &ClassifierConnection,
+    input: &str,
+    phase: &str,
+) -> Result<bool, Error> {
     let connection = &config.connection;
     let messages = vec![
-        crate::storage::input_message(&connection.api, "system", super::PROMPT.trim_end()),
+        crate::storage::input_message(
+            &connection.api,
+            "system",
+            match phase {
+                "intent" => include_str!("../../assets/fallback-intent-prompt.txt").trim_end(),
+                "permission" => {
+                    include_str!("../../assets/fallback-permission-prompt.txt").trim_end()
+                }
+                _ => super::PROMPT.trim_end(),
+            },
+        ),
         crate::storage::input_message(&connection.api, "user", input),
     ];
     let (route, mut body) = if connection.api == "responses" {
@@ -22,7 +36,11 @@ pub(crate) async fn classify(config: &ClassifierConnection, input: &str) -> Resu
             json!({"model":connection.model,"messages":messages,"temperature":0,"stream":false,"max_tokens":64}),
         )
     };
-    let schema = super::schema();
+    let schema = if phase == "intent" {
+        json!({"type":"object","properties":{"whole_group_question":{"type":"boolean"}},"required":["whole_group_question"],"additionalProperties":false})
+    } else {
+        super::schema()
+    };
     if connection.api == "chat_completions"
         || connection.responses_schema_format.as_deref() == Some("response_format")
     {
@@ -130,5 +148,5 @@ pub(crate) async fn classify(config: &ClassifierConnection, input: &str) -> Resu
         }
         crate::live::output_text(std::slice::from_ref(message))?
     };
-    super::answer(&text)
+    super::phase_answer(&text, phase)
 }

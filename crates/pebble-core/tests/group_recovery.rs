@@ -87,7 +87,7 @@ fn acceptance_and_publication_roll_back_all_group_effects_and_retry_keeps_destin
     assert_eq!(messages[0].id, failed.message.id);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM message_mentions"), 2);
     let (old, rx) = submit(&core, &group.id, "Stop this", std::slice::from_ref(&a));
-    old.tasks[0].cancel();
+    task(&old, 0).cancel();
     finish(&rx, 1);
     let stopped = core
         .room_messages(&group.id)
@@ -139,7 +139,14 @@ fn restart_interrupts_group_calls_without_losing_observations_or_accepting_outpu
     let a = &workspace.personas[0];
     let group = workspace.rooms.iter().find(|r| r.kind == "group").unwrap();
     let messages = core.room_messages(&group.id).unwrap();
-    assert_eq!(messages.len(), 4);
+    assert_eq!(messages.len(), 3);
+    assert_eq!(
+        count(
+            &db(root.path()),
+            "SELECT COUNT(*) FROM group_reply_slots WHERE status='interrupted'"
+        ),
+        2
+    );
     assert!(
         messages
             .iter()

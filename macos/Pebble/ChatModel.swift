@@ -42,6 +42,10 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.saveClassifierSettings(personaId: persona, update: update, credential: credential)
     }
+    func stopRoom(_ room: String) throws {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        try backend.stopRoom(roomId: room)
+    }
     func participation(room: String) throws -> [ParticipationRecord] {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.participation(roomId: room)
@@ -179,7 +183,12 @@ final class ChatModel {
     var bubbles: [ChatBubble] { selectedRoom?.bubbles ?? [] }
     var participation: [ParticipationRecord] {
         guard let latest = bubbles.last(where: { $0.isUser }) else { return [] }
-        return selectedRoom?.participation.filter { $0.messageId == latest.id } ?? []
+        let records = selectedRoom?.participation ?? []
+        // Keep protected older requests visible while a newer user round is active.
+        let active = records.filter { $0.messageId != latest.id && ["pending", "admitted"].contains($0.slotStatus) }
+        var latestByPersona: [String: ParticipationRecord] = [:]
+        for record in records where record.messageId == latest.id { latestByPersona[record.personaId] = record }
+        return active + latestByPersona.values.sorted { $0.personaId < $1.personaId }
     }
     func cancelParticipation(_ record: ParticipationRecord) {
         selectedRoom?.runs.first { $0.group?.id() == record.messageId }?.group?.cancelDecision(id: record.id)
@@ -192,7 +201,8 @@ final class ChatModel {
     func canRetry(_ bubble: ChatBubble) -> Bool {
         guard bubble.canRetry, !loading else { return false }
         return !rooms.values.contains { state in
-            state.runs.contains { run in
+            if state.participation.contains(where: { $0.personaId == bubble.senderID && ["pending", "admitted"].contains($0.slotStatus) }) { return true }
+            return state.runs.contains { run in
                 if run.accepting { return run.acceptingPersonaIDs.contains(bubble.senderID) }
                 return run.handles.contains { handle in
                     run.pendingIDs.contains(handle.id()) && handle.messages().last?.senderId == bubble.senderID
@@ -308,7 +318,7 @@ final class ChatModel {
         state.error = nil
         let run = RoomRun()
         // Before Rust resolves typed mentions, conservatively cover possible speakers.
-        // Once accepted, only the returned pending handles determine persona busy state.
+        // Once accepted, durable slots and returned pending handles determine persona busy state.
         if let retry { run.acceptingPersonaIDs = [retry.0] }
         else if let persona = conversation.personaId { run.acceptingPersonaIDs = [persona] }
         else { run.acceptingPersonaIDs = Set(conversation.members.map(\.personaId)) }
@@ -324,7 +334,7 @@ final class ChatModel {
                     state.apply([submission.message], conversation: conversation.id)
                     handles = submission.handles
                     run.group = submission.group; run.classifying = submission.group != nil
-                    run.decisionIDs = Set(submission.participation.filter { $0.status == "pending" }.map(\.id))
+                    run.decisionIDs = Set(submission.participation.filter { $0.slotStatus == "pending" }.map(\.id))
                     state.applyParticipation(submission.participation, conversation: conversation.id)
                 }
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handles.forEach { $0.cancel() }; sink.finish(); return }
@@ -343,11 +353,14 @@ final class ChatModel {
                         guard let group = run.group else { continue }
                         if update.kind == .groupSettled {
                             guard update.runId == group.id() else { continue }
-                            run.classifying = false
+                            run.classifying = false; run.decisionIDs = []
                         } else {
                             guard update.participation.allSatisfy({ $0.messageId == group.id() && $0.conversationId == conversation.id }) else { continue }
                             state.applyParticipation(update.participation, conversation: conversation.id)
-                            for record in update.participation where record.status != "pending" { run.decisionIDs.remove(record.id) }
+                            for record in update.participation {
+                                if record.slotStatus == "pending" { run.decisionIDs.insert(record.id) }
+                                else { run.decisionIDs.remove(record.id) }
+                            }
                             if update.kind == .admitted {
                                 for handle in group.handles() where !run.handles.contains(where: { $0.id() == handle.id() }) {
                                     run.handles.append(handle)
@@ -401,7 +414,15 @@ final class ChatModel {
             catch { state.error = describe(error) }
         }
     }
-    func stopReply() { selectedRoom?.runs.first?.cancel() }
+    func stopReply() {
+        guard let id = selectedID else { return }
+        // Cancel accepting submissions too; the Rust room transaction stops every durable round.
+        selectedRoom?.runs.forEach { $0.cancel() }
+        Task { [weak self, client] in
+            do { try await client.stopRoom(id) }
+            catch { self?.rooms[id]?.error = self?.describe(error) }
+        }
+    }
     func cancelReply(_ messageID: String) {
         for run in selectedRoom?.runs ?? [] {
             if let handle = run.handles.first(where: { $0.messages().last?.id == messageID }) { handle.cancel(); return }

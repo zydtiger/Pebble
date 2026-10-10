@@ -173,6 +173,9 @@ impl Core {
     pub fn participation(&self, room: &str) -> Result<Vec<Participation>, Error> {
         self.database.participation(room)
     }
+    pub fn stop_room(&self, room: &str) -> Result<(), Error> {
+        self.chats.stop_room(&self.database, room)
+    }
 
     fn persona(&self, id: &str) -> Result<Persona, Error> {
         self.workspace()?

@@ -34,7 +34,10 @@ fn mentions_are_current_stable_deduplicated_and_never_guess_duplicate_names() {
         "Body can be edited independently",
         &[b.id.clone(), b.id.clone()],
     );
-    assert_eq!(picked.tasks.len(), 1);
+    assert!(
+        picked.tasks.is_empty(),
+        "Group calls are admitted only when ready"
+    );
     assert_eq!(
         picked.message.content,
         "@Mira\nBody can be edited independently"
@@ -64,7 +67,10 @@ fn mentions_are_current_stable_deduplicated_and_never_guess_duplicate_names() {
     )
     .unwrap();
     let (typed, rx) = submit(&core, &group.id, "@Renamed Kai, hello @Renamed Kai!", &[]);
-    assert_eq!(typed.tasks.len(), 1);
+    assert!(
+        typed.tasks.is_empty(),
+        "Group calls are admitted only when ready"
+    );
     finish(&rx, 1);
     assert_eq!(
         db.query_row(
@@ -86,7 +92,10 @@ fn mentions_are_current_stable_deduplicated_and_never_guess_duplicate_names() {
     );
     assert!(no_call.tasks.is_empty());
     let (only_mention, rx) = submit(&core, &group.id, "", &[a]);
-    assert_eq!(only_mention.tasks.len(), 1);
+    assert!(
+        only_mention.tasks.is_empty(),
+        "Group calls are admitted only when ready"
+    );
     finish(&rx, 1);
     assert_eq!(
         count(
@@ -147,6 +156,7 @@ fn shared_persona_queue_keeps_destinations_state_and_cancelled_public_observatio
         "SECOND_ROOM_INPUT",
         std::slice::from_ref(&a),
     );
+    let _second_ready = task(&second, 0);
     let (private, private_rx) = start(&core, &a, "later private input");
     assert_eq!(
         core.room_messages(&second_room.id).unwrap()[1].status,
@@ -167,7 +177,7 @@ fn shared_persona_queue_keeps_destinations_state_and_cancelled_public_observatio
         ),
         Err(Error::Busy)
     ));
-    cancelled.tasks[0].cancel();
+    task(&cancelled, 0).cancel();
     assert_eq!(
         finish(&cancel_rx, 1).last().unwrap().kind,
         ChatEventKind::Cancelled
@@ -179,7 +189,7 @@ fn shared_persona_queue_keeps_destinations_state_and_cancelled_public_observatio
         ChatEventKind::Completed
     );
     terminal(&private_rx);
-    let request = core.model_request(&second.tasks[0].id).unwrap();
+    let request = core.model_request(&task(&second, 0).id).unwrap();
     let input = envelope(&request);
     assert_eq!(input["current_state"]["affinity_user"], 21);
     assert_eq!(input["reply_request"]["conversation_id"], second_room.id);

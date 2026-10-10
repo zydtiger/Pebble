@@ -19,7 +19,8 @@ history, call records, and error text; replacement debug output is redacted.
 
 Queue acceptance and writes serialize. App-default writes require all personas
 idle; a character write requires only that persona idle. Pending participation
-decisions also block settings writes for their character (or app defaults). Before any authoritative
+decisions and still-admittable group slots also block settings writes for their
+character (or app defaults). Before any authoritative
 mutation, candidate overlays validate the whole workspace and dependent inherited
 budgets. toml_edit preserves unrelated fields/comments and changed string-value
 decoration where practical. Turning off a chat override removes its entire table,

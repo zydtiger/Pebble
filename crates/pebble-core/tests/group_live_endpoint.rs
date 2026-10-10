@@ -71,7 +71,7 @@ fn opt_in_live_groups_both_protocols() {
             events.last().unwrap().text
         );
         assert!(events.iter().all(|e| e.kind != ChatEventKind::TextDelta));
-        let group_request = core.model_request(&public.tasks[0].id).unwrap();
+        let group_request = core.model_request(&task(&public, 0).id).unwrap();
         assert_eq!(group_request.session_id, first.session_id);
         assert_eq!(
             envelope(&group_request)["reply_request"]["conversation_id"],

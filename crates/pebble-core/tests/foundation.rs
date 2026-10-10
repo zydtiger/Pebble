@@ -28,6 +28,8 @@ fn restart_keeps_identity_and_state_table() {
         [
             "conversation_memberships",
             "conversations",
+            "group_reply_slots",
+            "group_rounds",
             "message_mentions",
             "messages",
             "model_calls",

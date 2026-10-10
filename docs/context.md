@@ -26,8 +26,8 @@ The user can increase configured limits or deliberately start a fresh context.
 
 ## Storage and memory bounds
 
-Schema 8 has eleven tables, including persona-wide accepted state and group
-membership/mentions alongside the native history records. `model_items.codec` is `json` or `zstd`, with a
+The [history inventory](history.md) defines current tables, including persona-wide
+accepted state, group memberships, decisions and durable reply slots. `model_items.codec` is `json` or `zstd`, with a
 nonnegative `decoded_length`. Migration records the length of existing raw bytes
 without rewriting or recompressing them. New items below 1024 bytes remain raw;
 larger items use zstd level 3 only when the compressed bytes are smaller.
@@ -52,7 +52,7 @@ expected production compression ratio. Tests also keep noncompressible bytes raw
 
 Start fresh context keeps all saved bubbles and native items. Rust serializes
 the operation against queue acceptance, refuses queued/active work for that
-persona, and atomically retires its current session and saves a new frozen prefix
+persona (including pending decisions and still-admittable group slots), and atomically retires its current session and saves a new frozen prefix
 with current files and the unchanged accepted persona state. An incompatible response schema fails without replacing the active session or resetting state. The current event frontier becomes the boundary. Subsequent
 requests contain only events after it; earlier native output never becomes user
 input. A manual reason persists the notice even before the first received event.

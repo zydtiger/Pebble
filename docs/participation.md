@@ -1,9 +1,10 @@
 # Selective participation
 
-v0.1.4 adds independent participation decisions on user group posts. A separate
+Participation decisions use an independent connection on user group posts and
+bounded bot followups. A separate
 small model returns exactly `{"respond":true}` or `{"respond":false}`. The persona's
 chat model writes any requested reply. Private messages never trigger classifiers,
-and bot replies do not trigger another decision or an automatic chain yet.
+and bot followups remain inside the finite [room round](group-flow.md).
 
 ## Configuration and provider contract
 
@@ -25,7 +26,7 @@ requires model, API root and explicit protocol. Credentials are independent and
 support empty/no authentication, inline key or environment reference. Native
 **Participation model** controls expose app defaults and character overrides.
 Disabling a character override inherits app defaults. Saving requires idle
-replies and decisions in the affected scope; validation precedes atomic TOML
+replies, decisions and still-admittable slots in the affected scope; validation precedes atomic TOML
 replacement. No chat session or state boundary changes.
 
 Both Chat Completions and Responses use temperature 0, streaming false, a
@@ -57,7 +58,8 @@ or silence. It treats supplied content as data. The compact JSON input includes:
 - Up to eight recent complete messages delivered to this persona in the target
   group, and eight of its eligible events from other rooms. Each text excerpt
   is bounded at 500 bytes, with source event/message/room/speaker identity.
-- Chronological excerpts with the latest group user message last. No retrieval
+- Chronological excerpts including accepted same-round predecessors and actual
+  already-represented persona knowledge. No retrieval
   or memory consolidation is implied.
 
 Other personas' private events/state/native output/reasoning are never supplied.
@@ -69,21 +71,40 @@ inference. Stable user mentions bypass inference and still permit unmentioned
 members to volunteer. Classifiers run concurrently outside persona chat queues.
 Their read-only views do not link/consume chat events, append native items,
 advance coverage or change state. False becomes **Listening** with no assistant
-bubble. True atomically creates a single call with immutable destination, trigger,
-member interval and original receipt cutoff, then joins the normal persona queue.
+bubble. True makes a slot eligible; only the next ready room slot creates a call
+with immutable destination, trigger, member interval and original receipt cutoff
+and joins the normal persona queue.
 Generation uses actual accepted prefix/state at activation; newer accepted
 cross-room knowledge stays available, without widening selection of new events.
 
 SQLite schema 9 adds `participation_decisions` to populated schema 8 without
 rewriting existing records. It stores IDs/cutoff/revision/status/boolean, bounded
 diagnostic, elapsed time and admitted call link, not copied classifier inputs.
-A pending decision accepts at most once. New user posts invalidate older pending
-decisions in that room; accepted calls continue. Stop checking, room Stop,
-listener disconnect and closing cancel work while preserving public observations.
-Restart marks pending decisions Interrupted and never resends. Failure/stopped/
-interrupted states expose **Mention** and **Settings** recovery. Native observers
-remain open through every decision and dynamically admitted speaker's terminal
-reply; silent decisions are separate from chat history.
+Schema 10 adds rounds/slots and decision generations; each admission remains unique.
+Optional decisions can be re-evaluated when accepted predecessors or current
+persona knowledge/state change, including while an admitted call waits behind a
+private predecessor. Generation checks reject late classifier callbacks. New
+user posts cancel old automatic decisions/calls while protecting outstanding
+required mentions. Stop checking, room Stop, listener disconnect and closing
+cancel work while preserving public observations. Restart interrupts unfinished
+work and never resends. Native observers remain open across waiting slots,
+followups, fallback phases and every dynamically admitted speaker. Silent and
+failed checks stay outside replayable chat history.
+
+Whole-group fallback uses two separate strict passes only after all initial
+decisions are valid false with no required or accepted reply. The exact
+[room intent prompt](../crates/pebble-core/assets/fallback-intent-prompt.txt) returns
+`{"whole_group_question": boolean}` using only the latest canonical user message
+(up to 8,000 UTF-8 bytes), without SOUL/interests. Its connection comes from the
+first configured eligible candidate in stable order. If true, the exact
+[permission prompt](../crates/pebble-core/assets/fallback-permission-prompt.txt)
+uses each candidate's own connection, identity and bounded chronological delivered
+user transcript, without SOUL/MEMORY/state or interest judgments. It checks silence
+and newer permission and returns `{"respond": boolean}`. At most one permitted
+candidate acknowledges; completion/failure ends the round without bot followups.
+Errors end fallback visibly, never becoming false or triggering another model.
+The transcript is bounded, so older restrictions outside its excerpts are not
+a durable silence-policy store. Model interpretation remains fallible.
 
 ## Validation and measured limits
 
@@ -120,6 +141,11 @@ or a latency guarantee. The initial report write used a relative path and failed
 after all behavior assertions; the complete JSON was recovered from its raw log
 without repeating service requests.
 
-No room ordering, optional-slot reassessment, whole-group fallback, automatic bot
-triggering, membership editing, memory writing or session compaction is added by
-this stage. These remain separately scoped stages.
+The earlier combined intent-and-permission prompt passed 7/10 frozen development
+examples. Splitting the passes scored 9/10 (TP 3 / FN 1 / FP 0 / TN 6), with all
+15 requests schema-correct and zero reasoning. The remaining miss applied another
+member's silence restriction to an allowed target. These are development probes,
+not an independent accuracy estimate or a universal permission guarantee. The
+runtime uses the exact split prompts and deterministic routing; integration tests
+verify schemas, exclusions and lifecycle independently of those model labels.
+Membership editing, memory writing and session compaction remain later scope.

@@ -17,9 +17,17 @@ class Handler(BaseHTTPRequestHandler):
         source = body.get('messages', body.get('input'))[1]['content']
         if isinstance(source, list): source = source[0]['text']
         data = json.loads(source)
-        latest = data['recent_group_transcript'][-1]['text']
-        time.sleep(1.2 if 'hold' in latest else 0.05)
-        text = 'invalid boolean' if 'malformed' in latest else json.dumps({'respond': 'volunteer' in latest})
+        if 'latest_user_message' in data:
+            latest = data['latest_user_message']['content']
+            text = json.dumps({'whole_group_question': 'whole-group-native' in latest})
+        elif 'recent_real_user_transcript' in data:
+            latest = data['recent_real_user_transcript'][-1]['text']
+            text = json.dumps({'respond': data['persona']['name'] == 'Kai'})
+        else:
+            transcript = data['recent_group_transcript']
+            latest = next((item['text'] for item in reversed(transcript) if item['speaker']['kind'] == 'user'), '')
+            text = 'invalid boolean' if 'malformed' in latest else json.dumps({'respond': 'volunteer' in latest and data['persona']['name'] == 'Kai'})
+        time.sleep(1.2 if 'hold' in latest else 0.25 if 'whole-group-native' in latest else 0.05)
         response = {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': text}}]}
         encoded = json.dumps(response).encode()
         try:
@@ -115,7 +123,7 @@ enum ClassifierChecks {
         model.sendMessage("volunteer: Mira is requested; Kai may join too")
         try await wait(model, until: { !model.hasActiveReplies })
         try check(model.bubbles.count == 4 && model.bubbles.filter { !$0.isUser }.allSatisfy { $0.status == .complete }, "Dynamic speaker observer ended before generation completed")
-        try check(Set(model.participation.map(\.status)) == Set(["mentioned", "selected"]), "Mention bypass/volunteer was not presented")
+        try check(model.participation.contains { $0.personaId == b && $0.status == "selected" && $0.slotStatus == "completed" } && model.participation.contains { $0.personaId == a && $0.status == "listening" }, "Volunteer completion and subsequent optional listening were not presented")
         try await phase("participation-volunteer")
         model.sendMessage("malformed synthetic result")
         try await wait(model, until: { !model.hasActiveReplies })
@@ -134,6 +142,30 @@ enum ClassifierChecks {
         model.closeChat(); await model.load(); model.select(room)
         try await wait(model, until: { !model.loading })
         try check(model.bubbles.count == 9 && model.participation.allSatisfy { $0.status == "cancelled" }, "Restart lost durable decisions")
+        model.sendMessage("whole-group-native: Does everyone agree?")
+        try await wait(model, until: { model.participation.contains { $0.phase == "intent" && $0.status == "pending" } })
+        try await phase("group-fallback-intent")
+        try await wait(model, until: { model.participation.contains { $0.phase == "permission" && $0.status == "pending" } })
+        try await phase("group-fallback-permission")
+        try await wait(model, until: { !model.hasActiveReplies })
+        try check(model.bubbles.count == 11 && model.bubbles.last?.senderID == b && model.bubbles.last?.status == .complete, "Fallback did not stop after one permitted acknowledgment")
+        try await phase("group-fallback-complete")
+
+        // Keep the ready B queued behind independent private work, leaving A unadmitted.
+        model.select(b)
+        for index in 0..<4 { model.sendMessage("Private B queue for waiting view \(index)") }
+        model.select(room)
+        model.mentionedIDs = [b, a]; model.sendMessage("Older protected mention requests")
+        try await wait(model, until: { model.participation.contains { $0.personaId == a && $0.slotStatus == "pending" && $0.status == "mentioned" } && model.bubbles.last?.senderID == b })
+        model.mentionedIDs = [a]; model.sendMessage("New user round while old mentions wait")
+        try await wait(model, until: { model.bubbles.filter(\.isUser).count == 8 && model.participation.filter { $0.personaId == a && $0.slotStatus == "pending" }.count == 2 })
+        try await phase("group-protected-waiting")
+        try check(model.bubbles.filter { !$0.isUser }.count == 6, "Future required slots prematurely created bubbles")
+        model.stopReply()
+        try await wait(model, until: { !model.isReplying })
+        try check(model.pendingCount(b) > 0 && model.participation.allSatisfy { !["pending", "admitted"].contains($0.slotStatus) }, "All-room Stop lost old/new round or cancelled private B")
+        try await phase("group-all-rounds-stopped")
+        try await wait(model, until: { !model.hasActiveReplies })
         model.closeChat()
         print("Native classifier checks passed: separate settings/protocol round trips, Deciding/Listening, @ bypass plus dynamic volunteer, visible errors, manual recovery, cancellation, durable reopening.")
     }

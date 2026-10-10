@@ -127,7 +127,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.4").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.5").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -326,7 +326,7 @@ struct ContentView: View {
                 if model.isReplying {
                     Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
                         .buttonStyle(.plain).foregroundStyle(PebbleTheme.sage)
-                        .help("Stop pending replies for this message in this chat").accessibilityLabel("Stop reply")
+                        .help("Stop every pending reply and check in this chat").accessibilityLabel("Stop reply")
                 }
                 Button { model.sendMessage() } label: {
                     Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold))

@@ -72,10 +72,10 @@ They preserve all previous messages, session contracts, native bytes, and calls.
 A reset does not rewrite historical snapshots. Ordinary settings, model changes,
 restart, and the existing fresh-context action continue to preserve state.
 
-Reads and saves serialize with queue acceptance. Pending replies or participation
-checks for this persona block every apply mode, including defaults-only, and
+Reads and saves serialize with queue acceptance. Pending replies, participation
+checks or still-admittable group slots for this persona block every apply mode, including defaults-only, and
 **Start fresh context**; other personas can continue. Rejected operations leave
-files, accepted state, and context unchanged, so a pending decision retains its
+files, accepted state, and context unchanged, so a pending decision or group slot retains its
 original observed input. The save compares the
 panel's schema/defaults, accepted state, and active session against current data.
 A stale snapshot reports **Reload** instead of overwriting newer state or edits.

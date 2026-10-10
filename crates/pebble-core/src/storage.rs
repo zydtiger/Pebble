@@ -6,6 +6,7 @@ mod participation;
 mod response_settings;
 mod retry;
 mod rooms;
+pub(crate) mod rounds;
 mod state;
 mod turns;
 pub(crate) use turns::input_message;
@@ -47,7 +48,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 9 {
+        if version > 10 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -99,6 +100,10 @@ impl Database {
         if version < 9 {
             tx.execute_batch(include_str!("storage/participation-migration.sql"))?;
         }
+        if version < 10 {
+            tx.execute_batch(include_str!("storage/rounds-migration.sql"))?;
+        }
+        tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
@@ -173,7 +178,7 @@ impl Database {
                 m.created_at, COALESCE(j.error, ''),
                 (j.status IN ('failed','cancelled','interrupted')
                   AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
-                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')))
+                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;

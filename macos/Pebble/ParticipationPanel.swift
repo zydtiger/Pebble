@@ -21,11 +21,12 @@ struct ParticipationPanel: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 8) {
                                     Text(model.speakerName(record.personaId)).fontWeight(.medium)
-                                    if record.status == "pending" { ProgressView().controlSize(.mini) }
-                                    Text(label(record.status))
+                                    if record.messageId != model.bubbles.last(where: { $0.isUser })?.id { Text("Earlier request").font(.system(size: 9)) }
+                                    if record.slotStatus == "pending" { ProgressView().controlSize(.mini) }
+                                    Text(label(record))
                                     Spacer()
-                                    if record.status == "pending" {
-                                        Button("Stop checking") { model.cancelParticipation(record) }.buttonStyle(.plain)
+                                    if record.slotStatus == "pending" {
+                                        Button("Stop waiting") { model.cancelParticipation(record) }.buttonStyle(.plain)
                                     }
                                     if ["unconfigured", "failed", "cancelled", "interrupted"].contains(record.status) {
                                         Button("Mention") { if !model.mentionedIDs.contains(record.personaId) { model.toggleMention(record.personaId) } }
@@ -48,8 +49,19 @@ struct ParticipationPanel: View {
         .foregroundStyle(PebbleTheme.muted).padding(.horizontal, 30).padding(.vertical, 12)
         .background(PebbleTheme.sage.opacity(0.05))
     }
-    private func label(_ status: String) -> String {
-        switch status {
+    private func label(_ record: ParticipationRecord) -> String {
+        if record.slotStatus == "cancelled" { return "Reply stopped" }
+        if record.slotStatus == "failed" { return "Reply failed" }
+        if record.slotStatus == "interrupted" { return "Reply interrupted" }
+        if record.slotStatus == "completed" { return record.phase == "permission" ? "Acknowledged" : "Replied" }
+        if record.slotStatus == "admitted" { return "Reply in progress" }
+        if record.slotStatus == "pending" {
+            if record.status != "pending" { return "Waiting for earlier replies…" }
+            if record.phase == "intent" { return "Checking the group question…" }
+            if record.phase == "permission" { return "Considering an acknowledgment…" }
+            return "Deciding…"
+        }
+        return switch record.status {
         case "pending": "Deciding…"
         case "listening": "Listening"
         case "mentioned", "selected": "Reply requested"

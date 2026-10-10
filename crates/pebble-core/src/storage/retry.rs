@@ -7,13 +7,13 @@ use rusqlite::{OptionalExtension, params};
 impl Database {
     pub(crate) fn ensure_idle(&self, persona: Option<&str>) -> Result<(), Error> {
         let connection = self.connection.lock().expect("database lock");
-        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR c.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
+        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR c.persona_id=?1)) OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.status IN ('pending','admitted') AND (?1 IS NULL OR d.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
         Ok(())
     }
     pub(crate) fn enqueue_retry(&self, persona: &Persona, reply: &str) -> Result<Turn, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
-        if tx.query_row("SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status IN ('queued','streaming'))",[&persona.id],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status IN ('queued','streaming')) OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=?1 AND s.status IN ('pending','admitted'))",[&persona.id],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
         let latest:Option<(String,String,String,String,String,Option<String>)>=tx.query_row("SELECT c.id,c.trigger_message_id,c.status,c.reply_message_id,c.conversation_id,c.membership_id FROM model_calls c WHERE c.persona_id=?1 ORDER BY c.persona_sequence DESC LIMIT 1",[&persona.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
         let Some((original, user, status, latest_reply, conversation, membership)) = latest else {
             return Err(unavailable());

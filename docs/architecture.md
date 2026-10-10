@@ -35,14 +35,15 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the twelve chat/history/state/membership/decision tables and schema migration. Visible
+Rust owns the fourteen chat/history/state/membership/decision/round tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 
 ```text
 Swift sends room, text, explicit mentions, and observer
-    → Rust accepts one user message, member receipts, selected replies/calls atomically
+    → Rust accepts one user message, member receipts, group round/decisions/slots atomically
+    → room coordinator admits only its ready speaker into the persona queue
     → persona queue activates the call and freezes its request atomically
     → Rust returns a cancellable handle and authoritative message IDs
     → Chat Completions, Responses, or unconfigured demo consumes the stored request
@@ -59,8 +60,8 @@ actor bridge keeps blocking core calls off the UI thread, and listeners only
 enqueue events. A bounded, disconnected subscription cancels generation.
 
 Each persona has one ordered execution queue; different personas can generate
-concurrently. Accepted user/reply messages and a received event are durable
-before the call starts. A queued call has no session or frozen input yet.
+concurrently. Accepted user messages and received events are durable before any call; a
+group reply placeholder is created only when its room slot is admitted. A queued call has no session or frozen input yet.
 Activation builds its request after the predecessor publishes accepted output,
 while limiting incoming events to that call's receipt cutoff. Thus an earlier
 call cannot consume later queued inputs, and a followup sees its predecessor's
@@ -69,7 +70,7 @@ native assistant output even when that output event was recorded later.
 Swift keeps a presentation cache, draft, mention selection, and run handles per room. Room switching
 changes the displayed cache without disconnecting other streams. Drafts, output,
 errors, and Stop belong to that room. Queued bubbles expose individual cancel;
-Stop cancels the selected room's oldest submission, including its remaining handles. Closing the view
+Stop cancels all unfinished rounds, decisions and calls in the selected room. Closing the view
 cancels every retained handle/subscription; dropping the core cancels its queues and participation workers.
 Early cancellation is retained until handles arrive. A group observer adopts dynamically admitted speaker handles and remains open until every participation decision and selected call terminates; one character finishing cannot disconnect another. Startup marks both queued
 and active calls interrupted, with no accepted partial output or hidden resubmit.
@@ -182,8 +183,8 @@ personas. Group creation writes real membership intervals at publication boundar
 zero. User acceptance resolves typed or picked mentions to stable current-member
 IDs, saves one canonical message, assigns its publication order, and creates one
 received event per member. Only selected personas receive calls/placeholders.
-No mention means durable observations without generation. Bot text never creates
-mentions or another call.
+Unmentioned members may volunteer through independent classification. Bot text
+never creates user mentions; accepted replies may prompt bounded optional followups.
 
 Successful completion commits reply/state/native output, author sent event, and
 other members' public received events together. A separate publication ordinal
@@ -203,26 +204,44 @@ old request items are never rewritten to introduce group instructions. New
 prefixes explain shared history and public disclosure boundaries. See
 [group rules](groups.md) and [history](history.md).
 
-## Selective participation
+## Selective participation and room flow
 
-A group user-acceptance transaction also records one participation decision per
-member. Explicit mentions have their already accepted calls; unmentioned members
-with a configured classifier start independent cancellable HTTP workers. Rust
-freezes a bounded, persona-scoped read view in memory at acceptance. SQLite stores
-only identity, cutoff, revision, lifecycle, bounded diagnostics, and optional call
-link, without another copy of SOUL/MEMORY/transcript payloads.
+A group user-acceptance transaction records one round and initial decision/slot
+per member. Explicit mentions become required slots. Unmentioned configured
+members start independent cancellable classifier HTTP workers. Rust freezes
+bounded persona-scoped inputs in memory; SQLite stores identities, cutoff,
+revision, generation/phase, lifecycle, diagnostics and optional call link only.
+Classification never reserves a persona queue, consumes events or writes native
+history/state. False creates no bubble.
 
-A validated true result atomically selects the decision and creates one reply/call
-in that persona's ordinary queue. Original room/root/interval/cutoff never change.
-Actual generation freezes later from the current accepted native prefix and state;
-classification does not reserve the queue, consume events, or write model history.
-A false result becomes Listening without a reply. New user posts cancel older
-pending decisions in that room; accepted calls continue. Callback ordering admits
-the dynamic handle before Started/terminal events and before the final decision
-settles the observer. No callback wait holds the cancellation mutex.
+The room coordinator processes required slots first, then optional slots in
+least-recently-accepted public speaker order with membership/ID tie breakers.
+Only its ready head joins a persona queue; no future queue reservations or
+cross-room wait cycle is introduced. Optional decisions recheck relevant accepted
+predecessors/current persona state, including after an actual private predecessor
+finishes while the admitted call was queued. Generation-scoped callbacks cannot
+admit twice or revive cancelled work.
 
-Restart interrupts pending decisions and never resends them. Failure and stopped
-checks retain their public observations and expose manual mention recovery.
-Classifier connections, credentials, protocol constraints, and time/input limits
-are detailed in [participation](participation.md). Bot-triggered decisions and a
-room scheduler remain later stages.
+Each member gets at most one initial admission and the whole round at most two
+bot followups, excluding the immediately previous speaker. Admission spends the
+budget transactionally; failure/cancel does not refund it and format repair stays
+inside one call. New user posts invalidate old automatic work while protecting
+unfinished required mentions with their original root/destination/cutoff. All-room
+Stop and admission serialize through the persona acceptance gate; final reply,
+state, native output and fanout publication checks the durable slot/round/interval
+inside the same SQLite transaction. An earlier Stop prevents late acceptance.
+
+Actual accepted cross-room prefix/state remains current. New observations use
+the root cutoff plus explicit accepted same-round earlier public replies; exact
+links preserve skipped-event holes and the contiguous frontier. No call forks or
+rebuilds history to simulate an earlier state. Native observers stay alive across
+waiting required slots, initial decisions, followups and two-pass fallback; silent
+checks remain separate from replayable chat history.
+
+Fallback is at most one acknowledgment after valid all-false initial decisions,
+using separate strict room-intent and per-persona permission passes. Completion
+or failure ends the round. Restart interrupts unfinished rounds/slots/decisions/
+calls with no implicit resumption. Explicit latest eligible Retry is independent
+and never reopens a chain. Idle checks for state/context/connection publication
+include still-admittable slots. See [room flow](group-flow.md) and
+[participation](participation.md) for prompts, routing, limits and recovery.

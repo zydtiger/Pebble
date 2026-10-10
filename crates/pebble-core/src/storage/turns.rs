@@ -8,6 +8,13 @@ impl Database {
     pub(crate) fn activate_turn(&self, persona: &Persona, pending: &Turn) -> Result<Turn, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
+        if !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM model_calls WHERE id=?1 AND status='queued')",
+            [&pending.call_id],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Err(Error::Generation("This reply is no longer pending.".into()));
+        }
         let (protocol, model, base_url) = crate::connection::identity(persona.chat.as_ref());
         let existing: Option<(String, String, String, String, i64)> = tx.query_row(
             "SELECT id, protocol, model, base_url, event_start_sequence FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
@@ -66,8 +73,8 @@ impl Database {
 
         let cutoff: i64 = tx.query_row(
             "SELECT MAX(e.sequence) FROM persona_events e WHERE e.persona_id = ?1 AND
-                (e.sequence <= ?2 OR EXISTS (SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id WHERE x.event_id = e.id AND i.session_id = ?3))",
-            params![persona.id, pending.receipt_cutoff, session_id],
+                (e.sequence <= ?2 OR EXISTS(SELECT 1 FROM model_calls current JOIN group_reply_slots own ON own.id=current.slot_id JOIN group_reply_slots previous ON previous.round_id=own.round_id AND previous.ordinal<own.ordinal JOIN model_calls accepted ON accepted.slot_id=previous.id WHERE current.id=?4 AND previous.status='completed' AND accepted.reply_message_id=e.message_id) OR EXISTS (SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id WHERE x.event_id = e.id AND i.session_id = ?3))",
+            params![persona.id, pending.receipt_cutoff, session_id,pending.call_id],
             |row| row.get(0),
         )?;
         let mut events = Vec::new();
@@ -76,7 +83,7 @@ impl Database {
             let mut query = tx.prepare(
                 "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content, COALESCE((SELECT display_name FROM personas WHERE id=m.sender_id),'You')
                  FROM persona_events e JOIN messages m ON m.id = e.message_id
-                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND e.sequence <= ?5
+                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND (e.sequence <= ?5 OR EXISTS(SELECT 1 FROM model_calls current JOIN group_reply_slots own ON own.id=current.slot_id JOIN group_reply_slots previous ON previous.round_id=own.round_id AND previous.ordinal<own.ordinal JOIN model_calls accepted ON accepted.slot_id=previous.id WHERE current.id=?8 AND previous.status='completed' AND accepted.reply_message_id=e.message_id))
                  AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming'))))
                  AND NOT EXISTS (
                      SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
@@ -91,7 +98,8 @@ impl Database {
                     event_start,
                     pending.receipt_cutoff,
                     pending.retry_of.is_some(),
-                    user_id
+                    user_id,
+                    pending.call_id
                 ],
                 |row| {
                     Ok((
@@ -136,6 +144,20 @@ impl Database {
             "conversation_id":pending.conversation_id, "trigger_message_id":user_id}});
         let destination = super::rooms::room(&tx, &pending.conversation_id)?;
         envelope["reply_request"]["room"] = json!({"kind":destination.kind,"name":destination.title,"members":destination.members.iter().map(|m|json!({"id":m.persona_id,"name":m.display_name})).collect::<Vec<_>>()});
+        let acknowledgment: bool = tx.query_row(
+            "WITH RECURSIVE attempts(id,retry_of,slot_id) AS (
+                SELECT id,retry_of,slot_id FROM model_calls WHERE id=?1
+                UNION ALL SELECT c.id,c.retry_of,c.slot_id FROM model_calls c JOIN attempts a ON c.id=a.retry_of)
+             SELECT EXISTS(SELECT 1 FROM attempts a JOIN group_reply_slots s ON s.id=a.slot_id WHERE s.kind='fallback')",
+            [&call_id],
+            |row| row.get(0),
+        )?;
+        if acknowledgment {
+            envelope["reply_request"]["purpose"] = json!("group_acknowledgment");
+            envelope["reply_request"]["instructions"] = json!(
+                "For this reply only, give a brief acknowledgment or clarification of the whole-group question. Do not turn this into an ordinary substantive answer or introduce a new discussion. Stay in character and follow the frozen response contract."
+            );
+        }
         if let Some(state) = state {
             envelope["current_state"] = state;
         }
@@ -184,6 +206,13 @@ impl Database {
         let tx = connection.transaction()?;
         let saved = message(&tx, &turn.reply.id)?;
         if saved.status != MessageStatus::Streaming {
+            return Ok(saved);
+        }
+        let allowed:bool=tx.query_row("SELECT (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships m WHERE m.id=c.membership_id AND m.left_publication IS NULL)) AND (c.slot_id IS NULL OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN group_rounds r ON r.id=s.round_id WHERE s.id=c.slot_id AND s.status='admitted' AND (r.status='active' OR (r.status='superseded' AND s.kind='required')))) FROM model_calls c WHERE c.id=?1",[&turn.call_id],|r|r.get(0))?;
+        if !allowed {
+            super::rounds::cancel_publication(&tx, &turn.call_id, &turn.reply.id)?;
+            let saved = message(&tx, &turn.reply.id)?;
+            tx.commit()?;
             return Ok(saved);
         }
         let schema: Option<String> = tx.query_row(
@@ -274,6 +303,16 @@ impl Database {
                 params![turn.call_id, call_status, error],
             )?;
         }
+        super::rounds::complete_slot(
+            &tx,
+            &turn.call_id,
+            if status == MessageStatus::Complete {
+                "completed"
+            } else {
+                status.as_str()
+            },
+            &turn.reply.id,
+        )?;
         let message = message(&tx, &turn.reply.id)?;
         tx.commit()?;
         Ok(message)
@@ -286,7 +325,7 @@ pub(super) fn new_id() -> String {
 
 pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
     let mut message=db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1", [id],read_message)?;
-    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=c.persona_id AND s.status IN ('pending','admitted'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((detail, retry)) = metadata {
         message.failure_detail = detail;
         message.can_retry = retry;

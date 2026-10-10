@@ -2,6 +2,8 @@
 pub fn v7(root: &std::path::Path) {
     let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
     db.execute_batch("PRAGMA foreign_keys=OFF;
+        DROP TABLE group_reply_slots; DROP TABLE group_rounds;
+        ALTER TABLE model_calls DROP COLUMN slot_id;
         DROP TABLE participation_decisions;
         DROP INDEX persona_call_order; DROP INDEX pending_persona_calls;
         ALTER TABLE model_calls DROP COLUMN membership_id;
@@ -13,4 +15,21 @@ pub fn v7(root: &std::path::Path) {
         INSERT INTO old_conversations SELECT id,kind,persona_id,created_at FROM conversations;
         DROP TABLE conversations; ALTER TABLE old_conversations RENAME TO conversations;
         PRAGMA user_version=7;").unwrap();
+}
+
+/// Remove only v0.1.5 additions, preserving the populated v0.1.4 decisions.
+#[allow(dead_code)]
+pub fn v9(root: &std::path::Path) {
+    let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
+    db.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+      DROP TABLE group_reply_slots; DROP TABLE group_rounds;
+      ALTER TABLE model_calls DROP COLUMN slot_id;
+      ALTER TABLE participation_decisions DROP COLUMN generation;
+      ALTER TABLE participation_decisions DROP COLUMN phase;
+      ALTER TABLE participation_decisions DROP COLUMN knowledge_version;
+      ALTER TABLE participation_decisions DROP COLUMN predecessor_version;
+      PRAGMA user_version=9;",
+    )
+    .unwrap();
 }

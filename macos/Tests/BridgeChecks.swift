@@ -79,9 +79,11 @@ struct BridgeChecks {
         try require(model.draft == "Private room draft", "Group stream overwrote private draft")
         model.select(group.id)
         try require(model.mentionedIDs == [a] && model.draft == "Keep chosen target while editing text", "Room switching lost mention selection")
-        model.sendMessage(); model.stopReply()
+        model.sendMessage()
+        for _ in 0..<100 where model.bubbles.count < 6 { try await Task.sleep(for: .milliseconds(10)) }
+        model.stopReply()
         for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
-        try require(model.bubbles.last?.status == .cancelled && model.bubbles.last?.canRetry == true, "Group cancellation/retry metadata failed")
+        try require(model.bubbles.last?.status == .cancelled && model.bubbles.last?.canRetry == true, "Group cancellation/retry metadata failed: bubbles=\(model.bubbles.map { "\($0.status):\($0.canRetry)" }), error=\(model.error ?? "none"), replying=\(model.isReplying)")
         model.retryReply(model.bubbles.last!.id)
         for _ in 0..<400 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.count == 7 && model.bubbles.last?.status == .complete && model.bubbles.last?.senderID == a, "Group retry duplicated user or used wrong speaker/destination")

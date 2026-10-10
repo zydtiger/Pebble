@@ -24,6 +24,7 @@ fn false_reads_are_private_bounded_nonconsuming_and_both_protocol_requests_are_s
         let server = Server::new(vec![
             Reply::json(answer(api, "{\"respond\":false}")),
             Reply::json(answer(api, "{\"respond\":false}")),
+            Reply::json(answer(api, "{\"whole_group_question\":false}")),
         ]);
         configure(
             &core,
@@ -142,10 +143,19 @@ fn false_reads_are_private_bounded_nonconsuming_and_both_protocol_requests_are_s
 fn mentions_bypass_inference_and_volunteers_admit_once_without_duplicate_users() {
     let (root, core, a) = isolated();
     let b = core.create_persona("Kai").unwrap();
-    let server = Server::new(vec![Reply::json(answer(
-        "chat_completions",
-        "{\"respond\":true}",
-    ))]);
+    let volunteer = b.id.clone();
+    let server = Server::handling(move |request| {
+        let view: Value =
+            serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+        Reply::json(answer(
+            "chat_completions",
+            if view["persona"]["id"] == volunteer {
+                "{\"respond\":true}"
+            } else {
+                "{\"respond\":false}"
+            },
+        ))
+    });
     configure(&core, None, &server.url, "chat_completions", "");
     let group = core
         .create_group("Mention plus volunteer", &[a.clone(), b.id.clone()])
@@ -156,14 +166,14 @@ fn mentions_bypass_inference_and_volunteers_admit_once_without_duplicate_users()
         "A direct request with room for Kai",
         std::slice::from_ref(&a),
     );
-    assert_eq!(submission.tasks.len(), 1);
+    assert!(submission.tasks.is_empty());
     let events = finish(&submission, &rx);
     assert_eq!(
         events
             .iter()
             .filter(|e| e.kind == ChatEventKind::Admitted)
             .count(),
-        1
+        2
     );
     assert_eq!(
         events
@@ -201,7 +211,7 @@ fn mentions_bypass_inference_and_volunteers_admit_once_without_duplicate_users()
     let input: Value =
         serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
     assert_eq!(input["persona"]["id"], b.id);
-    assert!(server.requests.try_recv().is_err());
+    assert_eq!(server.requests.try_iter().count(), 2);
     let storage = db(root.path());
     assert_eq!(count(&storage, "SELECT COUNT(*) FROM model_calls"), 2);
     assert_eq!(
@@ -322,7 +332,9 @@ fn cancellation_stale_callbacks_and_restart_keep_observations_and_manual_recover
         1
     );
     assert_eq!(core.room_messages(&group.id).unwrap().len(), 4);
-    let request = core.model_request(&manual.tasks[0].id).unwrap();
+    let request = core
+        .model_request(&group_support::task(&manual, 0).id)
+        .unwrap();
     let native = group_support::native(&request);
     assert!(
         native.contains("PUBLIC_CANCELLED_OBSERVATION")
@@ -409,6 +421,9 @@ fn separate_rooms_preserve_old_cutoff_and_actual_newer_accepted_prefix_and_state
                 body["messages"][1]["content"].as_str().unwrap()
             };
             let view: Value = serde_json::from_str(input).unwrap();
+            if view.get("latest_user_message").is_some() {
+                return Reply::json(answer(api, "{\"whole_group_question\":false}"));
+            }
             let older = view["recent_group_transcript"]
                 .as_array()
                 .unwrap()

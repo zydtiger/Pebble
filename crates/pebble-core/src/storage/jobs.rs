@@ -43,6 +43,12 @@ impl Database {
         if let Some(persona) = room.persona_id.as_ref() {
             super::turns::insert_event_for(&tx, persona, room_id, &user, "received")?;
         }
+        if room.kind == "group" {
+            let decisions = super::rounds::accept(&tx, &room, &user, &selected, personas)?;
+            let user = message(&tx, &user)?;
+            tx.commit()?;
+            return Ok((user, Vec::new(), decisions));
+        }
         let mut turns = Vec::new();
         for id in selected {
             let persona = personas
@@ -79,41 +85,8 @@ impl Database {
             });
         }
         let user = message(&tx, &user)?;
-        let mut decisions = Vec::new();
-        if room.kind == "group" {
-            tx.execute("UPDATE participation_decisions SET status='cancelled',error='A newer group message replaced this decision.' WHERE conversation_id=?1 AND status='pending'", [room_id])?;
-            for member in &room.members {
-                let persona = personas
-                    .iter()
-                    .find(|p| p.id == member.persona_id)
-                    .ok_or(Error::UnknownPersona)?;
-                let call_id = turns
-                    .iter()
-                    .find(|t| t.persona_id == member.persona_id)
-                    .map(|t| t.call_id.clone());
-                let status = if call_id.is_some() {
-                    "mentioned"
-                } else if persona.classifier.is_some() {
-                    "pending"
-                } else {
-                    "unconfigured"
-                };
-                let cutoff: i64 = tx.query_row("SELECT sequence FROM persona_events WHERE persona_id=?1 AND message_id=?2 AND kind='received'", params![member.persona_id,user.id], |r|r.get(0))?;
-                let id = new_id();
-                tx.execute("INSERT INTO participation_decisions(id,message_id,conversation_id,persona_id,membership_id,event_cutoff,revision,status,call_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![id,user.id,room_id,member.persona_id,member.membership_id,cutoff,user.sequence,status,call_id])?;
-                let input = if status == "pending" {
-                    crate::participation::compact_input(&tx, persona, room_id, cutoff)?
-                } else {
-                    String::new()
-                };
-                decisions.push(crate::participation::DecisionWork {
-                    decision: super::participation::read(&tx, &id)?,
-                    input,
-                });
-            }
-        }
         tx.commit()?;
-        Ok((user, turns, decisions))
+        Ok((user, turns, Vec::new()))
     }
     pub(crate) fn enqueue_turn(&self, persona: &Persona, prompt: &str) -> Result<Turn, Error> {
         Ok(self
@@ -141,6 +114,12 @@ impl Database {
         )?;
         tx.execute("UPDATE model_calls SET status = ?2, error = ?3, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1 AND status = 'queued'", params![pending.call_id, status.as_str(), error])?;
         let reply = message(&tx, &pending.reply.id)?;
+        super::rounds::complete_slot(
+            &tx,
+            &pending.call_id,
+            reply.status.as_str(),
+            &pending.reply.id,
+        )?;
         tx.commit()?;
         Ok(reply)
     }

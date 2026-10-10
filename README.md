@@ -6,7 +6,7 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.4 adds selective participation to persistent group conversations.** Create
+**v0.1.5 adds ordered, bounded group conversations.** Create
 characters, choose group members, and let each character decide when to join,
 or mention who should reply. Each character
 keeps one native model history, state, and execution queue across all its rooms;
@@ -52,7 +52,7 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
    with your text, then scrolls at its maximum height; the send button stays at
    the lower right.
 2. Type another message while a reply streams and press **Enter** to queue a
-   followup. **Stop** cancels this room's current reply; a queued bubble has its
+   followup. **Stop** cancels this room's unfinished replies; a queued bubble has its
    own **Cancel** action.
 3. Choose **New character**, enter a name, and create a separate private room.
    Switch between characters while both reply. Drafts and stream state stay in
@@ -84,13 +84,14 @@ accepted as assistant context. Empty drafts are not sent.
 3. Send a public message. Unmentioned characters independently show **Deciding…**,
    then **Listening** or **Reply requested**. Listening creates no empty bubble.
    Mentioned characters bypass the participation model; others can still volunteer.
-   Replies show their authors. Multiple characters can reply concurrently in this stage.
+   Replies show their authors and run in room order. Requested speakers go first;
+   optional speakers reconsider accepted predecessors. Waiting requests stay visible.
    **Participation settings** opens the separate small-model connection; a failed
    check remains visible with **Mention** and **Settings** recovery actions.
 4. Switch rooms while replies run. Drafts and mention selections stay with each
    room; replies keep their original destination. The group header lets you
    rename the group or open a member's private chat/settings.
-5. Stop cancels the oldest submission's remaining decisions and replies in this room; queued
+5. Stop cancels every unfinished round, decision and reply in this room; queued
    bubbles have individual Cancel. Retry uses the original room and speaker,
    and is available only for that character's latest unsuccessful call across
    all rooms while the character is idle.
@@ -99,7 +100,11 @@ Only public user messages and accepted reply text fan out to current members.
 Native reasoning, state, and private exchanges are never copied to other
 characters. A character itself retains its private knowledge and may disclose
 it in a public reply; prompt instructions cannot guarantee secrecy from the
-same shared-context model. Membership changes and ordered automatic reply chains are later stages.
+same shared-context model. A round permits one initial reply per member and at
+most two character followups. An explicit whole-group question with no volunteers
+can receive one permitted acknowledgment; explicit silence is respected through
+a separate permission check. A new user post interrupts old automatic replies
+while preserving outstanding user mentions. Membership editing is a later stage.
 Participation reads do not consume chat observations or change character state.
 An absent participation connection keeps manual mentions available. New roots
 seed the selected Qwen connection independently of the demo/live chat model;
@@ -122,12 +127,12 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── MEMORY.md
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # twelve chat/history/state/membership/decision tables
+    ├── app.sqlite        # fourteen chat/history/state/membership/decision/round tables
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 8 are upgraded transactionally to 9, preserving character, room, message,
+through 9 are upgraded transactionally to 10, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data

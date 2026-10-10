@@ -56,7 +56,7 @@ minimum-OS testing remain future work.
 
 ## v0.1.1–v0.2.0 group-chat delivery
 
-v0.1.1 through v0.1.4 are implemented. Later stages remain planned; each leaves a runnable
+v0.1.1 through v0.1.5 are implemented. Later stages remain planned; each leaves a runnable
 increment and receives focused review before the next stage.
 
 | Stage | User-visible result and exit boundary |
@@ -64,8 +64,8 @@ increment and receives focused review before the next stage.
 | **v0.1.1 — Structured replies and state** | Private replies validate `reply` + complete persona state, with typing until atomic acceptance, a frozen schema/semantic contract, bounded format repair, and explicit legacy-context upgrade. Both protocols preserve opaque native replay. |
 | **v0.1.2 — State and schema controls** | Inspect current state, edit schema/initial values, and deliberately reset state. Schema changes require an explicit context boundary and compatible-state/reset decision; preserve old contracts. Initially affinity names the user as subject. |
 | **v0.1.3 — Groups with manual responses** | Create/name groups of existing characters, switch rooms, and `@` stable member IDs to request replies. Membership intervals and durable public-message fan-out preserve private → group → private continuity; silent members observe. One session/state/queue belongs to each persona across rooms. Implemented with native creation/rename, typed/picked mentions, publication intervals, persona-wide retry, and populated private-data migration. |
-| **v0.1.4 — Selective participation** | App-default/per-persona classifier connections decide separately on user messages. Supply persona-scoped room/state/memory context; `@` bypasses inference. Classifier reads change neither chat history coverage nor state. Failures remain visible and manual mentions usable. Implemented with independent native settings, strict two-protocol validation, durable single-admission decisions and dynamic speaker observers; no bot triggering yet. |
-| **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. |
+| **v0.1.4 — Selective participation** | App-default/per-persona classifier connections decide separately on user messages. Supply persona-scoped room/state/memory context; `@` bypasses inference. Classifier reads change neither chat history coverage nor state. Failures remain visible and manual mentions usable. Implemented with independent native settings, strict two-protocol validation, durable single-admission decisions and dynamic speaker observers; bounded bot triggering follows in v0.1.5. |
+| **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. Implemented with durable ready-only slots, deterministic required/optional order, queued reassessment, N+2 budget, two-pass fallback, all-room Stop and selective predecessor coverage. |
 | **v0.1.6 — Reliable daily group use** | Add/remove/rejoin members; room-scoped Stop/Cancel/Retry, per-speaker pending/errors, drafts, and restart recovery. No duplicate acceptance/fan-out/state change or silent chain resume. Retry eligibility spans the persona's whole cross-room history. |
 | **v0.2.0 — Group-chat milestone** | Consolidate private + group chat, persistent personas, selective participation, state lifetime, membership visibility, scheduling limits, and supported provider behavior; no new subsystem at this final step. |
 
