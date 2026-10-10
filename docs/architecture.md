@@ -180,7 +180,12 @@ Xcode's debug packaging, not dynamic linkage to a separate Rust core.
 
 Rooms belong to conversations; histories, state and execution queues belong to
 personas. Group creation writes real membership intervals at publication boundary
-zero. User acceptance resolves typed or picked mentions to stable current-member
+zero. Add/rejoin records the current publication ordinal; remove closes the
+original interval and cancels its unfinished decisions/slots/calls under the
+same serialized publication gate. Late callbacks cannot publish, and rejoin
+never revives old work. Existing accepted knowledge/state remains shared. A new
+member observes later publications but is a response candidate only in later
+user rounds. User acceptance resolves typed or picked mentions to stable current-member
 IDs, saves one canonical message, assigns its publication order, and creates one
 received event per member. Only selected personas receive calls/placeholders.
 Unmentioned members may volunteer through independent classification. Bot text

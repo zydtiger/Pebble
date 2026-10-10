@@ -29,9 +29,14 @@ struct ParticipationPanel: View {
                                         Button("Stop waiting") { model.cancelParticipation(record) }.buttonStyle(.plain)
                                     }
                                     if ["unconfigured", "failed", "cancelled", "interrupted"].contains(record.status) {
-                                        Button("Mention") { if !model.mentionedIDs.contains(record.personaId) { model.toggleMention(record.personaId) } }
-                                            .buttonStyle(.plain).accessibilityIdentifier("mention-recovery-\(record.id)")
-                                        Button("Settings") { model.classifierTarget = SettingsTarget(personaID: record.personaId) }.buttonStyle(.plain)
+                                        if model.selectedConversation?.members.contains(where: { $0.personaId == record.personaId }) == true {
+                                            Button("Mention") { if !model.mentionedIDs.contains(record.personaId) { model.toggleMention(record.personaId) } }
+                                                .buttonStyle(.plain).accessibilityIdentifier("mention-recovery-\(record.id)")
+                                            Button("Settings") { model.classifierTarget = SettingsTarget(personaID: record.personaId) }.buttonStyle(.plain)
+                                        } else {
+                                            Button("Members") { model.showGroupMembers = true }.buttonStyle(.plain)
+                                                .accessibilityIdentifier("membership-recovery-\(record.id)")
+                                        }
                                     }
                                 }
                                 if !record.error.isEmpty { Text(record.error).foregroundStyle(record.status == "failed" ? .red : PebbleTheme.muted).textSelection(.enabled) }

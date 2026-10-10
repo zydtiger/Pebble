@@ -49,6 +49,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
         .sheet(isPresented: $model.showNewGroup) { GroupSheet(model: model) }
         .sheet(isPresented: $model.showRenameGroup) { GroupSheet(model: model, renaming: model.selectedConversation) }
+        .sheet(isPresented: $model.showGroupMembers) {
+            if let room = model.selectedConversation { GroupMembersSheet(model: model, roomID: room.id) }
+        }
         .confirmationDialog("Start a fresh context?", isPresented: $model.showFreshContext, titleVisibility: .visible) {
             Button("Start fresh context") { Task { await model.startFreshContext() } }
             Button("Cancel", role: .cancel) {}
@@ -127,7 +130,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.5").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.6").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -152,7 +155,7 @@ struct ContentView: View {
             Image(systemName: "person.2").font(.system(size: 25)).foregroundStyle(PebbleTheme.sage)
             VStack(alignment: .leading, spacing: 4) {
                 Text(group.title).font(.system(size: 14, weight: .semibold))
-                Text(group.members.map(\.displayName).joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted).lineLimit(2)
+                Text(group.members.isEmpty ? "No current members" : group.members.map(\.displayName).joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted).lineLimit(2)
             }
             Spacer()
             Menu {
@@ -160,6 +163,8 @@ struct ContentView: View {
                     Button("Open \(model.memberLabel(member.personaId))'s private chat") { model.select(member.personaId) }
                 }
             } label: { Image(systemName: "person.crop.circle") }.menuStyle(.borderlessButton).fixedSize().help("Character private chats and settings")
+            Button { model.showGroupMembers = true } label: { Image(systemName: "person.2.badge.gearshape") }
+                .buttonStyle(.plain).help("Manage group members").accessibilityIdentifier("manage-group-members")
             Button { model.showRenameGroup = true } label: { Image(systemName: "pencil") }
                 .buttonStyle(.plain).help("Rename group")
         }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 20)

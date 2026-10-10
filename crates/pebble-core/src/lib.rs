@@ -116,6 +116,18 @@ impl Core {
         self.chats
             .serialized(|| self.database.rename_group(room, title))
     }
+    pub fn add_group_member(&self, room: &str, persona: &str) -> Result<Room, Error> {
+        self.chats.serialized(|| {
+            if !self.workspace()?.personas.iter().any(|p| p.id == persona) {
+                return Err(Error::UnknownPersona);
+            }
+            self.database.add_group_member(room, persona)
+        })
+    }
+    pub fn remove_group_member(&self, room: &str, persona: &str) -> Result<Room, Error> {
+        self.chats
+            .remove_group_member(&self.database, room, persona)
+    }
     pub fn room_messages(&self, room: &str) -> Result<Vec<Message>, Error> {
         self.database.room(room)?;
         self.database.messages(room)

@@ -3,8 +3,8 @@
 v0.1.3 creates named rooms from any nonempty selection of existing characters.
 One-member groups are supported; duplicate selections are deduplicated. A room
 ID is immutable and independent of its mutable name. Canonical private room IDs
-and their uniqueness survive upgrade. Membership add/remove/rejoin controls
-arrive in v0.1.6; current creation records real intervals rather than placeholders.
+and their uniqueness survive upgrade. v0.1.6 adds native **Manage members** controls to add, remove or rejoin existing
+characters. A room may become empty without losing its identity or transcript.
 
 ## Mentions and room presentation
 
@@ -28,7 +28,11 @@ and [room scheduling](group-flow.md). A bot reply can prompt bounded followup
 classification, but its `@Name` text never forces a speaker. Swift caches drafts, mention selection, errors and handles by room
 ID, and renders each reply's actual author. Switching/renaming rooms cannot
 redirect a call. The group header opens member private chats for settings/state
-controls; those controls continue to apply to the character across rooms.
+controls; those controls continue to apply to the character across rooms. Drafts
+and selected mentions live until the app closes. Acceptance clears them only if
+no edit occurred in the meantime, even when an edit restores identical text or
+selection. Removal prunes only that member's unaccepted selected chip; rename
+changes its label without changing its ID.
 
 ## Persona knowledge and state
 
@@ -57,8 +61,14 @@ native output, sent event and public fanout together. Failed/cancelled candidate
 create none of those completion effects. A cancelled group call does not erase
 any member's observation of its user message. Publication order is allocated at
 acceptance, separately from placeholder display order. Intervals store a stable
-ID and join/leave publication boundaries; future membership changes will deliver
-future publications without reinterpreting placeholder timestamps.
+ID and join/leave publication boundaries. Join/rejoin receives only subsequent
+publications, including an older placeholder that completes after joining, with
+no backfill before joining or while absent. Newly joined members become response
+candidates at the next user round. Removal closes the interval and cancels its
+unfinished decisions, slots and calls atomically under the publication gate;
+late callbacks cannot accept state, native output or fanout. Rejoin creates a new
+interval and cannot revive old calls or make their Retry eligible. Accepted output
+and previously observed knowledge remain.
 
 Retry requires the character's latest failed/stopped/interrupted call across all
 rooms and no queued/active call, pending decision or still-admittable slot for that character. It reuses the original user,
@@ -76,7 +86,9 @@ and associations, backfills persona-wide call identity/order, and checks foreign
 keys. Deterministic tests cover both protocols, publication rollback, silent
 observations, stable mentions, cross-room queues/retry, abrupt restart and populated
 v0.1.2 migration. Native bridge/render checks exercise real room creation,
-switching, mention chips and attribution. An opt-in two-protocol endpoint check
+switching, mention chips, member management and attribution. Both-protocol
+crash fixtures reopen during classification, queueing and generation, preserving
+accepted native bytes/state and interrupting unfinished work without resending. An opt-in two-protocol endpoint check
 uses only synthetic temporary roots:
 
 ```sh
@@ -90,4 +102,5 @@ Responses schema dialect is explicit configuration; no hostname sniffing or
 silent fallback occurs. Schema 9 adds durable decisions without rewriting existing
 messages, memberships, native items, coverage, or state. Selective participation
 is available. Schema 10 adds ordered rounds/slots and generation-scoped decisions
-without rewriting existing native history. Membership editing remains v0.1.6.
+without rewriting existing native history. Membership editing reuses these
+intervals and needs no further schema migration.

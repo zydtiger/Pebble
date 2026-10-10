@@ -222,6 +222,19 @@ struct RenderChecks {
                     }
                     try capture(window, name: phase)
                 })
+                let membershipModel = ChatModel(dataRoot: model.dataRoot.appendingPathComponent("membership-check"))
+                await membershipModel.load()
+                try await MembershipChecks.run(membershipModel, phase: { phase in
+                    if phase == "group-member-work-stopped" {
+                        window.setContentSize(NSSize(width: 1000, height: 730))
+                        window.contentView = NSHostingView(rootView: ContentView(model: membershipModel))
+                    } else {
+                        window.setContentSize(NSSize(width: 620, height: 620))
+                        window.contentView = NSHostingView(rootView: GroupMembersSheet(model: membershipModel, roomID: membershipModel.selectedConversation!.id))
+                    }
+                    try await Task.sleep(for: .milliseconds(120))
+                    try capture(window, name: phase)
+                })
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 app.terminate(nil)
             } catch {

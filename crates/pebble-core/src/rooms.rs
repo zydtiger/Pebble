@@ -8,6 +8,7 @@ pub struct Room {
     pub title: String,
     pub persona_id: Option<String>,
     pub members: Vec<RoomMember>,
+    pub former_member_ids: Vec<String>,
 }
 #[derive(Debug, Clone)]
 pub struct RoomMember {

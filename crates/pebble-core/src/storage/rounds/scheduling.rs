@@ -96,7 +96,7 @@ pub(super) fn step(db: &Connection, round: &str, personas: &[Persona]) -> Result
         return finish(db, round);
     }
     if stage == "permission" {
-        let next:Option<String>=db.query_row("SELECT d.id FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.round_id=?1 AND s.status='declined' AND d.phase='participation' AND d.respond=0 ORDER BY s.ordinal LIMIT 1",[round],|r|r.get(0)).optional()?;
+        let next:Option<String>=db.query_row("SELECT d.id FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.round_id=?1 AND s.status='declined' AND d.phase='participation' AND d.respond=0 AND EXISTS(SELECT 1 FROM conversation_memberships m WHERE m.id=d.membership_id AND m.left_publication IS NULL) ORDER BY s.ordinal LIMIT 1",[round],|r|r.get(0)).optional()?;
         if let Some(id) = next {
             let d = read(db, &id)?;
             let persona = personas
@@ -138,7 +138,7 @@ pub(super) fn step(db: &Connection, round: &str, personas: &[Persona]) -> Result
     }
     let first: Option<String> = db
         .query_row(
-            "SELECT decision_id FROM group_reply_slots WHERE round_id=?1 ORDER BY ordinal LIMIT 1",
+            "SELECT s.decision_id FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id JOIN conversation_memberships m ON m.id=d.membership_id WHERE s.round_id=?1 AND m.left_publication IS NULL ORDER BY s.ordinal LIMIT 1",
             [round],
             |r| r.get(0),
         )

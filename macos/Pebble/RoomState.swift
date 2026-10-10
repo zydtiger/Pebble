@@ -22,8 +22,10 @@ final class RoomRun {
 @MainActor
 @Observable
 final class RoomState {
-    var draft = ""
-    var mentions: [String] = []
+    var draft = "" { didSet { draftRevision += 1 } }
+    var mentions: [String] = [] { didSet { mentionRevision += 1 } }
+    var draftRevision = 0
+    var mentionRevision = 0
     var bubbles: [ChatBubble] = []
     var participation: [ParticipationRecord] = []
     var error: String?

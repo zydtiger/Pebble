@@ -39,6 +39,9 @@ struct BridgeChecks {
         let classifierModel = ChatModel(dataRoot: root.appendingPathComponent("classifier"))
         await classifierModel.load()
         try await ClassifierChecks.run(classifierModel)
+        let membershipModel = ChatModel(dataRoot: root.appendingPathComponent("membership"))
+        await membershipModel.load()
+        try await MembershipChecks.run(membershipModel)
         print("Swift 6 FFI checks passed: durable IDs/history, native records, validated Unicode replies, cancellation, listener release, UI restart and close lifecycle.")
     }
 

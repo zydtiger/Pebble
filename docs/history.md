@@ -1,6 +1,6 @@
 # Durable chat history
 
-v0.1.5 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.1.6 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. Groups share persona histories. Independent participation decisions do not
 create native sessions or consume event coverage. Durable room rounds release
 only ready slots into the persona queues; no memory writer or work-agent integration exists.
@@ -124,12 +124,13 @@ facts and are still consumed by later calls, including silent members. A differe
 member's cancelled call never suppresses an observation.
 Rust owns cancellation and durable terminal states; Swift consumes typed message
 snapshots and output deltas.
-The draft is cleared after Rust accepts it, and callback IDs prevent updating
+The draft is cleared after Rust accepts it only if its edit revision is unchanged;
+restoring the same text/mentions still counts as an edit. Callback IDs prevent updating
 the wrong visible message. Character switching keeps each room
 stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
 reloads the final transcript from Rust. No failed-call resubmission is automatic; only completed invalid structured candidates get bounded format repair. Latest-reply retry is persona-wide across rooms, uses the immutable original
-destination/membership, and requires that persona idle, including pending
+destination/current original membership interval, and requires that persona idle, including pending
 decisions/slots. Retry never restores automatic round continuation/budget. It adds a new reply/call
 referencing retry_of and the existing user/receipt. In the unchanged active
 context it reuses the nearest frozen ancestor's input/event cutoff. An

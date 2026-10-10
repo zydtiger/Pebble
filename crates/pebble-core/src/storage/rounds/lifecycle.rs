@@ -5,6 +5,20 @@ pub(in crate::storage) fn cancel_call(db: &Connection, id: &str) -> Result<(), E
     db.execute("UPDATE model_calls SET status='cancelled',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('queued','streaming')",[id])?;
     Ok(())
 }
+pub(in crate::storage) fn cancel_membership(
+    db: &Connection,
+    membership: &str,
+) -> Result<Vec<String>, Error> {
+    let calls = db.prepare("SELECT id FROM model_calls WHERE membership_id=?1 AND status IN ('queued','streaming')")?
+        .query_map([membership], |r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+    db.execute("UPDATE group_rounds SET continuation=0 WHERE id IN (SELECT s.round_id FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.membership_id=?1 AND s.status IN ('pending','admitted'))",[membership])?;
+    db.execute("UPDATE participation_decisions SET status='cancelled',error='This character left the group.' WHERE membership_id=?1 AND status IN ('pending','selected','mentioned') AND id IN (SELECT decision_id FROM group_reply_slots WHERE status IN ('pending','admitted'))",[membership])?;
+    db.execute("UPDATE group_reply_slots SET status='cancelled' WHERE status IN ('pending','admitted') AND decision_id IN (SELECT id FROM participation_decisions WHERE membership_id=?1)",[membership])?;
+    for call in &calls {
+        cancel_call(db, call)?;
+    }
+    Ok(calls)
+}
 fn cancel_slots(db: &Connection, round: &str, optional_only: bool) -> Result<(), Error> {
     let ids=db.prepare("SELECT s.id,d.id,d.call_id FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.round_id=?1 AND s.status IN ('pending','admitted') AND (NOT ?2 OR s.kind!='required')")?.query_map(params![round,optional_only],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?)))?.collect::<Result<Vec<_>,_>>()?;
     for (slot, decision, call) in ids {

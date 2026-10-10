@@ -79,6 +79,14 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.renameGroup(roomId: room, title: title)
     }
+    func addGroupMember(room: String, persona: String) throws -> RoomRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.addGroupMember(roomId: room, personaId: persona)
+    }
+    func removeGroupMember(room: String, persona: String) throws -> RoomRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.removeGroupMember(roomId: room, personaId: persona)
+    }
     func send(room: String, prompt: String, mentions: [String], observer: ChatObserver) throws -> ChatSubmissionRecord {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.sendRoomMessage(roomId: room, prompt: prompt, mentions: mentions, observer: observer)
@@ -140,13 +148,14 @@ struct ChatBubble: Identifiable {
 final class ChatModel {
     let dataRoot: URL
     private let client: CoreClient
-    var workspace: WorkspaceRecord?
+    var workspace: WorkspaceRecord? { didSet { reconcileMentionChoices() } }
     var selectedID: String?
     var loading = true
     var showCharacter = false
     var showNewCharacter = false
     var showNewGroup = false
     var showRenameGroup = false
+    var showGroupMembers = false
     var showFreshContext = false
     var settingsTarget: SettingsTarget?
     var stateTarget: SettingsTarget?
@@ -215,6 +224,14 @@ final class ChatModel {
         if let room = rooms[id] { return room }
         let state = RoomState(); rooms[id] = state; return state
     }
+    private func reconcileMentionChoices() {
+        for conversation in workspace?.rooms ?? [] {
+            guard let state = rooms[conversation.id] else { continue }
+            let current = Set(conversation.members.map(\.personaId))
+            let retained = state.mentions.filter { current.contains($0) }
+            if retained != state.mentions { state.mentions = retained }
+        }
+    }
 
     func load() async {
         let revision = UUID(); selectionRevision = revision
@@ -268,6 +285,16 @@ final class ChatModel {
         do { _ = try await client.renameGroup(room: id, title: title); workspace = try await client.load(); return true }
         catch { self.error = describe(error); return false }
     }
+    func addGroupMember(_ persona: String, room: String) async throws {
+        _ = try await client.addGroupMember(room: room, persona: persona)
+        workspace = try await client.load()
+        await refreshRoomsAfterReply()
+    }
+    func removeGroupMember(_ persona: String, room: String) async throws {
+        _ = try await client.removeGroupMember(room: room, persona: persona)
+        workspace = try await client.load()
+        await refreshRoomsAfterReply()
+    }
 
     func createCharacter(_ name: String) async -> Bool {
         do {
@@ -315,6 +342,8 @@ final class ChatModel {
     }
     private func beginReply(_ conversation: RoomRecord, prompt: String, mentions: [String], retry: (String, String)?) {
         let state = room(conversation.id)
+        let draftRevision = state.draftRevision
+        let mentionRevision = state.mentionRevision
         state.error = nil
         let run = RoomRun()
         // Before Rust resolves typed mentions, conservatively cover possible speakers.
@@ -340,8 +369,8 @@ final class ChatModel {
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handles.forEach { $0.cancel() }; sink.finish(); return }
                 run.handles = handles; run.accepting = false; run.pendingIDs = Set(handles.map { $0.id() })
                 if retry == nil {
-                    if state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
-                    if state.mentions == mentions { state.mentions = [] }
+                    if state.draftRevision == draftRevision && state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
+                    if state.mentionRevision == mentionRevision && state.mentions == mentions { state.mentions = [] }
                 }
                 for handle in handles { state.apply(handle.messages(), conversation: conversation.id) }
                 if run.cancelRequested { run.cancel() }

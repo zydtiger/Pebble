@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "pebble-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "jsonschema",
  "reqwest",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "pebble-ffi"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "pebble-core",
  "thiserror",

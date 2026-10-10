@@ -6,7 +6,7 @@ use crate::{Error, Room, RoomMember, rooms::invalid};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) fn room(db: &Connection, id: &str) -> Result<Room, Error> {
-    let mut room = db.query_row("SELECT id,kind,CASE WHEN kind='direct' THEN (SELECT display_name FROM personas WHERE id=persona_id) ELSE title END,persona_id FROM conversations WHERE id=?1", [id], |r| Ok(Room {id:r.get(0)?,kind:r.get(1)?,title:r.get(2)?,persona_id:r.get(3)?,members:Vec::new()})).optional()?.ok_or_else(||invalid("This chat is no longer available."))?;
+    let mut room = db.query_row("SELECT id,kind,CASE WHEN kind='direct' THEN (SELECT display_name FROM personas WHERE id=persona_id) ELSE title END,persona_id FROM conversations WHERE id=?1", [id], |r| Ok(Room {id:r.get(0)?,kind:r.get(1)?,title:r.get(2)?,persona_id:r.get(3)?,members:Vec::new(),former_member_ids:Vec::new()})).optional()?.ok_or_else(||invalid("This chat is no longer available."))?;
     let mut q=db.prepare("SELECT m.persona_id,m.id,p.display_name FROM conversation_memberships m JOIN personas p ON p.id=m.persona_id WHERE m.conversation_id=?1 AND m.left_publication IS NULL ORDER BY m.ordinal")?;
     room.members = q
         .query_map([id], |r| {
@@ -17,6 +17,8 @@ pub(super) fn room(db: &Connection, id: &str) -> Result<Room, Error> {
             })
         })?
         .collect::<Result<_, _>>()?;
+    room.former_member_ids = db.prepare("SELECT persona_id FROM conversation_memberships m WHERE conversation_id=?1 AND left_publication IS NOT NULL AND NOT EXISTS(SELECT 1 FROM conversation_memberships current WHERE current.conversation_id=m.conversation_id AND current.persona_id=m.persona_id AND current.left_publication IS NULL) GROUP BY persona_id ORDER BY MIN(ordinal)")?
+        .query_map([id], |r|r.get(0))?.collect::<Result<_,_>>()?;
     Ok(room)
 }
 

@@ -17,6 +17,7 @@ pub struct RoomRecord {
     pub title: String,
     pub persona_id: Option<String>,
     pub members: Vec<RoomMemberRecord>,
+    pub former_member_ids: Vec<String>,
 }
 impl From<pebble_core::Room> for RoomRecord {
     fn from(room: pebble_core::Room) -> Self {
@@ -25,6 +26,7 @@ impl From<pebble_core::Room> for RoomRecord {
             kind: room.kind,
             title: room.title,
             persona_id: room.persona_id,
+            former_member_ids: room.former_member_ids,
             members: room
                 .members
                 .into_iter()
@@ -55,6 +57,20 @@ impl PebbleBackend {
     }
     pub fn rename_group(&self, room_id: String, title: String) -> Result<RoomRecord, BackendError> {
         Ok(self.core.rename_group(&room_id, &title)?.into())
+    }
+    pub fn add_group_member(
+        &self,
+        room_id: String,
+        persona_id: String,
+    ) -> Result<RoomRecord, BackendError> {
+        Ok(self.core.add_group_member(&room_id, &persona_id)?.into())
+    }
+    pub fn remove_group_member(
+        &self,
+        room_id: String,
+        persona_id: String,
+    ) -> Result<RoomRecord, BackendError> {
+        Ok(self.core.remove_group_member(&room_id, &persona_id)?.into())
     }
     pub fn room_messages(&self, room_id: String) -> Result<Vec<MessageRecord>, BackendError> {
         Ok(self

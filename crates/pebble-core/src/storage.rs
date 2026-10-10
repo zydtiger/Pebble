@@ -2,6 +2,7 @@ mod codec;
 mod contexts;
 mod items;
 mod jobs;
+mod membership;
 mod participation;
 mod response_settings;
 mod retry;
@@ -177,6 +178,7 @@ impl Database {
                 CASE WHEN m.status = 'streaming' AND j.status = 'queued' THEN 'queued' ELSE m.status END,
                 m.created_at, COALESCE(j.error, ''),
                 (j.status IN ('failed','cancelled','interrupted')
+                  AND (j.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=j.membership_id AND member.left_publication IS NULL))
                   AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
                   AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id

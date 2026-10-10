@@ -4,7 +4,7 @@ mod lifecycle;
 mod scheduling;
 use super::{Database, participation::read, turns::new_id};
 use crate::{Error, Persona, Room, history::Turn, participation::DecisionWork};
-pub(super) use lifecycle::{cancel_round, complete_slot, invalidate_optional};
+pub(super) use lifecycle::{cancel_membership, cancel_round, complete_slot, invalidate_optional};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(crate) enum Step {

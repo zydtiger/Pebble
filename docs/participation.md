@@ -148,4 +148,6 @@ member's silence restriction to an allowed target. These are development probes,
 not an independent accuracy estimate or a universal permission guarantee. The
 runtime uses the exact split prompts and deterministic routing; integration tests
 verify schemas, exclusions and lifecycle independently of those model labels.
-Membership editing, memory writing and session compaction remain later scope.
+Membership editing cancels unfinished decisions bound to the closed interval;
+rejoining creates a new interval and waits for the next user round to participate.
+Memory writing and session compaction remain outside this delivery.

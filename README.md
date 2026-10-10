@@ -6,7 +6,7 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.5 adds ordered, bounded group conversations.** Create
+**v0.1.6 completes member management and group recovery.** Create
 characters, choose group members, and let each character decide when to join,
 or mention who should reply. Each character
 keeps one native model history, state, and execution queue across all its rooms;
@@ -90,7 +90,10 @@ accepted as assistant context. Empty drafts are not sent.
    check remains visible with **Mention** and **Settings** recovery actions.
 4. Switch rooms while replies run. Drafts and mention selections stay with each
    room; replies keep their original destination. The group header lets you
-   rename the group or open a member's private chat/settings.
+   rename the group, open a member's private chat/settings, or manage members.
+   **Add**/**Rejoin** observes future public messages only. **Remove** stops that
+   member's unfinished work here, preserving their knowledge and other rooms.
+   A room can retain its transcript with no current members.
 5. Stop cancels every unfinished round, decision and reply in this room; queued
    bubbles have individual Cancel. Retry uses the original room and speaker,
    and is available only for that character's latest unsuccessful call across
@@ -104,7 +107,8 @@ same shared-context model. A round permits one initial reply per member and at
 most two character followups. An explicit whole-group question with no volunteers
 can receive one permitted acknowledgment; explicit silence is respected through
 a separate permission check. A new user post interrupts old automatic replies
-while preserving outstanding user mentions. Membership editing is a later stage.
+while preserving outstanding user mentions. Removing a member cancels their
+unfinished work in the old interval; rejoining never revives it.
 Participation reads do not consume chat observations or change character state.
 An absent participation connection keeps manual mentions available. New roots
 seed the selected Qwen connection independently of the demo/live chat model;

@@ -288,6 +288,21 @@ impl Chats {
         self.wake_groups();
         Ok(())
     }
+    pub(crate) fn remove_group_member(
+        &self,
+        db: &Database,
+        room: &str,
+        persona: &str,
+    ) -> Result<crate::Room, Error> {
+        let queues = self.queues.lock().expect("generation queues lock");
+        let (room, calls) = db.remove_group_member(room, persona)?;
+        for queue in queues.values() {
+            queue.cancel_calls(&calls);
+        }
+        drop(queues);
+        self.wake_groups();
+        Ok(room)
+    }
     pub(crate) fn cancel_all(&self) {
         for queue in self.queues.lock().expect("generation queues lock").values() {
             queue.cancel_all();
