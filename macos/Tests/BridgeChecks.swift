@@ -57,6 +57,28 @@ struct BridgeChecks {
         for _ in 0..<300 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.count == 3 && model.bubbles[0].id == userID && model.bubbles[2].status == .complete, "Retry duplicated user or failed routing")
         try require(model.bubbles[1].status == .cancelled && model.draft == "Preserve this draft", "Retry replaced partial attempt or draft")
+        let before = try await model.readResponseSettings(id)
+        let savedMessages = model.bubbles.map(\.id)
+        let initial = "{\"affinity_user\":7,\"mood\":\"quiet\"}"
+        try await model.saveResponseSettings(id, update: ResponseSettingsUpdateRecord(expected: before, schemaJson: before.schemaJson, initialStateJson: initial, action: .initialDefaultsOnly))
+        let defaults = try await model.readResponseSettings(id)
+        try require(defaults.currentStateJson == before.currentStateJson && defaults.sessionId == before.sessionId, "Initial-default save reset state/context")
+        try await model.saveResponseSettings(id, update: ResponseSettingsUpdateRecord(expected: defaults, schemaJson: defaults.schemaJson, initialStateJson: defaults.initialStateJson, action: .freshContextResetState))
+        let reset = try await model.readResponseSettings(id)
+        try require(reset.sessionId != before.sessionId && reset.currentStateJson.contains("quiet"), "Explicit reset did not establish state/context boundary")
+        try require(model.bubbles.map(\.id) == savedMessages, "State reset changed native transcript presentation")
+        do {
+            try await model.saveResponseSettings(id, update: ResponseSettingsUpdateRecord(expected: before, schemaJson: before.schemaJson, initialStateJson: before.initialStateJson, action: .freshContextKeepState))
+            throw CheckFailure(description: "Stale state controls were accepted")
+        } catch BackendError.Settings { /* Recoverable stale-panel error crosses the real bridge. */ }
+        let app = try await model.readSettings(nil)
+        var connection = app.chat
+        connection.enabled = true; connection.model = "synthetic-model"
+        connection.baseUrl = "http://127.0.0.1:9/v1"; connection.api = "responses"
+        connection.responsesSchemaFormat = "response_format"
+        try await model.saveSettings(nil, update: SettingsUpdateRecord(chat: connection, credential: .keep, contextWindowTokens: app.contextWindowTokens, maxOutputTokens: app.maxOutputTokens, persona: nil))
+        let dialect = try await model.readSettings(nil)
+        try require(dialect.chat.responsesSchemaFormat == "response_format", "Responses dialect did not cross native settings bridge")
         model.closeChat()
     }
 

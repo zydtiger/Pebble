@@ -87,9 +87,20 @@ pub(crate) struct Chats {
 }
 
 impl Chats {
-    pub(crate) fn fresh_context(&self, db: &Database, persona: &Persona) -> Result<(), Error> {
+    pub(crate) fn serialized<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let _queues = self.queues.lock().expect("generation queues lock");
-        db.fresh_context(persona)
+        operation()
+    }
+
+    pub(crate) fn fresh_context(
+        &self,
+        db: &Database,
+        load: impl FnOnce() -> Result<Persona, Error>,
+    ) -> Result<(), Error> {
+        self.serialized(|| db.fresh_context(&load()?))
     }
 
     pub(crate) fn settings(
@@ -105,11 +116,12 @@ impl Chats {
     pub(crate) fn retry(
         &self,
         db: Arc<Database>,
-        persona: Persona,
+        load: impl FnOnce() -> Result<Persona, Error>,
         reply: &str,
         listener: Arc<dyn ChatListener>,
     ) -> Result<ChatTask, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
+        let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_retry(&persona, reply)?;
         Self::launch(db, persona, listener, queue, turn)
@@ -117,11 +129,12 @@ impl Chats {
     pub(crate) fn start(
         &self,
         db: Arc<Database>,
-        persona: Persona,
+        load: impl FnOnce() -> Result<Persona, Error>,
         prompt: &str,
         listener: Arc<dyn ChatListener>,
     ) -> Result<ChatTask, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
+        let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_turn(&persona, prompt)?;
         Self::launch(db, persona, listener, queue, turn)

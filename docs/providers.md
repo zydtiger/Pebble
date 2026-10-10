@@ -49,8 +49,10 @@ extension instead of implementing standard `text.format`. Explicitly configure
 that connection with `responses_schema_format = "response_format"`; default or
 `"text_format"` selects standard Responses. This field is valid only for
 `api = "responses"`; invalid/irrelevant selections fail configuration validation.
-It can be set in app-default or persona connection TOML. Native settings saves
-for Responses preserve it; switching the connection to Chat Completions removes
+It can be set in app-default or persona connection TOML, or the native Responses
+form's **Response schema** picker: **Standard · text.format** or
+**llama.cpp · response_format**. Native settings saves for Responses preserve
+the selection; switching the connection to Chat Completions removes
 this Responses-only field. No endpoint sniffing or automatic capability fallback occurs.
 
 On 2026-10-09, synthetic probes against llama-server build `b11146-7fe450e19`,

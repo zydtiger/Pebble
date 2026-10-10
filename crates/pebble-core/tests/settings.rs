@@ -215,3 +215,63 @@ fn persona_override_switch_from_responses_text_format() {
 fn persona_override_switch_from_responses_response_format() {
     switch_responses_settings_to_chat_completions(true, "response_format");
 }
+
+#[test]
+fn native_dialect_edits_defaults_overrides_and_protocols_without_exposing_or_losing_credentials() {
+    let (root, core, id) = isolated();
+    for persona in [None, Some(id.as_str())] {
+        let mut edit = update(&core, persona);
+        edit.chat.enabled = true;
+        edit.chat.model = "synthetic".into();
+        edit.chat.base_url = "http://localhost:9/v1".into();
+        edit.chat.api = "responses".into();
+        edit.credential = CredentialChange::Replace("synthetic-preserved-key".into());
+        for dialect in ["text_format", "response_format"] {
+            edit.chat.responses_schema_format = dialect.into();
+            core.save_settings(persona, &edit).unwrap();
+            let saved = core.settings(persona).unwrap();
+            assert_eq!(saved.chat.responses_schema_format, dialect);
+            assert!(saved.chat.has_api_key);
+            assert!(!format!("{saved:?}").contains("synthetic-preserved-key"));
+            edit.credential = CredentialChange::Keep;
+        }
+        let before = fs::read(root.path().join(if persona.is_some() {
+            format!("personas/{id}/config.toml")
+        } else {
+            "config.toml".into()
+        }))
+        .unwrap();
+        edit.chat.responses_schema_format = "invalid".into();
+        assert!(core.save_settings(persona, &edit).is_err());
+        assert_eq!(
+            fs::read(root.path().join(if persona.is_some() {
+                format!("personas/{id}/config.toml")
+            } else {
+                "config.toml".into()
+            }))
+            .unwrap(),
+            before
+        );
+        edit.chat.api = "chat_completions".into();
+        core.save_settings(persona, &edit).unwrap();
+        let resolved = core.workspace().unwrap().personas.remove(0);
+        assert!(resolved.chat.unwrap().responses_schema_format.is_none());
+    }
+    let mut inherit = update(&core, Some(&id));
+    inherit.chat.enabled = false;
+    core.save_settings(Some(&id), &inherit).unwrap();
+    let mut app = update(&core, None);
+    app.chat.api = "responses".into();
+    app.chat.responses_schema_format = "response_format".into();
+    core.save_settings(None, &app).unwrap();
+    assert_eq!(
+        core.workspace().unwrap().personas[0]
+            .chat
+            .as_ref()
+            .unwrap()
+            .responses_schema_format
+            .as_deref(),
+        Some("response_format")
+    );
+    assert!(!core.settings(Some(&id)).unwrap().chat.enabled);
+}

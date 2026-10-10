@@ -6,6 +6,7 @@ mod demo;
 mod history;
 mod live;
 mod personas;
+mod response_settings;
 mod settings;
 mod storage;
 mod structured;
@@ -14,6 +15,7 @@ pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
 pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
+pub use response_settings::{ResponseAction, ResponseSettings, ResponseUpdate};
 pub use settings::{ChatSettings, CredentialChange, PersonaUpdate, Settings, SettingsUpdate};
 
 use std::path::{Path, PathBuf};
@@ -100,6 +102,31 @@ impl Core {
         settings::read(&self.data_root, persona_id)
     }
 
+    fn persona(&self, id: &str) -> Result<Persona, Error> {
+        self.workspace()?
+            .personas
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or(Error::UnknownPersona)
+    }
+
+    pub fn response_settings(&self, persona_id: &str) -> Result<ResponseSettings, Error> {
+        self.chats
+            .serialized(|| self.database.response_settings(&self.persona(persona_id)?))
+    }
+
+    pub fn save_response_settings(
+        &self,
+        persona_id: &str,
+        update: &ResponseUpdate,
+    ) -> Result<Workspace, Error> {
+        self.chats.serialized(|| {
+            let persona = self.persona(persona_id)?;
+            response_settings::save(&self.data_root, &self.database, &persona, update)?;
+            self.workspace()
+        })
+    }
+
     pub fn save_settings(
         &self,
         persona_id: Option<&str>,
@@ -117,24 +144,17 @@ impl Core {
         reply_id: &str,
         listener: Arc<dyn ChatListener>,
     ) -> Result<ChatTask, Error> {
-        let persona = self
-            .workspace()?
-            .personas
-            .into_iter()
-            .find(|p| p.id == persona_id)
-            .ok_or(Error::UnknownPersona)?;
-        self.chats
-            .retry(self.database.clone(), persona, reply_id, listener)
+        self.chats.retry(
+            self.database.clone(),
+            || self.persona(persona_id),
+            reply_id,
+            listener,
+        )
     }
 
     pub fn fresh_context(&self, persona_id: &str) -> Result<Persona, Error> {
-        let persona = self
-            .workspace()?
-            .personas
-            .into_iter()
-            .find(|p| p.id == persona_id)
-            .ok_or(Error::UnknownPersona)?;
-        self.chats.fresh_context(&self.database, &persona)?;
+        self.chats
+            .fresh_context(&self.database, || self.persona(persona_id))?;
         self.workspace()?
             .personas
             .into_iter()
@@ -151,14 +171,12 @@ impl Core {
         if prompt.trim().is_empty() {
             return Err(Error::EmptyMessage);
         }
-        let persona = self
-            .workspace()?
-            .personas
-            .into_iter()
-            .find(|persona| persona.id == persona_id)
-            .ok_or(Error::UnknownPersona)?;
-        self.chats
-            .start(self.database.clone(), persona, prompt.trim(), listener)
+        self.chats.start(
+            self.database.clone(),
+            || self.persona(persona_id),
+            prompt.trim(),
+            listener,
+        )
     }
 
     pub fn messages(&self, persona_id: &str) -> Result<Vec<Message>, Error> {

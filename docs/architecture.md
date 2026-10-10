@@ -143,6 +143,16 @@ Queue acceptance is serialized against settings writes, with persona-local idle
 checks and an all-idle rule for app defaults. Swift owns the labeled form,
 secure input, and sheet-local errors, not configuration decisions.
 
+The separate response-settings API reads current accepted state, initial defaults,
+and schema with a session/state snapshot. Candidate schemas/defaults validate
+before publication. A schema change requires explicit fresh context and keep or
+reset; reset state and session commit together after all candidate files publish.
+The snapshot guards stale saves, and failed publication/commit preserves the old
+state and frozen active context with an explicit reload/repair path. Files remain
+per-file atomic, without a cross-file journal. Swift presents JSON editors,
+read-only state, and confirmations; Rust owns every compatibility/boundary rule.
+See [state controls and recovery](state.md).
+
 Only the latest terminal unsuccessful reply is retryable while that persona is
 idle. Retry creates a reply/call with retry_of and reuses the original receipt,
 never changing old bubbles or frozen requests. A current compatible session can

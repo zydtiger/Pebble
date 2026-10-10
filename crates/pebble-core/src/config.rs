@@ -278,8 +278,9 @@ pub(crate) fn load_candidate(
             context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
             context: config.context.apply(default_context, &config_path)?,
-            response_schema: crate::structured::load(
+            response_schema: crate::structured::parse(
                 &path.join("response_schema.json"),
+                &read(&path.join("response_schema.json"), overrides)?,
                 &config.response.initial_state,
             )?,
             initial_state: config.response.initial_state,

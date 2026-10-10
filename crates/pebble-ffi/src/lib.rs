@@ -1,5 +1,7 @@
 mod settings_api;
 pub use settings_api::*;
+mod response_settings_api;
+pub use response_settings_api::*;
 use std::sync::Arc;
 
 uniffi::setup_scaffolding!();
@@ -261,6 +263,23 @@ impl PebbleBackend {
 
     pub fn settings(&self, persona_id: Option<String>) -> Result<SettingsRecord, BackendError> {
         Ok(self.core.settings(persona_id.as_deref())?.into())
+    }
+
+    pub fn response_settings(
+        &self,
+        persona_id: String,
+    ) -> Result<ResponseSettingsRecord, BackendError> {
+        Ok(self.core.response_settings(&persona_id)?.into())
+    }
+    pub fn save_response_settings(
+        &self,
+        persona_id: String,
+        update: ResponseSettingsUpdateRecord,
+    ) -> Result<WorkspaceRecord, BackendError> {
+        Ok(self
+            .core
+            .save_response_settings(&persona_id, &update.into())?
+            .into())
     }
     pub fn save_settings(
         &self,

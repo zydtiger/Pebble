@@ -26,6 +26,14 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.saveSettings(personaId: persona, update: update)
     }
+    func responseSettings(persona: String) throws -> ResponseSettingsRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.responseSettings(personaId: persona)
+    }
+    func saveResponseSettings(persona: String, update: ResponseSettingsUpdateRecord) throws -> WorkspaceRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.saveResponseSettings(personaId: persona, update: update)
+    }
     func retry(persona: String, reply: String, observer: ChatObserver) throws -> ChatHandle {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.retryMessage(personaId: persona, replyId: reply, observer: observer)
@@ -104,6 +112,7 @@ final class ChatModel {
     var showNewCharacter = false
     var showFreshContext = false
     var settingsTarget: SettingsTarget?
+    var stateTarget: SettingsTarget?
     var replyRevision = 0
     private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
@@ -182,6 +191,10 @@ final class ChatModel {
     }
 
     func readSettings(_ persona: String?) async throws -> SettingsRecord { try await client.settings(persona: persona) }
+    func readResponseSettings(_ persona: String) async throws -> ResponseSettingsRecord { try await client.responseSettings(persona: persona) }
+    func saveResponseSettings(_ persona: String, update: ResponseSettingsUpdateRecord) async throws {
+        workspace = try await client.saveResponseSettings(persona: persona, update: update)
+    }
     func saveSettings(_ persona: String?, update: SettingsUpdateRecord) async throws {
         workspace = try await client.saveSettings(persona: persona, update: update)
     }

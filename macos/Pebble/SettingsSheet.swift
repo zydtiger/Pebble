@@ -12,6 +12,7 @@ struct SettingsSheet: View {
     @State private var modelName = ""
     @State private var baseURL = ""
     @State private var api = "chat_completions"
+    @State private var responsesSchemaFormat = "text_format"
     @State private var credential = "keep"
     @State private var replacement = ""
     @State private var environment = ""
@@ -50,6 +51,14 @@ struct SettingsSheet: View {
                         Picker("Protocol", selection: $api) {
                             Text("Chat Completions").tag("chat_completions")
                             Text("Responses").tag("responses")
+                        }
+                        if api == "responses" {
+                            Picker("Response schema", selection: $responsesSchemaFormat) {
+                                Text("Standard · text.format").tag("text_format")
+                                Text("llama.cpp · response_format").tag("response_format")
+                            }
+                            Text("Use Standard for Responses providers. Select the llama.cpp extension when your endpoint requires response_format for JSON Schema. Pebble always validates replies independently.")
+                                .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         }
                         Picker("Credentials", selection: $credential) {
                             Text("Keep existing").tag("keep")
@@ -94,6 +103,7 @@ struct SettingsSheet: View {
             let settings = try await model.readSettings(target.personaID)
             enabled = settings.chat.enabled; modelName = settings.chat.model
             baseURL = settings.chat.baseUrl; api = settings.chat.api
+            responsesSchemaFormat = settings.chat.responsesSchemaFormat
             hasKey = settings.chat.hasApiKey; environment = settings.chat.apiKeyEnv
             window = settings.contextWindowTokens.map(String.init) ?? ""
             output = settings.maxOutputTokens.map(String.init) ?? ""
@@ -116,7 +126,7 @@ struct SettingsSheet: View {
             case "environment": change = .environment(name: environment)
             default: change = .keep
             }
-            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, hasApiKey: hasKey, apiKeyEnv: environment), credential: change, contextWindowTokens: try number(window), maxOutputTokens: try number(output), persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
+            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: responsesSchemaFormat, hasApiKey: hasKey, apiKeyEnv: environment), credential: change, contextWindowTokens: try number(window), maxOutputTokens: try number(output), persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
             try await model.saveSettings(target.personaID, update: update)
             replacement = ""; dismiss()
         } catch { self.error = model.describe(error) }

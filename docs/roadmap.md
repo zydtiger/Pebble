@@ -56,7 +56,7 @@ minimum-OS testing remain future work.
 
 ## v0.1.1–v0.2.0 group-chat delivery
 
-v0.1.1 is implemented. Later stages remain planned; each leaves a runnable
+v0.1.1 and v0.1.2 are implemented. Later stages remain planned; each leaves a runnable
 increment and receives focused review before the next stage.
 
 | Stage | User-visible result and exit boundary |

@@ -6,7 +6,7 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.1 adds structured replies and durable character state to the local private-chat baseline.** Create independent
+**v0.1.2 adds native character state, response-schema editing, and explicit reset controls to the structured private-chat foundation.** Create independent
 characters, configure their models, and continue saved conversations after
 restart. Native settings edit app defaults and character files. Validated replies,
 per-character queues, cancellation, and explicit retry keep each private room
@@ -55,7 +55,9 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
    Switch between characters while both reply. Drafts and stream state stay in
    their own rooms.
 4. Open the character information panel to read SOUL and MEMORY, or use
-   **Character settings** to edit them and the character's connection.
+   **Character settings** to edit them and the character's connection. The
+   **Character state and response schema** braces button opens separate controls
+   for accepted state, initial defaults, and response schema.
 5. After editing SOUL/MEMORY, choose **Start fresh context** when you want the
    model to use the new files. Earlier messages remain visible. Advanced file
    editing and **Reload Character Files** remain available; character and room
@@ -146,6 +148,20 @@ budgets. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn of
 **Override app connection** to inherit the app connection; blank character budget
 fields inherit independently. Character edits require only that character to be
 idle; app-default edits require all queued/active replies to finish or stop.
+
+The Responses connection form offers **Standard · text.format** and the explicit
+**llama.cpp · response_format** schema dialect. It appears only for Responses;
+switching to Chat Completions removes the exclusive field. A character override
+replaces the whole app connection, including this dialect.
+
+**State & response** shows current accepted state separately from editable JSON
+initial defaults and response schema. **Save initial defaults only** preserves
+state and context. Schema changes require an explicit fresh context with either
+compatible current state or reset to the displayed defaults. Reset asks for
+confirmation, replaces state, and creates a new context together; earlier
+messages, calls, contracts, and native history stay saved. Invalid or stale
+candidates leave state/context unchanged and report how to recover. See
+[state controls and failure recovery](docs/state.md#native-controls-and-publication).
 
 Keys are never displayed. **Keep existing** retains credentials during unrelated
 saves; **Replace inline key**, **Clear authentication**, and **Environment

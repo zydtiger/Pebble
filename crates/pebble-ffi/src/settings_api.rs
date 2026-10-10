@@ -4,6 +4,7 @@ pub struct ConnectionSettingsRecord {
     pub model: String,
     pub base_url: String,
     pub api: String,
+    pub responses_schema_format: String,
     pub has_api_key: bool,
     pub api_key_env: String,
 }
@@ -44,6 +45,7 @@ impl From<pebble_core::Settings> for SettingsRecord {
                 model: s.chat.model,
                 base_url: s.chat.base_url,
                 api: s.chat.api,
+                responses_schema_format: s.chat.responses_schema_format,
                 has_api_key: s.chat.has_api_key,
                 api_key_env: s.chat.api_key_env,
             },
@@ -66,6 +68,7 @@ impl From<SettingsUpdateRecord> for pebble_core::SettingsUpdate {
                 model: s.chat.model,
                 base_url: s.chat.base_url,
                 api: s.chat.api,
+                responses_schema_format: s.chat.responses_schema_format,
                 has_api_key: s.chat.has_api_key,
                 api_key_env: s.chat.api_key_env,
             },

@@ -41,6 +41,9 @@ struct ContentView: View {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
         .sheet(item: $model.settingsTarget) { target in SettingsSheet(model: model, target: target) }
+        .sheet(item: $model.stateTarget) { target in
+            if let id = target.personaID { StateSheet(model: model, personaID: id) }
+        }
         .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
         .confirmationDialog("Start a fresh context?", isPresented: $model.showFreshContext, titleVisibility: .visible) {
             Button("Start fresh context") { Task { await model.startFreshContext() } }
@@ -100,7 +103,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.1").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.2").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -137,6 +140,11 @@ struct ContentView: View {
                 .disabled(model.isReplying || model.loading)
                 .help("Start a fresh model context; keep saved messages")
                 .accessibilityLabel("Start fresh context")
+            Button { model.stateTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "curlybraces") }
+                .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
+                .help("Character state and response schema")
+                .accessibilityLabel("Character state and response schema")
+                .disabled(model.loading)
             Text(persona.connectionLabel).font(.system(size: 9, weight: .semibold)).tracking(1.2)
                 .foregroundStyle(PebbleTheme.sage)
                 .padding(.horizontal, 10).padding(.vertical, 6)

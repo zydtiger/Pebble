@@ -1,6 +1,7 @@
 # Structured replies and persona state
 
-v0.1.1 adds validated private-chat responses. New contexts require a complete
+v0.1.1 introduced validated private-chat responses; v0.1.2 adds native state and
+response-contract controls. New contexts require a complete
 `{"reply":"...","state":{...}}` JSON object. The UI shows **Typing…** until Rust
 validates and commits it, then displays only `reply`. Candidate JSON and opaque
 reasoning never enter the transcript. Accepted native history keeps the complete
@@ -42,8 +43,59 @@ as `state_before`. Accepted outputs carry complete subsequent state snapshots.
 Editing the schema cannot reinterpret an existing session or historical output;
 only an explicit new-context boundary loads it. A fresh context rejects a schema
 incompatible with the current accepted state, preserving both the state and old
-active session. State/schema inspection, editing forms, and deliberate reset are
-v0.1.2 work; advanced file editing remains available.
+active session. Native state/schema controls provide the explicit boundary and reset choices;
+advanced file editing remains available.
+
+## Native controls and publication
+
+The chat header's **Character state and response schema** braces button opens
+**State & response**. Its State tab shows the accepted SQLite snapshot read only
+and edits initial defaults as JSON. Its Response schema tab edits the complete
+JSON Schema, including descriptions that define state meanings and update rules.
+Rust validates the entire candidate schema and defaults before publishing either
+file. Initial defaults must be representable in TOML: JSON null and integers
+outside TOML's signed range are not supported.
+
+The explicit apply modes are:
+
+- **Save initial defaults only** keeps current state and the active context. It
+  rejects any schema change; unchanged schemas do not need a new context.
+- **Fresh context · keep compatible accepted state** validates the current state
+  against the candidate schema before changing files. Incompatible state fails
+  with a choice to revise the schema or use reset; nothing is changed.
+- **Fresh context · reset state to these initial defaults** asks for confirmation
+  and commits replacement state and a new context in one SQLite transaction.
+  It also works without editing the schema or defaults.
+
+Both fresh-context modes load current SOUL/MEMORY and exclude earlier events.
+They preserve all previous messages, session contracts, native bytes, and calls.
+A reset does not rewrite historical snapshots. Ordinary settings, model changes,
+restart, and the existing fresh-context action continue to preserve state.
+
+Reads and saves serialize with queue acceptance. Pending work for this persona
+blocks applying changes; other personas can continue. The save compares the
+panel's schema/defaults, accepted state, and active session against current data.
+A stale snapshot reports **Reload** instead of overwriting newer state or edits.
+Send/retry/fresh-context configuration is loaded inside the same gate, so a turn
+cannot queue using a persona snapshot taken before a completed contract save.
+
+Schema and TOML publish through staged, synced, atomic sibling replacements.
+This remains per-file atomicity, not a transaction across files and SQLite.
+State/context changes are prepared in SQLite and commit only after every file
+publishes. Publication failure rolls back the prepared SQLite changes; a later
+SQLite commit failure also preserves the old state and active session. Errors
+explicitly report possible published files and ask for **Reload saved**, review,
+and a deliberate fresh-context apply. If partial files are inconsistent, open
+the character folder and repair them before reopening the controls. An abrupt
+exit between file replacements has the same manual file-repair path; there is
+no automatic reset or hidden file rollback.
+
+Existing active sessions always use their frozen schema/prefix, even if files
+were partly published. A notice in the panel identifies a file schema that
+has not been applied to that context. Reloading never applies a new contract or
+resets state by itself. Files already published before a failed commit can be
+explicitly reapplied with keep/reset after reloading. No background recovery
+resends calls or alters history.
 
 ## Acceptance and recovery
 

@@ -1,5 +1,5 @@
 //! Frozen response contracts and complete, independently validated state snapshots.
-use crate::{Error, file_error};
+use crate::Error;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -8,13 +8,12 @@ pub(crate) const DEFAULT_INITIAL: &str =
     "\n[response.initial_state]\naffinity_user = 20\nmood = \"calm\"\n";
 pub(crate) const DEFAULT_SCHEMA: &str = include_str!("../assets/response_schema.json");
 
-pub(crate) fn load(path: &Path, initial: &Value) -> Result<Value, Error> {
-    let text = std::fs::read_to_string(path).map_err(|e| file_error(path, e))?;
+pub(crate) fn parse(path: &Path, text: &str, initial: &Value) -> Result<Value, Error> {
     let invalid = |detail: String| Error::Configuration {
         path: path.display().to_string(),
         detail,
     };
-    let schema: Value = serde_json::from_str(&text)
+    let schema: Value = serde_json::from_str(text)
         .map_err(|_| invalid("response_schema.json must contain valid JSON.".into()))?;
     // Pebble owns the envelope. Authors customize the state properties and semantics.
     if schema["type"] != "object"

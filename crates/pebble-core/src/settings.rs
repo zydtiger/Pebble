@@ -9,6 +9,7 @@ pub struct ChatSettings {
     pub model: String,
     pub base_url: String,
     pub api: String,
+    pub responses_schema_format: String,
     pub has_api_key: bool,
     pub api_key_env: String,
 }
@@ -118,6 +119,11 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error
             } else {
                 string("api")
             },
+            responses_schema_format: if string("responses_schema_format").is_empty() {
+                "text_format".into()
+            } else {
+                string("responses_schema_format")
+            },
             has_api_key: !string("api_key").trim().is_empty(),
             api_key_env: string("api_key_env"),
         },
@@ -159,12 +165,6 @@ pub(crate) fn save(
         &mut doc["defaults"]
     };
     if update.chat.enabled {
-        let leaving_responses = table
-            .get("chat")
-            .and_then(|chat| chat.get("api"))
-            .and_then(Item::as_str)
-            == Some("responses")
-            && update.chat.api == "chat_completions";
         for (key, text) in [
             ("model", update.chat.model.as_str()),
             ("base_url", update.chat.base_url.as_str()),
@@ -173,7 +173,13 @@ pub(crate) fn save(
             put(&mut table["chat"], key, text);
         }
         let chat = &mut table["chat"];
-        if leaving_responses {
+        if update.chat.api == "responses" {
+            put(
+                chat,
+                "responses_schema_format",
+                &update.chat.responses_schema_format,
+            );
+        } else {
             chat.as_table_like_mut()
                 .unwrap()
                 .remove("responses_schema_format");
