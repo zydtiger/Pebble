@@ -144,3 +144,80 @@ fn both_protocols_share_persona_history_state_but_only_public_observations_with_
         );
     }
 }
+
+#[test]
+fn silent_member_later_mentioned_in_group_keeps_own_native_outputs_without_reinjection_both_apis() {
+    for api in ["chat_completions", "responses"] {
+        let body = |reply: &str| {
+            let text =
+                json!({"reply":reply,"state":{"affinity_user":42,"mood":"calm"}}).to_string();
+            if api == "responses" {
+                responses_support::candidate(&text)
+            } else {
+                candidate(&text)
+            }
+        };
+        let server = Server::new(vec![
+            stream(body("KAI_PRIVATE_NATIVE")),
+            stream(body("MIRA_PUBLIC_OBSERVED")),
+            stream(body("KAI_PUBLIC_NATIVE")),
+            stream(body("KAI_CONTINUED")),
+        ]);
+        let (root, core, a) = isolated();
+        let b = core.create_persona("Kai").unwrap().id;
+        configure(root.path(), &server.url, "synthetic", api, "");
+        let (private, rx) = start(&core, &b, "Kai's earlier private context");
+        assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
+        let prefix = core.model_request(&private.id).unwrap();
+        let group = core
+            .create_group("Silent to mentioned", &[a.clone(), b.clone()])
+            .unwrap();
+        let (silent, rx) = submit(&core, &group.id, "PUBLIC_SILENT_ROOT", &[]);
+        finish(&rx, 0);
+        assert!(silent.tasks.is_empty());
+        let (mira, rx) = submit(&core, &group.id, "@Mira PUBLIC_MIRA_ROOT", &[]);
+        finish(&rx, 1);
+        let (kai, rx) = submit(&core, &group.id, "@Kai PUBLIC_KAI_REQUEST", &[]);
+        assert_eq!(
+            finish(&rx, 1).last().unwrap().kind,
+            ChatEventKind::Completed
+        );
+        let request = core.model_request(&task(&kai, 0).id).unwrap();
+        assert_eq!(request.session_id, prefix.session_id);
+        for (old, new) in prefix.items.iter().zip(&request.items) {
+            assert_eq!(old.id, new.id);
+            assert_eq!(old.payload, new.payload);
+        }
+        let input = envelope(&request);
+        let events = input["events"].as_array().unwrap();
+        for expected in [
+            "PUBLIC_SILENT_ROOT",
+            "@Mira PUBLIC_MIRA_ROOT",
+            "MIRA_PUBLIC_OBSERVED",
+            "@Kai PUBLIC_KAI_REQUEST",
+        ] {
+            assert_eq!(
+                events.iter().filter(|e| e["text"] == expected).count(),
+                1,
+                "{expected}"
+            );
+        }
+        assert!(events.iter().all(|e| e["text"] != "KAI_PRIVATE_NATIVE"));
+        assert_eq!(native(&request).matches("KAI_PRIVATE_NATIVE").count(), 1);
+        assert_eq!(input["reply_request"]["conversation_id"], group.id);
+        assert_eq!(input["current_state"]["affinity_user"], 42);
+        let (continued_task, rx) = start(&core, &b, "Continue after group");
+        terminal(&rx);
+        let continued = core.model_request(&continued_task.id).unwrap();
+        assert_eq!(native(&continued).matches("KAI_PUBLIC_NATIVE").count(), 1);
+        assert!(
+            envelope(&continued)["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["text"] != "KAI_PUBLIC_NATIVE")
+        );
+        assert_eq!(db(root.path()).query_row("SELECT COUNT(*) FROM persona_events e JOIN messages m ON m.id=e.message_id WHERE e.persona_id=?1 AND e.kind='received' AND m.sender_id=?1", [&b], |r| r.get::<_,i64>(0)).unwrap(), 0);
+        drop((mira, kai));
+    }
+}

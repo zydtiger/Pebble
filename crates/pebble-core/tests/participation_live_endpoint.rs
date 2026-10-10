@@ -1,82 +1,119 @@
 mod classifier_support;
 mod live_support;
-use classifier_support::*;
+mod participation_live_support;
+use classifier_support::{configure, submit};
 use live_support::{isolated, start, terminal};
+use participation_live_support::*;
 use pebble_core::{ChatEventKind, CredentialChange, SettingsUpdate};
 use serde_json::{Value, json};
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
+
+fn check_runtime_decisions(report: &Value) -> Result<(), String> {
+    let cases = report["cases"].as_array().unwrap();
+    let scopes = cases
+        .iter()
+        .map(|case| (case["id"].as_str().unwrap(), &case["final_decisions"]))
+        .chain(std::iter::once(("load round", &report["final_decisions"])));
+    for (scope, decisions) in scopes {
+        for decision in decisions.as_array().unwrap() {
+            if decision["status"] == "failed"
+                || decision["error"].as_str().is_some_and(|e| !e.is_empty())
+            {
+                return Err(format!("Runtime classifier failure in {scope}: {decision}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_report_gate_rejects_schema_valid_wrong_role_from_actual_adapter() {
+    let mut response = classifier_support::answer("chat_completions", r#"{"respond":true}"#);
+    response["choices"][0]["message"]["role"] = json!("user");
+    let raw =
+        json!({"phase":"primary","http_status":200,"transport_error":null,"response":response});
+    assert!(
+        valid_classifier(&raw),
+        "Raw schema checks alone accept this"
+    );
+    assert_eq!(boolean(&raw), Some(true));
+    let server = classifier_support::Server::new(vec![classifier_support::Reply::json(
+        raw["response"].clone(),
+    )]);
+    let (root, core, a) = isolated();
+    configure(&core, None, &server.url, "chat_completions", "");
+    let group = core.create_group("Runtime report gate", &[a]).unwrap();
+    let (post, rx) = submit(&core, &group.id, "Synthetic participation check", &[]);
+    let events = settle(&post, &rx);
+    assert!(post.tasks.is_empty());
+    assert!(events.iter().all(|event| !matches!(
+        event["kind"].as_str().unwrap(),
+        "Admitted" | "Failed" | "Cancelled"
+    )));
+    assert_eq!(core.room_messages(&group.id).unwrap().len(), 1);
+    let decisions = core.participation(&group.id).unwrap();
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].status, "failed");
+    assert!(!decisions[0].error.is_empty());
+    let failed =
+        json!({"status":decisions[0].status,"phase":decisions[0].phase,"error":decisions[0].error});
+    let path = root.path().join("runtime-report.json");
+    for scope in ["frozen case", "load round"] {
+        let mut report =
+            json!({"cases":[{"id":"wrong-role","final_decisions":[]}],"final_decisions":[]});
+        if scope == "frozen case" {
+            report["cases"][0]["final_decisions"] = json!([failed]);
+        } else {
+            report["final_decisions"] = json!([failed]);
+        }
+        std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let error = check_runtime_decisions(&saved).unwrap_err();
+        println!("Rejected {scope} after publishing report: {error}");
+    }
+    // Explicitly supplied evidence can also be checked offline without opting into live calls.
+    if let Ok(path) = std::env::var("PEBBLE_CLASSIFIER_REPORT") {
+        let report: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        check_runtime_decisions(&report).expect("Runtime classifier errors preserved in report");
+        println!("Retained runtime decisions accepted offline: {path}");
+    }
+}
 
 #[test]
 #[ignore = "explicit selected Qwen and chat services; synthetic roots only"]
 fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() {
-    let report_path = std::env::var("PEBBLE_CLASSIFIER_REPORT")
-        .ok()
-        .map(std::path::PathBuf::from);
-    if let Some(path) = &report_path {
-        assert!(
-            path.is_absolute() && path.parent().is_some_and(std::path::Path::is_dir),
-            "PEBBLE_CLASSIFIER_REPORT requires an absolute path in an existing directory"
-        );
-    }
-    let url = std::env::var("PEBBLE_CLASSIFIER_API_ROOT").expect("set PEBBLE_CLASSIFIER_API_ROOT");
+    let report_path = std::path::PathBuf::from(
+        std::env::var("PEBBLE_CLASSIFIER_REPORT").expect("set absolute PEBBLE_CLASSIFIER_REPORT"),
+    );
+    assert!(
+        report_path.is_absolute() && report_path.parent().is_some_and(std::path::Path::is_dir),
+        "Report needs an absolute path in an existing directory before any requests"
+    );
+    let classifier_url =
+        std::env::var("PEBBLE_CLASSIFIER_API_ROOT").expect("set PEBBLE_CLASSIFIER_API_ROOT");
     let model = std::env::var("PEBBLE_CLASSIFIER_MODEL").expect("set PEBBLE_CLASSIFIER_MODEL");
     let chat_url = std::env::var("PEBBLE_LIVE_API_ROOT").expect("set PEBBLE_LIVE_API_ROOT");
     let chat_model = std::env::var("PEBBLE_LIVE_MODEL").expect("set PEBBLE_LIVE_MODEL");
+    let clock = Instant::now();
     let raw = Arc::new(Mutex::new(Vec::new()));
-    let captured = raw.clone();
-    let proxy = Server::handling(move |body| {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let response: Value = runtime.block_on(async {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .unwrap()
-                .post(format!("{}/chat/completions", url.trim_end_matches('/')))
-                .json(body)
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap()
-        });
-        assert!(
-            response["choices"][0]["message"]
-                .get("reasoning_content")
-                .is_none_or(|v| v.is_null() || v.as_str() == Some("")),
-            "Selected non-thinking request produced reasoning"
-        );
-        assert!(
-            response["usage"]["completion_tokens_details"]
-                .get("reasoning_tokens")
-                .is_none_or(|v| v == 0)
-        );
-        captured
-            .lock()
-            .unwrap()
-            .push(json!({"request":body,"response":response}));
-        Reply::json(response)
-    });
+    let proxy = relay(classifier_url, "classifier", raw.clone(), clock);
+    let chat_proxy = relay(chat_url, "chat", raw.clone(), clock);
     let cases: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/participation-regressions.json")).unwrap();
     let mut results = Vec::new();
-    let (mut tp, mut fn_count, mut fp, mut tn) = (0, 0, 0, 0);
+    let (mut tp, mut fn_count, mut fp, mut tn, mut invalid) = (0, 0, 0, 0, 0);
     for case in cases {
         let (root, core, a) = isolated();
         let soul = case["soul"].as_str().unwrap();
         let name = soul.split([':', '：']).next().unwrap();
         let mut settings = core.settings(Some(&a)).unwrap();
-        settings.persona.as_mut().unwrap().display_name = name.into();
-        settings.persona.as_mut().unwrap().soul = soul.into();
-        settings.persona.as_mut().unwrap().memory = case["memory"].as_str().unwrap().into();
+        let persona = settings.persona.as_mut().unwrap();
+        persona.display_name = name.into();
+        persona.soul = soul.into();
+        persona.memory = case["memory"].as_str().unwrap().into();
         core.save_settings(
             Some(&a),
             &SettingsUpdate {
@@ -93,8 +130,8 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
             .unwrap();
         let transcript = case["transcript"].as_array().unwrap();
         for text in &transcript[..transcript.len() - 1] {
-            let (post, _) = submit(&core, &group.id, text.as_str().unwrap(), &[]);
-            assert!(post.group.is_none());
+            let (post, rx) = submit(&core, &group.id, text.as_str().unwrap(), &[]);
+            settle(&post, &rx);
         }
         configure(
             &core,
@@ -107,35 +144,28 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
         connection.connection.model = model.clone();
         core.save_classifier_settings(None, &connection, &CredentialChange::Clear)
             .unwrap();
-        let started = Instant::now();
+        let offset = raw.lock().unwrap().len();
+        let started = clock.elapsed().as_millis();
         let (post, rx) = submit(
             &core,
             &group.id,
             transcript.last().unwrap().as_str().unwrap(),
             &[],
         );
-        finish(&post, &rx);
-        let d = core
-            .participation(&group.id)
-            .unwrap()
-            .into_iter()
-            .find(|d| d.message_id == post.message.id)
-            .unwrap();
-        assert!(
-            matches!(d.status.as_str(), "selected" | "listening"),
-            "{}: {}",
-            case["id"],
-            d.error
-        );
+        let events = settle(&post, &rx);
+        let total_ms = clock.elapsed().as_millis() - started;
+        let records = raw.lock().unwrap()[offset..].to_vec();
+        let initial = primary(&records, &a);
+        let actual = initial.as_ref().and_then(boolean);
         let expected = case["expected"].as_bool().unwrap();
-        let actual = d.respond.unwrap();
         match (expected, actual) {
-            (true, true) => tp += 1,
-            (true, false) => fn_count += 1,
-            (false, true) => fp += 1,
-            (false, false) => tn += 1,
+            (true, Some(true)) => tp += 1,
+            (true, Some(false)) => fn_count += 1,
+            (false, Some(true)) => fp += 1,
+            (false, Some(false)) => tn += 1,
+            (_, None) => invalid += 1,
         };
-        results.push(json!({"id":case["id"],"expected":expected,"actual":actual,"decision_ms":d.elapsed_ms,"including_demo_reply_ms":started.elapsed().as_millis()}));
+        results.push(json!({"id":case["id"],"expected":expected,"initial_primary_actual":actual,"initial_primary_response":initial,"initial_primary_latency_ms":initial.as_ref().map(|r|r["finished_ms"].as_u64().unwrap() as u128-started),"total_round_including_demo_ms":total_ms,"events":events,"total_classifier_requests":records.len(),"final_decisions":core.participation(&group.id).unwrap().iter().map(|d|json!({"status":d.status,"phase":d.phase,"respond":d.respond,"error":d.error})).collect::<Vec<_>>() }));
         drop((post, core, root));
     }
     let (root, core, a) = isolated();
@@ -154,7 +184,7 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
     settings.chat.enabled = true;
     settings.chat.api = "chat_completions".into();
     settings.chat.model = chat_model;
-    settings.chat.base_url = chat_url;
+    settings.chat.base_url = chat_proxy.url.clone();
     core.save_settings(
         None,
         &SettingsUpdate {
@@ -190,51 +220,60 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
     let group = core
         .create_group("Synthetic latency under chat load", &members)
         .unwrap();
-    let started = Instant::now();
+    let offset = raw.lock().unwrap().len();
+    let started = clock.elapsed().as_millis();
     let (post, rx) = submit(
         &core,
         &group.id,
         "Everyone, I had a rough day and would welcome one short, friendly idea for a calming walk. Anyone who has an idea may join.",
         &[],
     );
-    let (mut expected, mut done, mut settled) = (0, 0, false);
-    let mut decision_ms = 0;
-    while !settled || done < expected {
-        let event = rx.recv_timeout(Duration::from_secs(180)).unwrap();
-        match event.kind {
-            ChatEventKind::Admitted => expected += 1,
-            ChatEventKind::GroupSettled => {
-                settled = true;
-                decision_ms = started.elapsed().as_millis();
-            }
-            ChatEventKind::Completed => done += 1,
-            ChatEventKind::Failed | ChatEventKind::Cancelled => panic!(
-                "Synthetic group generation did not complete: {}",
-                event.text
-            ),
-            _ => {}
-        }
-    }
-    for events in [terminal(&r1), terminal(&r2)] {
-        assert_eq!(
-            events.last().unwrap().kind,
-            ChatEventKind::Completed,
-            "{:?}",
-            events.last().unwrap()
-        );
-    }
+    let events = settle(&post, &rx);
+    let total_ms = clock.elapsed().as_millis() - started;
+    let private_events = [terminal(&r1), terminal(&r2)];
+    let records = raw.lock().unwrap()[offset..].to_vec();
+    let initial = members
+        .iter()
+        .filter_map(|id| primary(&records, id))
+        .collect::<Vec<_>>();
+    let initial_ms = initial
+        .iter()
+        .filter_map(|r| r["finished_ms"].as_u64())
+        .max()
+        .map(|end| end as u128 - started);
     let decisions = core.participation(&group.id).unwrap();
-    assert_eq!(decisions.len(), 4);
-    assert!(
-        decisions
-            .iter()
-            .all(|d| matches!(d.status.as_str(), "selected" | "listening"))
+    let calls = events.iter().filter(|e| e["kind"] == "Admitted").count();
+    let errors = events
+        .iter()
+        .filter(|e| e["kind"] == "Failed" || e["kind"] == "Cancelled")
+        .cloned()
+        .collect::<Vec<_>>();
+    let captures = raw.lock().unwrap().clone();
+    let schema_valid = captures
+        .iter()
+        .filter(|r| r["service"] == "classifier")
+        .all(valid_classifier);
+    let nonthinking = captures
+        .iter()
+        .filter(|r| r["service"] == "classifier")
+        .all(nonthinking);
+    let report = json!({"scope":"Integration regression using unchanged eight frozen labels and compact attributed runtime inputs, not an independent accuracy estimate or latency guarantee. First primary response per persona is preserved separately from later reassessment/followup/fallback. Capture relay buffers full SSE solely for synthetic raw evidence.","chat_api":"chat_completions","classifier_api":"chat_completions","TP":tp,"FN":fn_count,"FP":fp,"TN":tn,"invalid_initial":invalid,"cases":results,"group_members":members.len(),"concurrent_private_chat_calls":2,"initial_primary_responses_received_ms":initial_ms,"initial_primary_responses":initial,"total_round_settled_ms":total_ms,"group_calls":calls,"group_call_bound":members.len()+2,"group_events":events,"group_errors":errors,"final_decisions":decisions.iter().map(|d|json!({"status":d.status,"phase":d.phase,"respond":d.respond,"slot_status":d.slot_status,"elapsed_ms":d.elapsed_ms,"error":d.error})).collect::<Vec<_>>(),"private_calls_completed":private_events.iter().all(|events|events.last().unwrap().kind==ChatEventKind::Completed),"all_classifier_responses_schema_valid":schema_valid,"all_classifier_responses_nonthinking":nonthinking,"total_classifier_requests":captures.iter().filter(|r|r["service"]=="classifier").count(),"total_chat_requests_including_format_repair":captures.iter().filter(|r|r["service"]=="chat").count(),"raw_requests_and_responses":captures});
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    println!(
+        "TP {tp} / FN {fn_count} / FP {fp} / TN {tn}; invalid {invalid}; initial {initial_ms:?} ms; total {total_ms} ms; calls {calls}/{}; report {}",
+        members.len() + 2,
+        report_path.display()
     );
-    assert_eq!(raw.lock().unwrap().len(), 12);
-    let report = json!({"scope":"Integration regression with unchanged frozen labels; bounded persona/attributed room inputs differ from original probe. Not a generalization estimate.","TP":tp,"FN":fn_count,"FP":fp,"TN":tn,"cases":results,"group_members":4,"concurrent_private_chat_calls":2,"complete_group_decision_ms":decision_ms,"group_calls":expected,"decisions":decisions.iter().map(|d|json!({"status":d.status,"elapsed_ms":d.elapsed_ms})).collect::<Vec<_>>(),"raw_requests_and_responses":*raw.lock().unwrap()});
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    if let Some(path) = report_path {
-        std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
-    }
+    check_runtime_decisions(&report).expect("Runtime classifier errors preserved in report");
+    assert_eq!(invalid, 0, "Raw errors preserved in report");
+    assert!(schema_valid, "Raw classifier errors preserved in report");
+    assert!(
+        nonthinking,
+        "Raw reasoning capability failure preserved in report"
+    );
+    assert_eq!(initial.len(), 4);
+    assert!(calls <= members.len() + 2);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(report["private_calls_completed"].as_bool().unwrap());
     drop((t1, t2, post, core, root));
 }

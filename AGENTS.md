@@ -1,7 +1,7 @@
 # Pebble
 
 Pebble is a macOS character-chat app. Read `README.md` and `docs/architecture.md`
-before changing the application. The current baseline is the v0.1.6 local
+before changing the application. The current baseline is the v0.2.0 local
 private/group-chat app with selective participation, bounded room scheduling, editable future-only membership, manual mentions, structured
 replies, durable state, and native contract controls.
 
@@ -18,9 +18,9 @@ replies, durable state, and native contract controls.
   app/persona settings, validated responses, durable state/schema controls,
   and explicit latest-reply retry/recovery. Swift owns
   presentation; Rust owns validation, files, context, history, and execution.
-  The authorized v0.1.3–v0.2.0 sequence adds group rooms, visibility, response
+  The completed v0.1.3–v0.2.0 sequence provides group rooms, visibility, response
   classification, bounded reply scheduling, and membership/recovery as defined
-  in docs/roadmap.md; implement each stage within its reviewed scope. Compaction,
+  in docs/roadmap.md. Future changes need their own scoped authorization. Compaction,
   automatic memory, task delegation, deletion, import/export, attachments, and
   cloud sync remain outside this sequence.
 

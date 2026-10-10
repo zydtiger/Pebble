@@ -1,6 +1,6 @@
 # Roadmap
 
-The first local private-chat milestone, **v0.1.0**, is implemented. The preceding
+The full local private + group milestone, **v0.2.0**, is implemented. Earlier
 increments remain recorded below so the architecture can be inspected in stages.
 
 | Stage | Outcome |
@@ -56,8 +56,8 @@ minimum-OS testing remain future work.
 
 ## v0.1.1–v0.2.0 group-chat delivery
 
-v0.1.1 through v0.1.6 are implemented. v0.2.0 remains planned; each leaves a runnable
-increment and receives focused review before the next stage.
+v0.1.1 through v0.2.0 are implemented. Each increment leaves a runnable app
+and receives focused review before the next stage.
 
 | Stage | User-visible result and exit boundary |
 | --- | --- |
@@ -67,7 +67,7 @@ increment and receives focused review before the next stage.
 | **v0.1.4 — Selective participation** | App-default/per-persona classifier connections decide separately on user messages. Supply persona-scoped room/state/memory context; `@` bypasses inference. Classifier reads change neither chat history coverage nor state. Failures remain visible and manual mentions usable. Implemented with independent native settings, strict two-protocol validation, durable single-admission decisions and dynamic speaker observers; bounded bot triggering follows in v0.1.5. |
 | **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. Implemented with durable ready-only slots, deterministic required/optional order, queued reassessment, N+2 budget, two-pass fallback, all-room Stop and selective predecessor coverage. |
 | **v0.1.6 — Reliable daily group use** | Add/remove/rejoin members; room-scoped Stop/Cancel/Retry, per-speaker pending/errors, drafts, and restart recovery. No duplicate acceptance/fan-out/state change or silent chain resume. Retry eligibility spans the persona's whole cross-room history. Implemented with native member management, future publication intervals, old-interval cancellation/retry exclusion, edit-revision draft preservation and both-protocol crash recovery. |
-| **v0.2.0 — Group-chat milestone** | Consolidate private + group chat, persistent personas, selective participation, state lifetime, membership visibility, scheduling limits, and supported provider behavior; no new subsystem at this final step. |
+| **v0.2.0 — Group-chat milestone** | Consolidate private + group chat, persistent personas, selective participation, state lifetime, membership visibility, scheduling limits, and supported provider behavior. Implemented without a new subsystem, with the five completion scenarios below, frozen-label live integration accounting and current native renders. |
 
 ### Group boundaries and completion scenarios
 
@@ -81,21 +81,28 @@ Mentions guarantee scheduling while still honoring validation, cancellation,
 membership, and provider errors. Bot-to-bot triggers begin only in v0.1.5 and
 remain finite and stoppable.
 
-Completion must demonstrate:
+The completion checks map to maintained runnable fixtures. Ordinary tests use
+isolated local HTTP servers; opt-in service checks use synthetic temporary roots.
+The selected live integration and its limits are described in
+[participation](participation.md#validation-and-measured-limits).
 
-1. Mira uses a private fact in her group context while Kai receives no copy of
-   Mira's private exchange.
-2. A silent Kai later sees the public messages he observed, without duplicating
-   his prior native outputs.
-3. One persona shared by private chat and two groups serializes calls/state,
-   with every reply returning to its immutable originating room.
-4. Mentions, selective silence, whole-group fallback, bounded character chains,
-   and interruption by a new user message work together.
-5. Membership changes, failure/cancel, and restart produce no backfill,
-   duplicate acceptance, private-state fan-out, or silent automatic resend.
+| Completion scenario | Passing behavior evidence |
+| --- | --- |
+| Private knowledge reaches its owner's group context, without private/native fanout | [group_history.rs](../crates/pebble-core/tests/group_history.rs) checks both protocols' unchanged native prefix/current state, public-only observations for the other member, opaque reasoning isolation and nonmember exclusion. [group_live_endpoint.rs](../crates/pebble-core/tests/group_live_endpoint.rs) separately exercises both real chat protocols. |
+| Silent Kai is later `@Kai` in the group, without reinjecting own output | `silent_member_later_mentioned_in_group_keeps_own_native_outputs_without_reinjection_both_apis` in [group_history.rs](../crates/pebble-core/tests/group_history.rs) checks observed public messages once, exact earlier prefix, accepted state and native-only own replies. |
+| One persona shares private + two groups, retaining state, immutable destinations and isolated cancellation | [group_acceptance.rs](../crates/pebble-core/tests/group_acceptance.rs), paired causal-prefix/coverage-hole cases in [group_rounds.rs](../crates/pebble-core/tests/group_rounds.rs), and both-protocol removal races in [group_membership.rs](../crates/pebble-core/tests/group_membership.rs) verify these boundaries. |
+| Mentions, silence, bounded followups, fallback and newer input cooperate | [group_flow.rs](../crates/pebble-core/tests/group_flow.rs) checks deterministic required/optional ordering, N+2 admission, bot mentions, two-pass fallback and interruption. [group_fallback_request.rs](../crates/pebble-core/tests/group_fallback_request.rs) freezes acknowledgment purpose across repair/retry; [group_queued_cancel.rs](../crates/pebble-core/tests/group_queued_cancel.rs) rejects late reassessment callbacks. |
+| Membership/failure/cancel/restart preserve accepted results without backfill or resend | [group_membership.rs](../crates/pebble-core/tests/group_membership.rs), [group_membership_recovery.rs](../crates/pebble-core/tests/group_membership_recovery.rs) and [group_recovery.rs](../crates/pebble-core/tests/group_recovery.rs) cover future publication boundaries, old interval rejection, both-protocol process interruption, immutable native bytes/state, explicit retry and transactional rollback. |
+
+Native [bridge checks](../macos/Tests/BridgeChecks.swift) and
+[render checks](../macos/Tests/RenderChecks.swift) exercise group creation,
+member controls, typed/chosen mentions, speaker attribution, participation,
+private navigation, recovery and per-room drafts. Composer checks retain native
+marked text, Enter send and Command/Shift–Enter newline behavior.
 
 After v0.2.0: automatic memory extraction/retrieval/writing, session compaction,
 Codex delegation, attachments, proactive conversations outside a user-started
 group round, separate roleplay worlds, richer relationships, search/cold
 archives/exports/deletion, sync, notarization, and broader platform validation
-remain separately scoped. No classifier or group calls are part of v0.1.1.
+remain separately scoped. The local app remains ad-hoc signed for Apple Silicon;
+no remote release, distribution signing or notarization is provided.

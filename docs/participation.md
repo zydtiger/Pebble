@@ -120,6 +120,8 @@ An opt-in integration check uses only synthetic temporary roots and the frozen
 unchanged-label subset in `tests/fixtures/participation-regressions.json`:
 
 ```sh
+mkdir -p build/participation-live
+PEBBLE_CLASSIFIER_REPORT="$PWD/build/participation-live/report.json" \
 PEBBLE_CLASSIFIER_API_ROOT=http://beluga:4014/v1 \
 PEBBLE_CLASSIFIER_MODEL=Qwen/Qwen3.5-2B \
 PEBBLE_LIVE_API_ROOT=http://beluga:4013/v1 \
@@ -127,19 +129,31 @@ PEBBLE_LIVE_MODEL=gemma-4-31b-uncensored \
 cargo test -p pebble-core --test participation_live_endpoint -- --ignored --nocapture
 ```
 
-Optional `PEBBLE_CLASSIFIER_REPORT` must be an absolute path in an existing
+`PEBBLE_CLASSIFIER_REPORT` is required and must be an absolute path in an existing
 directory. If proxy routing fails, retry only that command with
 `NO_PROXY=beluga,127.0.0.1,localhost`.
 
-The bounded selected-service run produced TP 5 / FN 0, then FP 0 / TN 3 across
-eight examples. With two concurrent private Gemma calls, all four group decisions
-completed in 83 ms, each admitted one chat reply, and all replies completed.
-All twelve Qwen requests returned strict boolean JSON with zero reasoning tokens.
-This is an integration regression using changed compact/attributed input
-organization and unchanged labels, not an independent generalization estimate
-or a latency guarantee. The initial report write used a relative path and failed
-after all behavior assertions; the complete JSON was recovered from its raw log
-without repeating service requests.
+The final v0.2.0 selected-service run kept the eight frozen labels and scored
+TP 5 / FN 0 / FP 0 / TN 3, with no invalid initial response. Metrics use each
+case's first raw primary-prompt response, independently of later fallback or
+reassessment that can reuse its durable decision row. With two concurrent private
+Gemma calls, the four initial group primary responses were all received after
+78 ms; the full room round settled after 43,727 ms and completed six group calls
+(four initial plus two followups), within N+2. Both private calls completed.
+All 25 Qwen requests (including later primary/fallback phases) were schema-valid
+with no reasoning content or nonzero reasoning-token count. Eight Gemma requests
+completed, with no format-repair request or generation error in this run.
+
+The harness preserves raw requests/responses and separately reports initial
+primary response latency, complete round settlement, final lifecycle and admission
+bounds. Its synthetic relay buffers complete chat SSE for raw capture; total
+round timing includes that relay and full generation. This is an integration
+regression using compact/attributed inputs and unchanged labels, not an
+independent generalization estimate or a latency guarantee. This final integrated
+run used Chat Completions for both models. Responses classification is covered by
+local protocol fixtures, not a selected Qwen live capability claim; earlier
+separate Gemma checks exercised both chat protocols. The report directory is
+validated before service requests begin.
 
 The earlier combined intent-and-permission prompt passed 7/10 frozen development
 examples. Splitting the passes scored 9/10 (TP 3 / FN 1 / FP 0 / TN 6), with all

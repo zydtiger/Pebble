@@ -1,5 +1,10 @@
 # Architecture
 
+v0.2.0 consolidates the reviewed private + group lifecycle without introducing
+a new subsystem. [Group scheduling](group-flow.md), [membership](groups.md),
+[state lifetime](state.md) and [provider contracts](providers.md) define the
+current boundaries; the [roadmap](roadmap.md) maps completion scenarios to tests.
+
 ## Boundaries
 
 `pebble-core` is an ordinary Rust library. It owns TOML parsing and validation,

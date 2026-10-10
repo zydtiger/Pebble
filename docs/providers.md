@@ -64,3 +64,18 @@ does not establish constraint support. The two actual adapters were additionally
 exercised with synthetic characters through acceptance, state persistence,
 restart/native replay, cancellation, and explicit retry. These observations do
 not establish support for every JSON Schema keyword or another server version.
+
+
+## Consolidated live coverage
+
+The v0.2.0 isolated integration uses Gemma for structured Chat Completions and
+the explicitly configured Qwen non-thinking profile for separate participation.
+It records raw synthetic requests/responses, initial primary results separately
+from later phases, and bounded whole-round outcomes; see
+[measured limits](participation.md#validation-and-measured-limits). It does not
+claim live Responses support for Qwen. Both classifier protocols and explicit
+schema dialects remain tested with deterministic HTTP fixtures. Earlier separate
+Gemma live checks cover Chat Completions and its explicitly selected Responses
+`response_format` extension; standard `text.format` support must not be inferred
+from successful unconstrained output. Provider/model judgment, context estimates
+and schema-keyword support remain limited as documented above.

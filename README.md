@@ -6,7 +6,7 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.6 completes member management and group recovery.** Create
+**v0.2.0 combines private and group conversations.** Create
 characters, choose group members, and let each character decide when to join,
 or mention who should reply. Each character
 keeps one native model history, state, and execution queue across all its rooms;
@@ -16,6 +16,11 @@ Validated replies, cancellation, and explicit retry preserve saved conversations
 Chat Completions/Responses retain native history with bounded context budgets
 and lossless item compression.
 Without a connection, the app uses its clearly labeled deterministic local demo.
+
+See [completion evidence and current limits](docs/roadmap.md#group-boundaries-and-completion-scenarios)
+for the verified end-to-end scenarios. Participation remains a model judgment;
+manual mentions provide an explicit request, and whole-group fallback permits
+only one brief acknowledgment/clarification.
 
 ## Run it
 
@@ -97,7 +102,8 @@ accepted as assistant context. Empty drafts are not sent.
 5. Stop cancels every unfinished round, decision and reply in this room; queued
    bubbles have individual Cancel. Retry uses the original room and speaker,
    and is available only for that character's latest unsuccessful call across
-   all rooms while the character is idle.
+   all rooms while the character is idle and its original membership interval
+   remains current. Rejoining never revives an old reply.
 
 Only public user messages and accepted reply text fan out to current members.
 Native reasoning, state, and private exchanges are never copied to other
@@ -190,7 +196,8 @@ sliders button in the chat header. Edit model/API root/protocol and context
 budgets. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn off
 **Override app connection** to inherit the app connection; blank character budget
 fields inherit independently. Character edits require only that character to be
-idle; app-default edits require all queued/active replies to finish or stop.
+idle, including pending decisions and still-admittable group slots; app-default
+edits require all affected work to finish or stop.
 
 The Responses connection form offers **Standard · text.format** and the explicit
 **llama.cpp · response_format** schema dialect. It appears only for Responses;

@@ -1,6 +1,6 @@
 # Durable chat history
 
-v0.1.6 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.2.0 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. Groups share persona histories. Independent participation decisions do not
 create native sessions or consume event coverage. Durable room rounds release
 only ready slots into the persona queues; no memory writer or work-agent integration exists.
