@@ -1,3 +1,4 @@
+mod migration_support;
 use pebble_core::{ChatEvent, ChatEventKind, ChatListener, ChatTask, Core, Error, MessageStatus};
 use rusqlite::Connection;
 use serde_json::Value;
@@ -265,6 +266,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     let persona = core.workspace().unwrap().personas.remove(0);
     drop(core);
     let db = db(root.path());
+    migration_support::v7(root.path());
     db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; DROP TABLE model_item_events; DROP TABLE model_items; DROP TABLE model_calls;
         DROP TABLE model_sessions; DROP TABLE persona_events; DROP TABLE messages; PRAGMA user_version = 1;").unwrap();
     let core = Core::open(root.path()).unwrap();
@@ -274,7 +276,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        7
+        8
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }

@@ -1,4 +1,5 @@
 mod live_support;
+mod migration_support;
 use live_support::*;
 use pebble_core::{ChatEventKind, MessageStatus};
 use serde_json::{Value, json};
@@ -221,6 +222,7 @@ fn changed_connection_starts_fresh_context_and_preserves_transcript_and_v2_ids()
     drop(core);
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
     raw_history(root.path());
+    migration_support::v7(root.path());
     db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; ALTER TABLE model_sessions DROP COLUMN base_url; ALTER TABLE model_sessions DROP COLUMN event_start_sequence; PRAGMA user_version=2;").unwrap();
     let core = reopen(root.path());
     assert_eq!(saved, core.messages(&id).unwrap());

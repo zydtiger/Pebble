@@ -1,4 +1,5 @@
 mod live_support;
+mod migration_support;
 mod responses_support;
 use live_support::{Server, configure, isolated, reopen, start, stream, success, terminal};
 use pebble_core::{ChatEventKind, Error};
@@ -112,6 +113,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
         )
         .unwrap();
     }
+    migration_support::v7(root.path());
     db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=4;").unwrap();
     let core = reopen(root.path());
     assert_eq!(core.messages(&id).unwrap(), messages);
@@ -124,7 +126,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
     assert_eq!(
         db.query_row(

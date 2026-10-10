@@ -26,7 +26,8 @@ The user can increase configured limits or deliberately start a fresh context.
 
 ## Storage and memory bounds
 
-Schema 7 keeps nine tables, adding persona-wide accepted state to the history records. `model_items.codec` is `json` or `zstd`, with a
+Schema 8 has eleven tables, including persona-wide accepted state and group
+membership/mentions alongside the native history records. `model_items.codec` is `json` or `zstd`, with a
 nonnegative `decoded_length`. Migration records the length of existing raw bytes
 without rewriting or recompressing them. New items below 1024 bytes remain raw;
 larger items use zstd level 3 only when the compressed bytes are smaller.

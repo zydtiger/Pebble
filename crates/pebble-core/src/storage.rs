@@ -4,6 +4,7 @@ mod items;
 mod jobs;
 mod response_settings;
 mod retry;
+mod rooms;
 mod state;
 mod turns;
 pub(crate) use turns::input_message;
@@ -41,11 +42,11 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version < 5 {
+        if version < 8 {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 7 {
+        if version > 8 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -90,6 +91,9 @@ impl Database {
                 ALTER TABLE model_calls ADD COLUMN validation_errors TEXT NOT NULL DEFAULT '[]';
                 PRAGMA user_version=7;",
             )?;
+        }
+        if version < 8 {
+            tx.execute_batch(include_str!("storage/groups-migration.sql"))?;
         }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
@@ -163,8 +167,8 @@ impl Database {
                 CASE WHEN m.status = 'streaming' AND j.status = 'queued' THEN 'queued' ELSE m.status END,
                 m.created_at, COALESCE(j.error, ''),
                 (j.status IN ('failed','cancelled','interrupted')
-                  AND NOT EXISTS(SELECT 1 FROM model_calls newer JOIN messages n ON n.id=newer.reply_message_id WHERE newer.conversation_id=m.conversation_id AND n.sequence>m.sequence)
-                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.conversation_id=m.conversation_id AND busy.status IN ('queued','streaming')))
+                  AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
+                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;

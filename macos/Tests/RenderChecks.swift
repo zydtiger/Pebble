@@ -97,6 +97,33 @@ struct RenderChecks {
                 guard !model.hasActiveReplies, model.error == nil else { throw RenderError.failed("Concurrent preview replies did not finish") }
                 try await Task.sleep(for: .milliseconds(100))
                 try capture(window, name: "multi-persona")
+                let grouped = await model.createGroup("The small things", members: [miraID, kaiID])
+                guard grouped else { throw RenderError.failed("Native group creation failed") }
+                for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+                window.setContentSize(NSSize(width: 1000, height: 730))
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "group-empty")
+                model.mentionedIDs = [miraID, kaiID]
+                model.draft = "What did you notice on your walk today?"
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "group-mentions")
+                model.sendMessage()
+                for _ in 0..<500 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+                guard model.bubbles.count == 3, Set(model.bubbles.filter { !$0.isUser }.map(\.senderID)).count == 2 else { throw RenderError.failed("Group attribution failed") }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "group-conversation")
+                window.setContentSize(NSSize(width: 820, height: 610))
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "group-compact")
+                window.setContentSize(NSSize(width: 520, height: 520))
+                window.contentView = NSHostingView(rootView: GroupSheet(model: model))
+                try await Task.sleep(for: .milliseconds(300))
+                try capture(window, name: "group-create")
+                model.select(miraID)
+                await model.load()
+                window.setContentSize(NSSize(width: 1000, height: 730))
+                window.contentView = NSHostingView(rootView: ContentView(model: model))
+                try await Task.sleep(for: .milliseconds(300))
                 try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
                     .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
                 await model.load()
@@ -134,18 +161,39 @@ struct RenderChecks {
                 try await Task.sleep(for: .milliseconds(400))
                 try capture(window, name: "app-settings")
                 window.setContentSize(NSSize(width: 600, height: 740))
-                window.contentView = NSHostingView(rootView: SettingsSheet(model: model, target: SettingsTarget(personaID: model.selectedID)))
+                window.contentView = NSHostingView(rootView: SettingsSheet(model: model, target: SettingsTarget(personaID: model.selected!.id)))
                 try await Task.sleep(for: .milliseconds(400))
                 try capture(window, name: "character-settings")
                 window.setContentSize(NSSize(width: 700, height: 750))
-                window.contentView = NSHostingView(rootView: StateSheet(model: model, personaID: model.selectedID!))
+                window.contentView = NSHostingView(rootView: StateSheet(model: model, personaID: model.selected!.id))
                 try await Task.sleep(for: .milliseconds(400))
                 try capture(window, name: "character-state")
-                window.contentView = NSHostingView(rootView: StateSheet(model: model, personaID: model.selectedID!, initialTab: "schema"))
+                window.contentView = NSHostingView(rootView: StateSheet(model: model, personaID: model.selected!.id, initialTab: "schema"))
                 try await Task.sleep(for: .milliseconds(400))
                 try capture(window, name: "response-schema")
-                print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 model.closeChat()
+                let retryModel = ChatModel(dataRoot: model.dataRoot.appendingPathComponent("group-retry-check"))
+                window.setContentSize(NSSize(width: 1000, height: 730))
+                window.contentView = NSHostingView(rootView: ContentView(model: retryModel))
+                for _ in 0..<100 where retryModel.selected == nil || retryModel.loading { try await Task.sleep(for: .milliseconds(10)) }
+                guard retryModel.selected != nil, retryModel.error == nil else { throw RenderError.failed("Retry UI fixture failed to load") }
+                var retryBusyChecks = 0
+                try await GroupRetryChecks.run(retryModel, retryAvailable: { reply in
+                    try await Task.sleep(for: .milliseconds(150))
+                    try capture(window, name: "group-retry-other-speaker")
+                    guard let button = findAccessible(window.contentView!, identifier: "retry-\(reply)") else {
+                        throw RenderError.failed("Actual Retry button missing while unrelated B is pending")
+                    }
+                    guard pressAccessible(button) else { throw RenderError.failed("Actual Retry button did not press") }
+                }, retryBusy: { reply in
+                    try await Task.sleep(for: .milliseconds(150))
+                    guard findAccessible(window.contentView!, identifier: "retry-\(reply)") == nil else {
+                        throw RenderError.failed("Actual Retry button visible while A is busy in another room")
+                    }
+                    retryBusyChecks += 1
+                    try capture(window, name: retryBusyChecks == 1 ? "group-retry-persona-busy" : "group-retry-superseded")
+                })
+                print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 app.terminate(nil)
             } catch {
                 FileHandle.standardError.write(Data("UI render failed: \(error)\n".utf8))
@@ -159,6 +207,34 @@ struct RenderChecks {
     static func findEditor(_ view: NSView) -> NSTextView? {
         if let editor = view as? NSTextView { return editor }
         return view.subviews.lazy.compactMap { findEditor($0) }.first
+    }
+
+    @MainActor
+    static func findAccessible(_ element: Any, identifier: String, depth: Int = 0) -> NSObject? {
+        guard depth < 40, let object = element as? NSObject else { return nil }
+        // SwiftUI AccessibilityNode exposes selectors without full protocol conformance.
+        let idSelector = NSSelectorFromString("accessibilityIdentifier")
+        if object.responds(to: idSelector), object.perform(idSelector)?.takeUnretainedValue() as? String == identifier { return object }
+        let childrenSelector = NSSelectorFromString("accessibilityChildren")
+        if object.responds(to: childrenSelector), let children = object.perform(childrenSelector)?.takeUnretainedValue() as? [Any] {
+            for child in children {
+                if let found = findAccessible(child, identifier: identifier, depth: depth + 1) { return found }
+            }
+        }
+        if let view = object as? NSView {
+            for child in view.subviews {
+                if let found = findAccessible(child, identifier: identifier, depth: depth + 1) { return found }
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    static func pressAccessible(_ button: NSObject) -> Bool {
+        let selector = NSSelectorFromString("accessibilityPerformPress")
+        guard button.responds(to: selector) else { return false }
+        typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(button.method(for: selector), to: Press.self)(button, selector)
     }
 
     @MainActor

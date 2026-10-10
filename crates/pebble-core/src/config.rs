@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub struct Workspace {
     pub data_root: String,
     pub personas: Vec<Persona>,
+    pub rooms: Vec<crate::Room>,
 }
 
 #[derive(Debug, Clone)]
@@ -290,5 +291,6 @@ pub(crate) fn load_candidate(
     Ok(Workspace {
         data_root: root.display().to_string(),
         personas,
+        rooms: Vec::new(),
     })
 }

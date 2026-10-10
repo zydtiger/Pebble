@@ -1,8 +1,9 @@
 # Pebble
 
 Pebble is a macOS character-chat app. Read `README.md` and `docs/architecture.md`
-before changing the application. The current baseline is the v0.1.2 local
-private-chat app with structured replies, durable state, and native contract controls.
+before changing the application. The current baseline is the v0.1.3 local
+private/group-chat app with manual mentions, structured replies, durable state,
+and native contract controls.
 
 ## Ownership and scope
 

@@ -21,7 +21,11 @@ impl Database {
             (id, start)
         } else {
             tx.execute("UPDATE model_sessions SET status = 'retired' WHERE persona_id = ?1 AND status = 'active'", [&persona.id])?;
-            let start = pending.receipt_cutoff - 1;
+            let start = if existing.is_none() {
+                0
+            } else {
+                pending.receipt_cutoff - 1
+            };
             let id = super::contexts::create_session(&tx, persona, start, "connection")?;
             (id, start)
         };
@@ -70,10 +74,10 @@ impl Database {
         let mut event_ids = Vec::new();
         {
             let mut query = tx.prepare(
-                "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content
+                "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content, COALESCE((SELECT display_name FROM personas WHERE id=m.sender_id),'You')
                  FROM persona_events e JOIN messages m ON m.id = e.message_id
                  WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND e.sequence <= ?5
-                 AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming'))))
+                 AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming'))))
                  AND NOT EXISTS (
                      SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                      WHERE x.event_id = e.id AND i.session_id = ?3)
@@ -98,14 +102,15 @@ impl Database {
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
                     ))
                 },
             )?;
             for row in rows {
-                let (id, sequence, conversation, message, kind, speaker, text) = row?;
+                let (id, sequence, conversation, message, kind, speaker, text, name) = row?;
                 events.push(
                     json!({"event_id":id, "sequence":sequence, "conversation_id":conversation,
-                    "message_id":message, "speaker":{"kind":kind,"id":speaker}, "text":text}),
+                    "message_id":message, "speaker":{"kind":kind,"id":speaker,"name":name}, "text":text}),
                 );
                 event_ids.push(id);
             }
@@ -128,7 +133,9 @@ impl Database {
             ],
         )?;
         let mut envelope = json!({"events":events, "reply_request":{
-            "conversation_id":persona.conversation_id, "trigger_message_id":user_id}});
+            "conversation_id":pending.conversation_id, "trigger_message_id":user_id}});
+        let destination = super::rooms::room(&tx, &pending.conversation_id)?;
+        envelope["reply_request"]["room"] = json!({"kind":destination.kind,"name":destination.title,"members":destination.members.iter().map(|m|json!({"id":m.persona_id,"name":m.display_name})).collect::<Vec<_>>()});
         if let Some(state) = state {
             envelope["current_state"] = state;
         }
@@ -148,7 +155,7 @@ impl Database {
             session_id,
             receipt_cutoff: pending.receipt_cutoff,
             persona_id: persona.id.clone(),
-            conversation_id: persona.conversation_id.clone(),
+            conversation_id: pending.conversation_id.clone(),
             user: message(&tx, &user_id)?,
             reply: message(&tx, &reply_id)?,
             retry_of: pending.retry_of.clone(),
@@ -229,6 +236,12 @@ impl Database {
                         params![turn.persona_id, serde_json::to_string(&state)?],
                     )?;
                 }
+                super::rooms::publish(
+                    &tx,
+                    &turn.conversation_id,
+                    &turn.reply.id,
+                    Some(&turn.persona_id),
+                )?;
                 let fallback = [json!({"role":"assistant", "content":content})];
                 let outputs = native.unwrap_or(&fallback);
                 let event = insert_event_for(
@@ -273,7 +286,7 @@ pub(super) fn new_id() -> String {
 
 pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
     let mut message=db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1", [id],read_message)?;
-    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM model_calls newer JOIN messages n ON n.id=newer.reply_message_id WHERE newer.conversation_id=c.conversation_id AND n.sequence>(SELECT sequence FROM messages WHERE id=?1)) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.conversation_id=c.conversation_id AND busy.status IN ('queued','streaming'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((detail, retry)) = metadata {
         message.failure_detail = detail;
         message.can_retry = retry;
@@ -283,7 +296,7 @@ pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
 
 pub(super) fn insert_message(
     db: &Connection,
-    persona: &Persona,
+    conversation: &str,
     kind: &str,
     sender: &str,
     text: &str,
@@ -293,21 +306,12 @@ pub(super) fn insert_message(
     db.execute(
         "INSERT INTO messages (id, conversation_id, sequence, sender_kind, sender_id, content, status)
          VALUES (?1, ?2, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE conversation_id = ?2), ?3, ?4, ?5, ?6)",
-        params![id, persona.conversation_id, kind, sender, text, status.as_str()],
+        params![id, conversation, kind, sender, text, status.as_str()],
     )?;
     Ok(id)
 }
 
-pub(super) fn insert_event(
-    db: &Connection,
-    persona: &Persona,
-    message: &str,
-    kind: &str,
-) -> Result<String, Error> {
-    insert_event_for(db, &persona.id, &persona.conversation_id, message, kind)
-}
-
-fn insert_event_for(
+pub(super) fn insert_event_for(
     db: &Connection,
     persona: &str,
     conversation: &str,
@@ -351,7 +355,7 @@ fn link(db: &Connection, item: &str, event: &str) -> Result<(), Error> {
 fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
     db.execute(
         "UPDATE model_sessions SET covered_event_sequence = COALESCE(
-            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (
+            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (
                 SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                 WHERE x.event_id = e.id AND i.session_id = ?1)),
             (SELECT COALESCE(MAX(sequence), 0) FROM persona_events WHERE persona_id = ?2)) WHERE id = ?1",

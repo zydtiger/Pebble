@@ -1,4 +1,5 @@
 mod live_support;
+mod migration_support;
 mod responses_support;
 use live_support::*;
 use pebble_core::{ChatEventKind, MessageStatus};
@@ -376,6 +377,7 @@ fn v6_upgrade_preserves_plain_native_context_until_explicit_fresh_boundary() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
+    migration_support::v7(root.path());
     db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; PRAGMA user_version=6;").unwrap();
     std::fs::remove_file(Path::new(&directory).join("response_schema.json")).unwrap();
     let legacy = "# keep this comment\n[persona]\ndisplay_name='Mira'\nsubtitle='legacy'\n[custom]\nuntouched='keep'\n";

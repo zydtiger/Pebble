@@ -26,7 +26,9 @@ fn restart_keeps_identity_and_state_table() {
     assert_eq!(
         tables,
         [
+            "conversation_memberships",
             "conversations",
+            "message_mentions",
             "messages",
             "model_calls",
             "model_item_events",

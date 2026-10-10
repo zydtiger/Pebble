@@ -7,15 +7,15 @@ use rusqlite::{OptionalExtension, params};
 impl Database {
     pub(crate) fn ensure_idle(&self, persona: Option<&str>) -> Result<(), Error> {
         let connection = self.connection.lock().expect("database lock");
-        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c JOIN conversations r ON r.id=c.conversation_id WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR r.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
+        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR c.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
         Ok(())
     }
     pub(crate) fn enqueue_retry(&self, persona: &Persona, reply: &str) -> Result<Turn, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
-        if tx.query_row("SELECT EXISTS(SELECT 1 FROM model_calls WHERE conversation_id=?1 AND status IN ('queued','streaming'))",[&persona.conversation_id],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
-        let latest:Option<(String,String,String,String)>=tx.query_row("SELECT c.id,c.trigger_message_id,c.status,c.reply_message_id FROM model_calls c JOIN messages m ON m.id=c.reply_message_id WHERE c.conversation_id=?1 ORDER BY m.sequence DESC LIMIT 1",[&persona.conversation_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-        let Some((original, user, status, latest_reply)) = latest else {
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status IN ('queued','streaming'))",[&persona.id],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
+        let latest:Option<(String,String,String,String,String,Option<String>)>=tx.query_row("SELECT c.id,c.trigger_message_id,c.status,c.reply_message_id,c.conversation_id,c.membership_id FROM model_calls c WHERE c.persona_id=?1 ORDER BY c.persona_sequence DESC LIMIT 1",[&persona.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+        let Some((original, user, status, latest_reply, conversation, membership)) = latest else {
             return Err(unavailable());
         };
         if latest_reply != reply
@@ -23,21 +23,23 @@ impl Database {
         {
             return Err(unavailable());
         }
+        if let Some(id) = &membership
+            && !tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_memberships WHERE id=?1 AND persona_id=?2 AND conversation_id=?3 AND left_publication IS NULL)",params![id,persona.id,conversation],|r|r.get::<_,bool>(0))? {return Err(unavailable());}
         let receipt = tx.query_row(
-            "SELECT sequence FROM persona_events WHERE message_id=?1 AND kind='received'",
-            [&user],
+            "SELECT sequence FROM persona_events WHERE message_id=?1 AND persona_id=?2 AND kind='received'",
+            params![user,persona.id],
             |r| r.get::<_, i64>(0),
         )?;
         let reply = insert_message(
             &tx,
-            persona,
+            &conversation,
             "persona",
             &persona.id,
             "",
             MessageStatus::Streaming,
         )?;
         let call = new_id();
-        tx.execute("INSERT INTO model_calls (id,conversation_id,trigger_message_id,reply_message_id,event_cutoff,status,retry_of) VALUES (?1,?2,?3,?4,?5,'queued',?6)",params![call,persona.conversation_id,user,reply,receipt,original])?;
+        tx.execute("INSERT INTO model_calls (id,conversation_id,trigger_message_id,reply_message_id,event_cutoff,status,retry_of,persona_id,persona_sequence,membership_id) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,(SELECT COALESCE(MAX(persona_sequence),0)+1 FROM model_calls WHERE persona_id=?7),?8)",params![call,conversation,user,reply,receipt,original,persona.id,membership])?;
         let mut reply = message(&tx, &reply)?;
         reply.status = MessageStatus::Queued;
         let turn = Turn {
@@ -45,7 +47,7 @@ impl Database {
             session_id: String::new(),
             receipt_cutoff: receipt,
             persona_id: persona.id.clone(),
-            conversation_id: persona.conversation_id.clone(),
+            conversation_id: conversation,
             user: message(&tx, &user)?,
             reply,
             retry_of: Some(original),

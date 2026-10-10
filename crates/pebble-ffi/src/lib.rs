@@ -1,3 +1,5 @@
+mod rooms_api;
+pub use rooms_api::*;
 mod settings_api;
 pub use settings_api::*;
 mod response_settings_api;
@@ -69,6 +71,7 @@ pub struct PersonaRecord {
 pub struct WorkspaceRecord {
     pub data_root: String,
     pub personas: Vec<PersonaRecord>,
+    pub rooms: Vec<RoomRecord>,
 }
 
 impl From<pebble_core::Persona> for PersonaRecord {
@@ -94,6 +97,7 @@ impl From<pebble_core::Workspace> for WorkspaceRecord {
     fn from(workspace: pebble_core::Workspace) -> Self {
         Self {
             data_root: workspace.data_root,
+            rooms: workspace.rooms.into_iter().map(Into::into).collect(),
             personas: workspace.personas.into_iter().map(Into::into).collect(),
         }
     }
@@ -188,7 +192,7 @@ pub trait ChatObserver: Send + Sync {
     fn on_update(&self, update: ChatUpdate) -> Result<(), ListenerError>;
 }
 
-struct ObserverAdapter(Arc<dyn ChatObserver>);
+pub(crate) struct ObserverAdapter(Arc<dyn ChatObserver>);
 
 impl pebble_core::ChatListener for ObserverAdapter {
     fn on_event(&self, event: pebble_core::ChatEvent) -> Result<(), String> {
@@ -216,7 +220,7 @@ impl pebble_core::ChatListener for ObserverAdapter {
 
 #[derive(uniffi::Object)]
 pub struct ChatHandle {
-    task: pebble_core::ChatTask,
+    pub(crate) task: pebble_core::ChatTask,
 }
 
 #[uniffi::export]
@@ -241,7 +245,7 @@ impl ChatHandle {
 
 #[derive(uniffi::Object)]
 pub struct PebbleBackend {
-    core: pebble_core::Core,
+    pub(crate) core: pebble_core::Core,
 }
 
 #[uniffi::export]

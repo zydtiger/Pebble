@@ -6,12 +6,14 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.2 adds native character state, response-schema editing, and explicit reset controls to the structured private-chat foundation.** Create independent
-characters, configure their models, and continue saved conversations after
-restart. Native settings edit app defaults and character files. Validated replies,
-per-character queues, cancellation, and explicit retry keep each private room
-independent. Chat Completions/Responses retain native history with bounded
-context budgets and lossless item compression.
+**v0.1.3 adds manual group chats to persistent private conversations.** Create
+characters, choose group members, and mention who should reply. Each character
+keeps one native model history, state, and execution queue across all its rooms;
+silent members observe public messages without generating. Native settings and
+state/schema controls remain available through each character's private chat.
+Validated replies, cancellation, and explicit retry preserve saved conversations.
+Chat Completions/Responses retain native history with bounded context budgets
+and lossless item compression.
 Without a connection, the app uses its clearly labeled deterministic local demo.
 
 ## Run it
@@ -70,9 +72,33 @@ New contexts show **Typing…** until the whole structured response validates, t
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
-The interface uses a light theme and includes a starter character. Groups,
-automated memory, and work delegation belong to later milestones. See
-[the roadmap](docs/roadmap.md).
+## Try a group chat
+
+1. Choose **New group**, enter a name, and select one or more existing characters.
+   Groups have stable IDs and appear beneath private chats in the sidebar.
+2. Type `@Name` or use **Mention** to choose members. Selected chips are explicit
+   recipients and remain selected while you edit the body; remove a chip to
+   remove that selection. Duplicate names require choosing the member instead
+   of an ambiguous typed token. Selected names are included in the saved message.
+3. Send without mentions to leave a public message that everyone listens to,
+   with no model call. Mentioned characters reply with their names shown above
+   each bubble. Multiple characters can reply concurrently in this stage.
+4. Switch rooms while replies run. Drafts and mention selections stay with each
+   room; replies keep their original destination. The group header lets you
+   rename the group or open a member's private chat/settings.
+5. Stop cancels the oldest submission's remaining replies in this room; queued
+   bubbles have individual Cancel. Retry uses the original room and speaker,
+   and is available only for that character's latest unsuccessful call across
+   all rooms while the character is idle.
+
+Only public user messages and accepted reply text fan out to current members.
+Native reasoning, state, and private exchanges are never copied to other
+characters. A character itself retains its private knowledge and may disclose
+it in a public reply; prompt instructions cannot guarantee secrecy from the
+same shared-context model. Membership changes, selective participation, and
+ordered automatic reply chains are later stages. See [group rules](docs/groups.md)
+and [the roadmap](docs/roadmap.md).
+
 
 ## Local data
 
@@ -88,12 +114,12 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── MEMORY.md
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # nine private-chat/history/state tables
+    ├── app.sqlite        # eleven chat/history/state/membership tables
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 6 are upgraded transactionally to 7, preserving character, room, message,
+through 7 are upgraded transactionally to 8, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data

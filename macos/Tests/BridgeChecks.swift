@@ -32,7 +32,54 @@ struct BridgeChecks {
         reopened.closeChat()
         try await exerciseConcurrentRooms(root.appendingPathComponent("concurrent"))
         try await exerciseDailySettingsAndRetry(root.appendingPathComponent("daily"))
+        try await exerciseGroups(root.appendingPathComponent("groups"))
+        let retryModel = ChatModel(dataRoot: root.appendingPathComponent("group-retry"))
+        await retryModel.load()
+        try await GroupRetryChecks.run(retryModel, retryAvailable: { retryModel.retryReply($0) }, retryBusy: { _ in })
         print("Swift 6 FFI checks passed: durable IDs/history, native records, validated Unicode replies, cancellation, listener release, UI restart and close lifecycle.")
+    }
+
+    @MainActor
+    static func exerciseGroups(_ root: URL) async throws {
+        let model = ChatModel(dataRoot: root)
+        await model.load()
+        let a = model.selected!.id
+        let created = await model.createCharacter("Kai"); try require(created, "Could not create group member")
+        for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+        let b = model.selected!.id
+        let grouped = await model.createGroup("Native group", members: [a, b]); try require(grouped, "Could not create native group")
+        for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+        let group = model.selectedConversation!
+        try require(group.kind == "group" && model.selected == nil && group.members.count == 2, "Room identity/member bridge failed")
+        model.draft = "Everyone can listen"
+        model.sendMessage()
+        for _ in 0..<100 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.count == 1 && model.bubbles[0].isUser && model.draft.isEmpty, "Unmentioned input was not saved once without reply")
+        model.mentionedIDs = [a, b]
+        model.draft = "Chosen mentions remain explicit after editing"
+        model.sendMessage()
+        model.select(a)
+        model.draft = "Private room draft"
+        for _ in 0..<400 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        model.select(group.id)
+        for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.count == 4 && Set(model.bubbles.filter { !$0.isUser }.map(\.senderID)) == Set([a, b]), "Shared listener ended early or speaker/destination routing changed")
+        try require(model.mentionedIDs.isEmpty && model.draft.isEmpty, "Accepted mention chips/draft not cleared")
+        let renamed = await model.renameGroup("Renamed native group"); try require(renamed, "Native group rename failed")
+        try require(model.selectedConversation?.id == group.id && model.selectedConversation?.title == "Renamed native group", "Rename changed room identity")
+        model.mentionedIDs = [a]
+        model.draft = "Keep chosen target while editing text"
+        model.select(a)
+        try require(model.draft == "Private room draft", "Group stream overwrote private draft")
+        model.select(group.id)
+        try require(model.mentionedIDs == [a] && model.draft == "Keep chosen target while editing text", "Room switching lost mention selection")
+        model.sendMessage(); model.stopReply()
+        for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.last?.status == .cancelled && model.bubbles.last?.canRetry == true, "Group cancellation/retry metadata failed")
+        model.retryReply(model.bubbles.last!.id)
+        for _ in 0..<400 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        try require(model.bubbles.count == 7 && model.bubbles.last?.status == .complete && model.bubbles.last?.senderID == a, "Group retry duplicated user or used wrong speaker/destination")
+        model.closeChat()
     }
 
     @MainActor
@@ -129,7 +176,7 @@ struct BridgeChecks {
         try require(model.draft == "Mira's unsent draft", "Fresh context cleared the unsent draft")
         model.sendMessage("New context input")
         for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
-        try require(model.bubbles.last?.status == .complete && !model.bubbles.last!.text.contains("Mira first private input"), "Fresh context reused earlier model context")
+        try require(model.bubbles.last?.status == .complete && !model.bubbles.last!.text.contains("Mira first private input"), "Fresh context reused earlier model context: loading=\(model.loading), replying=\(model.isReplying), error=\(model.error ?? "none"), last=\(model.bubbles.last?.text ?? "none")")
         model.closeChat()
     }
 

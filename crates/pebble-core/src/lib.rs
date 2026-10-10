@@ -7,15 +7,17 @@ mod history;
 mod live;
 mod personas;
 mod response_settings;
+mod rooms;
 mod settings;
 mod storage;
 mod structured;
 
-pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
+pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatSubmission, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
 pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
 pub use response_settings::{ResponseAction, ResponseSettings, ResponseUpdate};
+pub use rooms::{Room, RoomMember};
 pub use settings::{ChatSettings, CredentialChange, PersonaUpdate, Settings, SettingsUpdate};
 
 use std::path::{Path, PathBuf};
@@ -51,6 +53,8 @@ pub enum Error {
     SettingsSave(String),
     #[error("{0}")]
     RetryUnavailable(String),
+    #[error("{0}")]
+    Room(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -86,7 +90,48 @@ impl Core {
         let mut workspace = config::load(&self.data_root)?;
         self.database
             .resolve_conversations(&mut workspace.personas)?;
+        workspace.rooms = self.database.rooms()?;
         Ok(workspace)
+    }
+
+    pub fn create_group(&self, title: &str, members: &[String]) -> Result<Room, Error> {
+        self.chats.serialized(|| {
+            let workspace = self.workspace()?;
+            if members
+                .iter()
+                .any(|id| !workspace.personas.iter().any(|p| &p.id == id))
+            {
+                return Err(Error::UnknownPersona);
+            }
+            self.database.create_group(title, members)
+        })
+    }
+    pub fn rename_group(&self, room: &str, title: &str) -> Result<Room, Error> {
+        self.chats
+            .serialized(|| self.database.rename_group(room, title))
+    }
+    pub fn room_messages(&self, room: &str) -> Result<Vec<Message>, Error> {
+        self.database.room(room)?;
+        self.database.messages(room)
+    }
+    pub fn send_room_message(
+        &self,
+        room: &str,
+        prompt: &str,
+        mentions: &[String],
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatSubmission, Error> {
+        if prompt.trim().is_empty() && mentions.is_empty() {
+            return Err(Error::EmptyMessage);
+        }
+        self.chats.start_room(
+            self.database.clone(),
+            || self.workspace(),
+            room,
+            prompt.trim(),
+            mentions,
+            listener,
+        )
     }
 
     pub fn create_persona(&self, name: &str) -> Result<Persona, Error> {

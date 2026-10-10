@@ -3,7 +3,7 @@
 ## Boundaries
 
 `pebble-core` is an ordinary Rust library. It owns TOML parsing and validation,
-SOUL/MEMORY loading, stable persona/private-room IDs, SQLite, frozen model history, and the
+SOUL/MEMORY loading, stable persona/private/group-room IDs, SQLite, frozen model history, and the
 live/demo worker's lifecycle. It can be tested without a UI or language bridge.
 
 `pebble-ffi` wraps the core with UniFFI 0.32.2 records, typed errors, objects, and
@@ -35,14 +35,14 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the nine private-chat/history/state tables and schema migration. Visible
+Rust owns the eleven chat/history/state/membership tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 
 ```text
-Swift sends text and observer
-    → Rust accepts messages, receipt event, and queued call atomically
+Swift sends room, text, explicit mentions, and observer
+    → Rust accepts one user message, member receipts, selected replies/calls atomically
     → persona queue activates the call and freezes its request atomically
     → Rust returns a cancellable handle and authoritative message IDs
     → Chat Completions, Responses, or unconfigured demo consumes the stored request
@@ -66,12 +66,12 @@ while limiting incoming events to that call's receipt cutoff. Thus an earlier
 call cannot consume later queued inputs, and a followup sees its predecessor's
 native assistant output even when that output event was recorded later.
 
-Swift keeps a presentation cache and run handles per private room. Room switching
+Swift keeps a presentation cache, draft, mention selection, and run handles per room. Room switching
 changes the displayed cache without disconnecting other streams. Drafts, output,
 errors, and Stop belong to that room. Queued bubbles expose individual cancel;
-Stop targets the selected persona's oldest outstanding reply. Closing the view
+Stop cancels the selected room's oldest submission, including its remaining handles. Closing the view
 cancels every retained handle/subscription; dropping the core cancels its queues.
-Early cancellation is retained until a handle arrives. Startup marks both queued
+Early cancellation is retained until handles arrive. A group observer remains open until every selected call terminates; one character finishing cannot disconnect another. Startup marks both queued
 and active calls interrupted, with no accepted partial output or hidden resubmit.
 
 Rust character creation atomically publishes a UUID directory containing
@@ -174,3 +174,31 @@ failure detail and eligibility are derived for snapshots after restart. See
 
 Xcode may place the debug app's code in its own preview/debug dylib. That is
 Xcode's debug packaging, not dynamic linkage to a separate Rust core.
+
+## Manual groups
+
+Rooms belong to conversations; histories, state and execution queues belong to
+personas. Group creation writes real membership intervals at publication boundary
+zero. User acceptance resolves typed or picked mentions to stable current-member
+IDs, saves one canonical message, assigns its publication order, and creates one
+received event per member. Only selected personas receive calls/placeholders.
+No mention means durable observations without generation. Bot text never creates
+mentions or another call.
+
+Successful completion commits reply/state/native output, author sent event, and
+other members' public received events together. A separate publication ordinal
+is assigned then: preallocated display placeholders cannot define membership
+visibility. Group observations remain consumable even if a mentioned reply is
+cancelled before activation. Contiguous event coverage retains gaps. The receipt
+cutoff bounds newly added observations, while accepted native history and current
+state are preserved even when learned in another room after an older call queued.
+First-ever sessions consume all observed events up to that cutoff; explicit
+fresh/connection boundaries still exclude prior context.
+
+Calls persist persona identity, persona-wide order, optional membership interval,
+and immutable room/trigger. Retry/latest/busy checks use that persona order, not
+room display order. Group members only receive attributed public text; the
+author's own accepted output remains native replay. Existing frozen prefixes and
+old request items are never rewritten to introduce group instructions. New
+prefixes explain shared history and public disclosure boundaries. See
+[group rules](groups.md) and [history](history.md).

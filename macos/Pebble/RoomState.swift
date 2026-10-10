@@ -2,19 +2,24 @@ import Foundation
 import Observation
 
 @MainActor
+@Observable
 final class RoomRun {
     let id = UUID()
-    var handle: ChatHandle?
+    var handles: [ChatHandle] = []
+    var pendingIDs: Set<String> = []
+    var accepting = true
+    var acceptingPersonaIDs: Set<String> = []
     var task: Task<Void, Never>?
     var sink: AsyncStream<ChatUpdate>.Continuation?
     var cancelRequested = false
-    func cancel() { cancelRequested = true; handle?.cancel() }
+    func cancel() { cancelRequested = true; handles.forEach { $0.cancel() } }
 }
 
 @MainActor
 @Observable
 final class RoomState {
     var draft = ""
+    var mentions: [String] = []
     var bubbles: [ChatBubble] = []
     var error: String?
     var loaded = false

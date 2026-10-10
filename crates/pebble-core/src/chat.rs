@@ -63,6 +63,11 @@ impl Control {
     }
 }
 
+pub struct ChatSubmission {
+    pub message: Message,
+    pub tasks: Vec<ChatTask>,
+}
+
 pub struct ChatTask {
     pub id: String,
     pub messages: Vec<Message>,
@@ -138,6 +143,43 @@ impl Chats {
         let queue = queues.entry(persona.id.clone()).or_default().clone();
         let turn = db.enqueue_turn(&persona, prompt)?;
         Self::launch(db, persona, listener, queue, turn)
+    }
+    pub(crate) fn start_room(
+        &self,
+        db: Arc<Database>,
+        load: impl FnOnce() -> Result<crate::Workspace, Error>,
+        room: &str,
+        prompt: &str,
+        mentions: &[String],
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatSubmission, Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        let workspace = load()?;
+        let (message, turns) = db.enqueue_room(room, prompt, mentions, &workspace.personas)?;
+        let mut tasks = Vec::new();
+        for turn in turns {
+            let persona = workspace
+                .personas
+                .iter()
+                .find(|p| p.id == turn.persona_id)
+                .expect("validated persona")
+                .clone();
+            let queue = queues.entry(persona.id.clone()).or_default().clone();
+            // Each accepted call is finalized even if a worker cannot start. Earlier workers remain owned.
+            match Self::launch(db.clone(), persona, listener.clone(), queue, turn.clone()) {
+                Ok(task) => tasks.push(task),
+                Err(error) => {
+                    finish_pending(
+                        &db,
+                        &turn,
+                        &listener,
+                        MessageStatus::Failed,
+                        Some(error.to_string()),
+                    );
+                }
+            }
+        }
+        Ok(ChatSubmission { message, tasks })
     }
     fn launch(
         db: Arc<Database>,

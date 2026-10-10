@@ -40,7 +40,8 @@ parser. Drafts are not persisted across app restart in this release.
 
 ## Explicit retry
 
-Eligibility is derived from the latest call/reply in a persona's private room,
+Eligibility is derived from the latest call/reply for a persona across private
+and group rooms,
 including its retry chain. It must be failed/cancelled/interrupted and there must
 be no queued/active work for that persona. Earlier unsuccessful replies cease to
 be eligible when a later call exists. Other personas can continue independently.

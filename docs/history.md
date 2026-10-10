@@ -1,7 +1,7 @@
-# Durable private-chat history
+# Durable chat history
 
-v0.1.1 uses one SQLite database and live Chat Completions/Responses adapters. An
-unconfigured character uses a deterministic local demo. There is no group
+v0.1.3 uses one SQLite database and live Chat Completions/Responses adapters. An
+unconfigured character uses a deterministic local demo. Manual groups share persona histories. There is no ordered group
 scheduler, classifier, memory writer, or work-agent integration.
 
 ## Records and ordering
@@ -9,14 +9,16 @@ scheduler, classifier, memory writer, or work-agent integration.
 | Table | Identity, order, and responsibility |
 | --- | --- |
 | `personas` | Stable UUID and directory; display name is derived from files |
-| `conversations` | One canonical `direct` room per persona; existing IDs survive migration |
-| `messages` | Visible content, explicit user/persona sender, status, timestamp; unique `(conversation_id, sequence)` |
-| `persona_events` | Received user messages and accepted sent replies; unique `(persona_id, sequence)` and `(persona_id, message_id)` |
+| `conversations` | One canonical `direct` room per persona plus named `group` rooms; existing IDs survive migration |
+| `messages` | Visible content, explicit user/persona sender, status, timestamp; unique `(conversation_id, sequence)` for display; separate nullable publication order assigned only on acceptance |
+| `persona_events` | Received eligible public messages and accepted own sent replies; unique `(persona_id, sequence)` and `(persona_id, message_id)` |
 | `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, covered-event frontier, and frozen response schema (NULL for preserved legacy sessions) |
 | `model_items` | Frozen raw/zstd prefix/input/output JSON BLOBs with decoded length; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
 | `persona_states` | Persona-wide current accepted state; independent of model session |
-| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional retry_of, frozen state_before, and validation_errors |
+| `conversation_memberships` | Durable group/persona intervals, join/leave publication boundaries, stable interval IDs and member order |
+| `message_mentions` | Canonical user message, resolved persona ID and originating membership interval; deduplicated per message/persona |
+| `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
 they do not reorder stored history. A message ID identifies the same bubble
@@ -24,7 +26,8 @@ while streaming and after restart. The runtime owns the reply destination.
 One session belongs to a persona, not an app launch or visible room.
 
 The first input initializes a session with a fixed application/SOUL/MEMORY
-snapshot. Reloading files changes the character panel, but does not rewrite
+snapshot. A first-ever session includes all prior received observations up to the
+call cutoff; there is no group backfill to nonmembers. Reloading files changes the character panel, but does not rewrite
 that existing snapshot. Sessions identify `pebble_demo_v1` / `local-demo` or
 `chat_completions` or `responses` / the configured model. The credential-free `base_url` is
 stored on the session; keys are resolved at runtime and never persisted.
@@ -70,8 +73,8 @@ next turn's request: P, I1, O1…On, I2
 
 The input item is JSON with `role: user` and `content` containing a serialized
 envelope. Its `events` include source event/message/room IDs, event sequence,
-speaker kind/ID, and text. `reply_request` contains the target room and trigger
-message. These are fields inside content, not imaginary provider API fields.
+speaker kind/ID/name, and text. `reply_request` contains the target room and trigger
+message, plus the current destination kind/name/member attribution. These are fields inside content, not imaginary provider API fields.
 The prefix defines this attribution. Participant text is serialized as data.
 Chat Completions stores one native assistant message with supported
 `reasoning_content`/`refusal` fields. Responses input uses native `message` items
@@ -109,15 +112,18 @@ input stays in the session even when its reply is cancelled.
 One worker runs per persona at a time; different personas run concurrently.
 Queued replies are typed `queued` snapshots derived from their call state.
 Cancelling a queued call leaves visible messages and its received event, with a
-terminal call and no session/model input. Builders explicitly skip these
-unconsumed cancelled/interrupted inputs; the covered frontier can pass them.
+terminal call and no session/model input. Private-chat builders explicitly skip these unconsumed cancelled/interrupted
+inputs; the covered frontier can pass them. Group inputs remain public observed
+facts and are still consumed by later calls, including silent members. A different
+member's cancelled call never suppresses an observation.
 Rust owns cancellation and durable terminal states; Swift consumes typed message
 snapshots and output deltas.
 The draft is cleared after Rust accepts it, and callback IDs prevent updating
 the wrong visible message. Character switching keeps each room
 stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
-reloads the final transcript from Rust. No failed-call resubmission is automatic; only completed invalid structured candidates get bounded format repair. Latest-reply retry adds a new reply/call
+reloads the final transcript from Rust. No failed-call resubmission is automatic; only completed invalid structured candidates get bounded format repair. Latest-reply retry is persona-wide across rooms, uses the immutable original
+destination/membership, and requires no pending call for that persona. It adds a new reply/call
 referencing retry_of and the existing user/receipt. In the unchanged active
 context it reuses the nearest frozen ancestor's input/event cutoff. An
 unactivated retry admits that receipt once; explicit retry after a fresh or
@@ -146,8 +152,9 @@ unchanged; migration does not compress old payloads. Schema 5 upgrades to 6 by a
 existing calls stay unchanged. Schema 6 upgrades to 7 with persona_states, model_sessions.response_schema, and
 model_calls.state_before/validation_errors. Existing sessions keep a NULL contract
 and remain active until an explicit fresh/connection boundary; their bytes are
-never reinterpreted. See [state and upgrade rules](state.md). All nine tables remain. Existing IDs, records, frozen bytes, and editable files
-remain intact. A database
+never reinterpreted. See [state and upgrade rules](state.md). Schema 8 adds real
+group memberships/mentions and persona-wide call identity/order, preserving all
+IDs, records, frozen bytes, associations, and editable files. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.
 
@@ -164,3 +171,24 @@ bridge test covers typed records/errors, durable identity, Unicode
 streaming, early cancellation, callback release, subscription closure, and a
 fresh presentation model restoring and continuing history. Native render
 checks exercise the real composer, including marked text and keyboard events.
+
+## Group acceptance and publication
+
+Group acceptance commits a single user message, its publication ordinal, all
+current-member received events, resolved mention IDs/intervals, and selected
+reply placeholders/calls in one transaction. Silent members have events without
+calls. An accepted character reply assigns its publication ordinal and fans out
+only `messages.content` to other members in the same transaction as its native
+output/state/sent event. Its author has one sent event and native links, never
+a second received copy. Failure/cancel/interruption creates no publication,
+state transition, accepted native output, or reply fanout.
+
+Membership intervals compare publication order, not display sequence assigned
+when a placeholder queued. Existing v0.1.2 complete private messages are assigned
+their old display sequence as publication order; unpublished attempts remain
+NULL. Migration retains every old conversation/message/session/item/event ID,
+byte payload, state, and association. Calls receive their canonical private
+persona and old reply display sequence as the initial persona-wide call order.
+Future calls allocate from that persona's maximum, across all rooms. Schema 8
+adds memberships and mentions to the prior nine tables and verifies foreign keys
+before commit.

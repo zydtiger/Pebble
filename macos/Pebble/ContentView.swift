@@ -10,21 +10,21 @@ struct ContentView: View {
             sidebar
             Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(width: 1)
             VStack(spacing: 0) {
-                if let persona = model.selected {
-                    chatHeader(persona)
+                if let conversation = model.selectedConversation {
+                    if let persona = model.selected { chatHeader(persona) } else { groupHeader(conversation) }
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
                     if let error = model.error { errorBanner(error) }
                     if model.bubbles.isEmpty {
                         GeometryReader { geometry in
                             ScrollView {
-                                introduction(persona)
+                                Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
                                     .frame(maxWidth: .infinity)
                                     .frame(minHeight: geometry.size.height)
                             }
                             .scrollIndicators(.never)
                         }
                     } else {
-                        transcript(persona)
+                        transcript
                     }
                     composer
                 } else {
@@ -45,6 +45,8 @@ struct ContentView: View {
             if let id = target.personaID { StateSheet(model: model, personaID: id) }
         }
         .sheet(isPresented: $model.showNewCharacter) { NewCharacterSheet(model: model) }
+        .sheet(isPresented: $model.showNewGroup) { GroupSheet(model: model) }
+        .sheet(isPresented: $model.showRenameGroup) { GroupSheet(model: model, renaming: model.selectedConversation) }
         .confirmationDialog("Start a fresh context?", isPresented: $model.showFreshContext, titleVisibility: .visible) {
             Button("Start fresh context") { Task { await model.startFreshContext() } }
             Button("Cancel", role: .cancel) {}
@@ -80,22 +82,42 @@ struct ContentView: View {
                                     Text(model.pendingCount(persona.id) > 0 ? "\(model.pendingCount(persona.id)) pending" : "Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                 }
                                 Spacer(minLength: 0)
-                                if persona.id == model.selectedID {
+                                if persona.conversationId == model.selectedID {
                                     Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
                                 }
                             }
                             .padding(11)
-                            .background(persona.id == model.selectedID ? .white.opacity(0.72) : .clear,
+                            .background(persona.conversationId == model.selectedID ? .white.opacity(0.72) : .clear,
                                         in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("persona-\(persona.displayName)")
+                    }
+                    if let groups = model.workspace?.rooms.filter({ $0.kind == "group" }), !groups.isEmpty {
+                        Text("GROUP CHATS").font(.system(size: 10, weight: .semibold)).tracking(1.6)
+                            .foregroundStyle(PebbleTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 24).padding(.bottom, 9)
+                        ForEach(groups, id: \.id) { group in
+                            Button { model.select(group.id) } label: {
+                                HStack(spacing: 11) {
+                                    Image(systemName: "person.2").font(.system(size: 19)).foregroundStyle(PebbleTheme.sage).frame(width: 38, height: 38)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(group.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                        Text(model.pendingCount(group.id) > 0 ? "\(model.pendingCount(group.id)) pending" : "\(group.members.count) characters").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                    }
+                                    Spacer(minLength: 0)
+                                    if group.id == model.selectedID { Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5) }
+                                }.padding(11).background(group.id == model.selectedID ? .white.opacity(0.72) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                            }.buttonStyle(.plain).accessibilityIdentifier("group-\(group.title)")
+                        }
                     }
                 }
             }.scrollIndicators(.hidden)
             Button { model.showNewCharacter = true } label: {
                 Label("New character", systemImage: "plus").font(.system(size: 11))
             }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 14)
+            Button { model.showNewGroup = true } label: {
+                Label("New group", systemImage: "person.2.badge.plus").font(.system(size: 11))
+            }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 12)
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
                 Text("Every friendship starts\nwith a small hello.")
@@ -103,7 +125,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.2").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.3").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -121,6 +143,32 @@ struct ContentView: View {
         .frame(width: 236)
         .frame(maxHeight: .infinity)
         .background(PebbleTheme.sidebar)
+    }
+
+    private func groupHeader(_ group: RoomRecord) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.2").font(.system(size: 25)).foregroundStyle(PebbleTheme.sage)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(group.title).font(.system(size: 14, weight: .semibold))
+                Text(group.members.map(\.displayName).joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted).lineLimit(2)
+            }
+            Spacer()
+            Menu {
+                ForEach(group.members, id: \.personaId) { member in
+                    Button("Open \(model.memberLabel(member.personaId))'s private chat") { model.select(member.personaId) }
+                }
+            } label: { Image(systemName: "person.crop.circle") }.menuStyle(.borderlessButton).fixedSize().help("Character private chats and settings")
+            Button { model.showRenameGroup = true } label: { Image(systemName: "pencil") }
+                .buttonStyle(.plain).help("Rename group")
+        }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 20)
+    }
+    private var groupIntroduction: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "person.2").font(.system(size: 48, weight: .light)).foregroundStyle(PebbleTheme.sage)
+            Text("A shared conversation.").font(.system(size: 30, design: .serif))
+            Text("Everyone in this group can listen. Mention a character when you'd like them to reply.")
+                .font(.system(size: 13)).foregroundStyle(PebbleTheme.muted).multilineTextAlignment(.center).frame(maxWidth: 330)
+        }.frame(maxWidth: .infinity, minHeight: 300).padding(30)
     }
 
     private func chatHeader(_ persona: PersonaRecord) -> some View {
@@ -184,7 +232,7 @@ struct ContentView: View {
         .padding(.horizontal, 28)
     }
 
-    private func transcript(_ persona: PersonaRecord) -> some View {
+    private var transcript: some View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
@@ -195,7 +243,7 @@ struct ContentView: View {
                             if bubble.isUser { Spacer(minLength: 60) }
                             else { CharacterAvatar(size: 28).padding(.top, 20) }
                             VStack(alignment: bubble.isUser ? .trailing : .leading, spacing: 7) {
-                                Text(bubble.isUser ? "YOU" : persona.displayName.uppercased())
+                                Text(bubble.isUser ? "YOU" : model.speakerName(bubble.senderID).uppercased())
                                     .font(.system(size: 9, weight: .semibold)).tracking(1)
                                     .foregroundStyle(PebbleTheme.muted)
                                 if bubble.text.isEmpty && bubble.status == .streaming {
@@ -218,7 +266,11 @@ struct ContentView: View {
                                 if let status = bubble.statusLabel {
                                     HStack {
                                         Text(status).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
-                                        if bubble.canRetry && !model.isReplying { Button("Retry") { model.retryReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
+                                        if model.canRetry(bubble) {
+                                            Button("Retry") { model.retryReply(bubble.id) }
+                                                .font(.system(size: 10)).buttonStyle(.plain)
+                                                .accessibilityIdentifier("retry-\(bubble.id)")
+                                        }
                                         if bubble.status == .queued { Button("Cancel") { model.cancelReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
                                     }
                                 }
@@ -237,7 +289,32 @@ struct ContentView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 11) {
+        VStack(alignment: .leading, spacing: 11) {
+            if let group = model.selectedConversation, group.kind == "group" {
+                HStack(spacing: 8) {
+                    Menu {
+                        ForEach(group.members, id: \.personaId) { member in
+                            Button { model.toggleMention(member.personaId) } label: {
+                                Label(model.memberLabel(member.personaId), systemImage: model.mentionedIDs.contains(member.personaId) ? "checkmark.circle.fill" : "circle")
+                            }
+                        }
+                    } label: { Label("Mention", systemImage: "at").font(.system(size: 11)) }
+                        .menuStyle(.borderlessButton).fixedSize().help("Choose who should reply")
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 6) {
+                            ForEach(model.mentionedIDs, id: \.self) { id in
+                                Button { model.toggleMention(id) } label: {
+                                    HStack(spacing: 5) { Text("@\(model.memberLabel(id))"); Image(systemName: "xmark").font(.system(size: 8)) }
+                                        .font(.system(size: 11)).padding(.horizontal, 9).padding(.vertical, 5)
+                                        .background(PebbleTheme.sage.opacity(0.1), in: Capsule())
+                                }.buttonStyle(.plain).help("Remove selected mention")
+                            }
+                        }
+                    }.scrollIndicators(.hidden)
+                }.foregroundStyle(PebbleTheme.sage)
+                Text(model.mentionedIDs.isEmpty ? "Type @Name or choose a member to request a reply. Without mentions, everyone listens." : "Selected mentions are sent with this message. Remove a chip to change who replies.")
+                    .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+            }
             HStack(alignment: .bottom, spacing: 12) {
                 MessageEditor(text: $model.draft, height: $composerHeight,
                               isFocused: $composerFocused, isEditable: !model.loading) {
@@ -247,14 +324,14 @@ struct ContentView: View {
                 if model.isReplying {
                     Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
                         .buttonStyle(.plain).foregroundStyle(PebbleTheme.sage)
-                        .help("Stop this character's current reply").accessibilityLabel("Stop reply")
+                        .help("Stop pending replies for this message in this chat").accessibilityLabel("Stop reply")
                 }
                 Button { model.sendMessage() } label: {
                     Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white).frame(width: 33, height: 33)
                         .background(PebbleTheme.sage, in: Circle())
                 }.buttonStyle(.plain)
-                    .disabled(model.loading || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(model.loading || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.mentionedIDs.isEmpty))
                     .help(model.isReplying ? "Queue message (Enter)" : "Send message (Enter)")
                     .accessibilityLabel(model.isReplying ? "Queue message" : "Send message")
             }
