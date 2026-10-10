@@ -71,8 +71,6 @@ fn edited_persona_files_only_change_native_prefix_after_explicit_fresh_context()
         &pebble_core::SettingsUpdate {
             chat: settings.chat,
             credential: pebble_core::CredentialChange::Keep,
-            context_window_tokens: settings.context_window_tokens,
-            max_output_tokens: settings.max_output_tokens,
             persona: Some(persona),
         },
     )

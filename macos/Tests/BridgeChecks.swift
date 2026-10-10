@@ -102,7 +102,7 @@ struct BridgeChecks {
         var persona = settings.persona!
         persona.displayName = "Edited name"
         persona.soul = "Edited SOUL"
-        let update = SettingsUpdateRecord(chat: settings.chat, credential: .keep, contextWindowTokens: settings.contextWindowTokens, maxOutputTokens: settings.maxOutputTokens, persona: persona)
+        let update = SettingsUpdateRecord(chat: settings.chat, credential: .keep, persona: persona)
         try await model.saveSettings(id, update: update)
         try require(model.selected?.displayName == "Edited name", "Settings did not refresh the native persona")
         model.sendMessage("Retry one user message")
@@ -131,11 +131,12 @@ struct BridgeChecks {
         } catch BackendError.Settings { /* Recoverable stale-panel error crosses the real bridge. */ }
         let app = try await model.readSettings(nil)
         var connection = app.chat
-        connection.enabled = true; connection.model = "synthetic-model"
+        connection.enabled = true; connection.contextLen = 65536; connection.maxOutputTokens = 4096; connection.model = "synthetic-model"
         connection.baseUrl = "http://127.0.0.1:9/v1"; connection.api = "responses"
         connection.responsesSchemaFormat = "response_format"
-        try await model.saveSettings(nil, update: SettingsUpdateRecord(chat: connection, credential: .keep, contextWindowTokens: app.contextWindowTokens, maxOutputTokens: app.maxOutputTokens, persona: nil))
+        try await model.saveSettings(nil, update: SettingsUpdateRecord(chat: connection, credential: .keep, persona: nil))
         let dialect = try await model.readSettings(nil)
+        try require(dialect.chat.contextLen == 65536 && dialect.chat.maxOutputTokens == 4096, "Chat limits did not cross native settings bridge")
         try require(dialect.chat.responsesSchemaFormat == "response_format", "Responses dialect did not cross native settings bridge")
         model.closeChat()
     }

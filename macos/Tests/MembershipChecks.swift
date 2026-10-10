@@ -53,7 +53,7 @@ enum MembershipChecks {
         try check(model.mentionedIDs == [b] && model.bubbles.map(\.id) == ids, "Rejoin retargeted mentions or changed transcript")
         var settings = try await model.readSettings(b)
         settings.persona!.displayName = "Kai Renamed"
-        try await model.saveSettings(b, update: SettingsUpdateRecord(chat: settings.chat, credential: .keep, contextWindowTokens: settings.contextWindowTokens, maxOutputTokens: settings.maxOutputTokens, persona: settings.persona))
+        try await model.saveSettings(b, update: SettingsUpdateRecord(chat: settings.chat, credential: .keep, persona: settings.persona))
         try check(model.mentionedIDs == [b] && model.memberLabel(b) == "Kai Renamed", "Rename retargeted chosen mention IDs")
         try await phase("group-members-rejoined")
         model.select(b); try check(model.draft == "Kai's private draft", "Navigation lost private draft")

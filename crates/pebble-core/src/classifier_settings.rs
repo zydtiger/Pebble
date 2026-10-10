@@ -10,6 +10,11 @@ pub struct ClassifierSettings {
 }
 
 pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<ClassifierSettings, Error> {
+    let workspace = config::load(root)?;
+    let inherited = persona
+        .and_then(|id| workspace.personas.iter().find(|p| p.id == id))
+        .and_then(|p| p.classifier.as_ref())
+        .map(|c| &c.connection);
     let path = settings::path(root, persona)?;
     let doc = settings::document(&path)?;
     let empty = Item::None;
@@ -43,6 +48,16 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<ClassifierSetti
             },
             has_api_key: !string("api_key").trim().is_empty(),
             api_key_env: string("api_key_env"),
+            context_len: classifier
+                .get("context_len")
+                .and_then(Item::as_integer)
+                .map(|v| v as u64)
+                .or_else(|| inherited.map(|c| c.context_len)),
+            max_output_tokens: classifier
+                .get("max_output_tokens")
+                .and_then(Item::as_integer)
+                .map(|v| v as u64)
+                .or_else(|| inherited.map(|c| c.max_output_tokens)),
         },
         request_profile: string("request_profile"),
     })
@@ -99,6 +114,7 @@ pub(crate) fn save(
                 settings::put(classifier, "request_profile", &update.request_profile);
             }
         }
+        settings::put_limits(classifier, &update.connection)?;
         match credential {
             CredentialChange::Keep => {}
             CredentialChange::Replace(key) => {

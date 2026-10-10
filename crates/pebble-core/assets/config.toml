@@ -6,14 +6,11 @@
 # model = "your-model"
 # base_url = "https://your-provider.example/v1"
 # api = "chat_completions"
+# context_len = 65536
+# max_output_tokens = 4096
 # api_key = "" # Empty for endpoints without authentication.
 # Or use an environment reference instead of a nonempty inline key:
 # api_key_env = "PEBBLE_API_KEY"
-
-# Context/input estimate and output reserve; persona [context] overrides each field.
-[defaults.context]
-context_window_tokens = 65536
-max_output_tokens = 4096
 
 # Independent lightweight participation model; explicit mentions work without it.
 [defaults.classifier]
@@ -22,3 +19,5 @@ base_url = "http://beluga:4014/v1"
 api = "chat_completions"
 api_key = ""
 request_profile = "qwen_non_thinking"
+context_len = 16384
+max_output_tokens = 64

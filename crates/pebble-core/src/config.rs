@@ -42,6 +42,8 @@ pub struct ChatConnection {
     pub model: String,
     pub base_url: String,
     pub api: String,
+    pub context_len: u64,
+    pub max_output_tokens: u64,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     /// Responses standard text.format or the explicitly selected llama.cpp extension.
@@ -55,6 +57,8 @@ impl std::fmt::Debug for ChatConnection {
             .field("model", &self.model)
             .field("base_url", &self.base_url)
             .field("api", &self.api)
+            .field("context_len", &self.context_len)
+            .field("max_output_tokens", &self.max_output_tokens)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("api_key_env", &self.api_key_env)
             .field("responses_schema_format", &self.responses_schema_format)
@@ -66,8 +70,6 @@ impl std::fmt::Debug for ChatConnection {
 struct Defaults {
     chat: Option<ChatConnection>,
     classifier: Option<ClassifierConnection>,
-    #[serde(default)]
-    context: crate::context::Overrides,
 }
 
 #[derive(Deserialize)]
@@ -80,8 +82,6 @@ struct AppConfig {
 struct PersonaConfig {
     persona: Identity,
     response: ResponseConfig,
-    #[serde(default)]
-    context: crate::context::Overrides,
     chat: Option<ChatConnection>,
     classifier: Option<ClassifierConnection>,
 }
@@ -109,7 +109,49 @@ fn parse<T: serde::de::DeserializeOwned>(
     path: &Path,
     overrides: &[(std::path::PathBuf, String)],
 ) -> Result<T, Error> {
-    toml::from_str(&read(path, overrides)?).map_err(|error| Error::Configuration {
+    let text = read(path, overrides)?;
+    let document: toml::Value = toml::from_str(&text).map_err(|_| Error::Configuration {
+        path: path.display().to_string(),
+        detail: "Invalid TOML configuration; repair this file.".into(),
+    })?;
+    for table in [Some(&document), document.get("defaults")]
+        .into_iter()
+        .flatten()
+    {
+        if ["context", "classifier_context"]
+            .iter()
+            .any(|key| table.get(key).is_some())
+        {
+            return Err(Error::Configuration { path: path.display().to_string(), detail: "Obsolete context table: move context_len and max_output_tokens into each [chat]/[classifier] or [defaults.chat]/[defaults.classifier] connection and remove [context]/[classifier_context] tables. Persona connections inherit as a whole.".into() });
+        }
+        for name in ["chat", "classifier"] {
+            if let Some(connection) = table.get(name) {
+                if connection.get("context_window_tokens").is_some() {
+                    return Err(Error::Configuration {
+                        path: path.display().to_string(),
+                        detail: format!(
+                            "{name}.context_window_tokens is obsolete; use context_len and max_output_tokens in this connection."
+                        ),
+                    });
+                }
+                for limit in ["context_len", "max_output_tokens"] {
+                    if connection
+                        .get(limit)
+                        .and_then(toml::Value::as_integer)
+                        .is_none_or(|v| v <= 0)
+                    {
+                        return Err(Error::Configuration {
+                            path: path.display().to_string(),
+                            detail: format!(
+                                "{name}.{limit} is required and must be a positive whole number. A configured connection requires its own context_len and max_output_tokens."
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    toml::from_str(&text).map_err(|error| Error::Configuration {
         path: path.display().to_string(),
         detail: format!(
             "Invalid TOML configuration at {}",
@@ -126,6 +168,11 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
         path: path.display().to_string(),
         detail: detail.into(),
     };
+    if connection.max_output_tokens == 0 || connection.max_output_tokens >= connection.context_len {
+        return Err(invalid(
+            "chat.context_len and chat.max_output_tokens must be positive; max_output_tokens must be smaller than context_len",
+        ));
+    }
     if connection.model.trim().is_empty() {
         return Err(invalid("chat.model must not be empty"));
     }
@@ -262,10 +309,6 @@ pub(crate) fn load_candidate(
     if let Some(connection) = &app.defaults.classifier {
         validate_classifier(connection, &app_path)?;
     }
-    let default_context = app
-        .defaults
-        .context
-        .apply(crate::ContextBudget::default(), &app_path)?;
     let personas_path = root.join("personas");
     let directories =
         fs::read_dir(&personas_path).map_err(|error| file_error(&personas_path, error))?;
@@ -313,11 +356,16 @@ pub(crate) fn load_candidate(
             memory: read(&path.join("MEMORY.md"), overrides)?,
             connection_label: String::new(),
             context_notice: String::new(),
-            chat: config.chat.or_else(|| app.defaults.chat.clone()),
+            chat: config.chat.clone().or_else(|| app.defaults.chat.clone()),
             classifier: config
                 .classifier
                 .or_else(|| app.defaults.classifier.clone()),
-            context: config.context.apply(default_context, &config_path)?,
+            context: config
+                .chat
+                .as_ref()
+                .or(app.defaults.chat.as_ref())
+                .map(ChatConnection::budget)
+                .unwrap_or_default(),
             response_schema: crate::structured::parse(
                 &path.join("response_schema.json"),
                 &read(&path.join("response_schema.json"), overrides)?,
@@ -332,4 +380,13 @@ pub(crate) fn load_candidate(
         personas,
         rooms: Vec::new(),
     })
+}
+
+impl ChatConnection {
+    pub fn budget(&self) -> crate::ContextBudget {
+        crate::ContextBudget {
+            context_len: self.context_len,
+            max_output_tokens: self.max_output_tokens,
+        }
+    }
 }

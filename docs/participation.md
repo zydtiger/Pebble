@@ -17,12 +17,16 @@ base_url = "http://beluga:4014/v1"
 api = "chat_completions"
 api_key = ""
 request_profile = "qwen_non_thinking"
+context_len = 16384
+max_output_tokens = 64
 ```
 
 Existing authored config is never overwritten or extended silently. An absent
 classifier means manual mentions with a clear setup status. A persona `[classifier]`
 replaces the entire app classifier connection, independently of `[chat]`; it
-requires model, API root and explicit protocol. Credentials are independent and
+requires model, API root, explicit protocol and its own positive `context_len`
+and `max_output_tokens`, with output smaller than the total window. Omitted
+persona connections inherit both limits with the whole app connection. Credentials are independent and
 support empty/no authentication, inline key or environment reference. Native
 **Participation model** controls expose app defaults and character overrides.
 Disabling a character override inherits app defaults. Saving requires idle
@@ -30,7 +34,7 @@ replies, decisions and still-admittable slots in the affected scope; validation 
 replacement. No chat session or state boundary changes.
 
 Both Chat Completions and Responses use temperature 0, streaming false, a
-64-token output budget and required-boolean-only strict JSON schema. Chat sends
+configured output cap (64 in the seed) and required-boolean-only strict JSON schema. Chat sends
 `response_format.json_schema`. Responses sends `store=false`, `max_output_tokens`,
 and standard `text.format`, or the explicitly selected `responses_schema_format =
 "response_format"` llama-compatible extension. There is no provider/hostname/model
@@ -55,12 +59,24 @@ or silence. It treats supplied content as data. The compact JSON input includes:
 
 - Target persona ID/name, SOUL (3,000 UTF-8 bytes), MEMORY (2,000 bytes), and
   accepted state (4,096 bytes, or an explicitly labeled truncated excerpt).
-- Up to eight recent complete messages delivered to this persona in the target
-  group, and eight of its eligible events from other rooms. Each text excerpt
+- Up to eight optional older complete messages delivered to this persona in the
+  target group, and eight optional eligible events from other rooms. Each text excerpt
   is bounded at 500 bytes, with source event/message/room/speaker identity.
+  All eligible phase-required root/trigger messages and completed same-round
+  predecessors are included independently of those excerpt bounds, with full
+  text and the existing delivered-event access/cutoff rules. Later accepted
+  events cannot displace an earlier required predecessor.
 - Chronological excerpts including accepted same-round predecessors and actual
   already-represented persona knowledge. No retrieval
   or memory consolidation is implied.
+
+Each pass checks the final request JSON (UTF-8 bytes plus 128-byte reserve),
+including rules, identity, schema, protocol/profile metadata and its output cap.
+Ordinary decisions/reassessments may drop optional older excerpts to fit;
+mandatory trigger and same-round inputs remain. Intent and permission never
+trim their mandatory user/permission/silence inputs. Overflow fails visibly
+before HTTP, with no false decision or coverage/state/history consumption.
+`context_len` is local and never sent as a provider parameter.
 
 Other personas' private events/state/native output/reasoning are never supplied.
 A persona may read its own private context; its generated public reply can still
@@ -95,7 +111,7 @@ Whole-group fallback uses two separate strict passes only after all initial
 decisions are valid false with no required or accepted reply. The exact
 [room intent prompt](../crates/pebble-core/assets/fallback-intent-prompt.txt) returns
 `{"whole_group_question": boolean}` using only the latest canonical user message
-(up to 8,000 UTF-8 bytes), without SOUL/interests. Its connection comes from the
+(complete text), without SOUL/interests. Its connection comes from the
 first configured eligible candidate in stable order. If true, the exact
 [permission prompt](../crates/pebble-core/assets/fallback-permission-prompt.txt)
 uses each candidate's own connection, identity and bounded chronological delivered

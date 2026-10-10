@@ -81,6 +81,8 @@ impl From<ConnectionSettingsRecord> for pebble_core::ChatSettings {
             responses_schema_format: s.responses_schema_format,
             has_api_key: s.has_api_key,
             api_key_env: s.api_key_env,
+            context_len: s.context_len,
+            max_output_tokens: s.max_output_tokens,
         }
     }
 }
@@ -94,6 +96,8 @@ impl From<pebble_core::ChatSettings> for ConnectionSettingsRecord {
             responses_schema_format: s.responses_schema_format,
             has_api_key: s.has_api_key,
             api_key_env: s.api_key_env,
+            context_len: s.context_len,
+            max_output_tokens: s.max_output_tokens,
         }
     }
 }

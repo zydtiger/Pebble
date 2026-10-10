@@ -444,6 +444,8 @@ fn separate_rooms_preserve_old_cutoff_and_actual_newer_accepted_prefix_and_state
         let chat=live_support::Server::new(vec![live_support::stream(live_support::candidate(&json!({"reply":"NEWER_ACCEPTED_PRIVATE_KNOWLEDGE","state":{"affinity_user":37,"mood":"alert"}}).to_string())),live_support::stream(live_support::success("Older room generation after newer private context"))]);
         let mut settings = core.settings(None).unwrap();
         settings.chat.enabled = true;
+        settings.chat.context_len = Some(65536);
+        settings.chat.max_output_tokens = Some(4096);
         settings.chat.base_url = chat.url.clone();
         settings.chat.model = "synthetic-chat".into();
         settings.chat.api = "chat_completions".into();
@@ -452,8 +454,6 @@ fn separate_rooms_preserve_old_cutoff_and_actual_newer_accepted_prefix_and_state
             &pebble_core::SettingsUpdate {
                 chat: settings.chat,
                 credential: pebble_core::CredentialChange::Clear,
-                context_window_tokens: settings.context_window_tokens,
-                max_output_tokens: settings.max_output_tokens,
                 persona: None,
             },
         )

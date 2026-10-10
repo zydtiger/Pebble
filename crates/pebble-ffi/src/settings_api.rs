@@ -7,6 +7,8 @@ pub struct ConnectionSettingsRecord {
     pub responses_schema_format: String,
     pub has_api_key: bool,
     pub api_key_env: String,
+    pub context_len: Option<u64>,
+    pub max_output_tokens: Option<u64>,
 }
 #[derive(Clone, uniffi::Record)]
 pub struct PersonaSettingsRecord {
@@ -18,8 +20,6 @@ pub struct PersonaSettingsRecord {
 #[derive(uniffi::Record)]
 pub struct SettingsRecord {
     pub chat: ConnectionSettingsRecord,
-    pub context_window_tokens: Option<u64>,
-    pub max_output_tokens: Option<u64>,
     pub persona: Option<PersonaSettingsRecord>,
 }
 #[derive(uniffi::Enum)]
@@ -33,8 +33,6 @@ pub enum CredentialUpdate {
 pub struct SettingsUpdateRecord {
     pub chat: ConnectionSettingsRecord,
     pub credential: CredentialUpdate,
-    pub context_window_tokens: Option<u64>,
-    pub max_output_tokens: Option<u64>,
     pub persona: Option<PersonaSettingsRecord>,
 }
 impl From<pebble_core::Settings> for SettingsRecord {
@@ -48,9 +46,9 @@ impl From<pebble_core::Settings> for SettingsRecord {
                 responses_schema_format: s.chat.responses_schema_format,
                 has_api_key: s.chat.has_api_key,
                 api_key_env: s.chat.api_key_env,
+                context_len: s.chat.context_len,
+                max_output_tokens: s.chat.max_output_tokens,
             },
-            context_window_tokens: s.context_window_tokens,
-            max_output_tokens: s.max_output_tokens,
             persona: s.persona.map(|p| PersonaSettingsRecord {
                 display_name: p.display_name,
                 subtitle: p.subtitle,
@@ -71,6 +69,8 @@ impl From<SettingsUpdateRecord> for pebble_core::SettingsUpdate {
                 responses_schema_format: s.chat.responses_schema_format,
                 has_api_key: s.chat.has_api_key,
                 api_key_env: s.chat.api_key_env,
+                context_len: s.chat.context_len,
+                max_output_tokens: s.chat.max_output_tokens,
             },
             credential: match s.credential {
                 CredentialUpdate::Keep => pebble_core::CredentialChange::Keep,
@@ -82,8 +82,6 @@ impl From<SettingsUpdateRecord> for pebble_core::SettingsUpdate {
                     pebble_core::CredentialChange::Environment(name)
                 }
             },
-            context_window_tokens: s.context_window_tokens,
-            max_output_tokens: s.max_output_tokens,
             persona: s.persona.map(|p| pebble_core::PersonaUpdate {
                 display_name: p.display_name,
                 subtitle: p.subtitle,

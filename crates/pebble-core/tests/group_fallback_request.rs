@@ -72,6 +72,8 @@ fn fallback_purpose_is_frozen_for_repairs_and_retry_without_changing_normal_call
             });
             let mut settings = core.settings(Some(&persona)).unwrap();
             settings.chat.enabled = true;
+            settings.chat.context_len = Some(65536);
+            settings.chat.max_output_tokens = Some(4096);
             settings.chat.model = "synthetic-chat".into();
             settings.chat.base_url = generation.url.clone();
             settings.chat.api = api.into();
@@ -80,8 +82,6 @@ fn fallback_purpose_is_frozen_for_repairs_and_retry_without_changing_normal_call
                 &pebble_core::SettingsUpdate {
                     chat: settings.chat,
                     credential: pebble_core::CredentialChange::Clear,
-                    context_window_tokens: settings.context_window_tokens,
-                    max_output_tokens: settings.max_output_tokens,
                     persona: settings.persona,
                 },
             )

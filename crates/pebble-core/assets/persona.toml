@@ -3,7 +3,9 @@ display_name = "Mira"
 subtitle = "A curious mind. A soft place to land."
 
 # An optional [chat] table replaces the entire app-level connection.
-# Include model, base_url, and api together. api_key = "" means no authentication;
+# Include model, base_url, api, context_len, and max_output_tokens together.
+# Both limits are required and positive; max_output_tokens must be below context_len.
+# api_key = "" means no authentication;
 # a nonempty api_key or an api_key_env reference can supply credentials later.
 
 # An optional [classifier] independently replaces the entire app classifier.

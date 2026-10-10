@@ -44,8 +44,12 @@ struct SettingsSheet: View {
                         LabeledContent("Subtitle") { TextField("Subtitle", text: $subtitle) }
                     }
                     Toggle(character ? "Override app connection" : "Connect to a model", isOn: $enabled)
-                    Text(character ? "Off uses the app connection. Context fields below inherit independently." : "Off uses the local demo. Changes to app defaults require all replies to finish.")
+                    Text(character ? "Off inherits the whole app connection, including its context and output limits." : "Off uses the local demo. Changes to app defaults require all replies to finish.")
                         .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    if character && !enabled && !window.isEmpty {
+                        Text("Inherited context_len: \(window) · max_output_tokens: \(output)")
+                            .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    }
                     if enabled {
                         LabeledContent("Model") { TextField("Model", text: $modelName) }
                         LabeledContent("API root") { TextField("https://provider.example/v1", text: $baseURL) }
@@ -61,6 +65,10 @@ struct SettingsSheet: View {
                             Text("Use Standard for Responses providers. Select the llama.cpp extension when your endpoint requires response_format for JSON Schema. Pebble always validates replies independently.")
                                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         }
+                        LabeledContent("Context length") { TextField("Required total token window", text: $window) }
+                        LabeledContent("Max output tokens") { TextField("Required output cap", text: $output) }
+                        Text("context_len includes input and output. Input uses a conservative UTF-8 byte estimate, not exact provider token usage. The output cap must be smaller than the window.")
+                            .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         Picker("Credentials", selection: $credential) {
                             Text("Keep existing").tag("keep")
                             Text("Replace inline key").tag("replace")
@@ -72,10 +80,6 @@ struct SettingsSheet: View {
                         Text(hasKey ? "An inline key is saved. Its value is never shown here." : (environment.isEmpty ? "No inline key saved." : "Environment reference: \(environment)"))
                             .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                     }
-                    LabeledContent("Context window") { TextField(character ? "Blank inherits app" : "Blank uses 65536", text: $window) }
-                    LabeledContent("Output reserve") { TextField(character ? "Blank inherits app" : "Blank uses 4096", text: $output) }
-                    Text("Input uses a conservative byte estimate, not exact provider token usage. Output reserve must fit inside the window.")
-                        .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                     if character {
                         Text("SOUL").font(.caption)
                         TextEditor(text: $soul).frame(height: 130).border(PebbleTheme.line)
@@ -108,15 +112,15 @@ struct SettingsSheet: View {
             baseURL = settings.chat.baseUrl; api = settings.chat.api
             responsesSchemaFormat = settings.chat.responsesSchemaFormat
             hasKey = settings.chat.hasApiKey; environment = settings.chat.apiKeyEnv
-            window = settings.contextWindowTokens.map(String.init) ?? ""
-            output = settings.maxOutputTokens.map(String.init) ?? ""
+            window = settings.chat.contextLen.map(String.init) ?? ""
+            output = settings.chat.maxOutputTokens.map(String.init) ?? ""
             if let persona = settings.persona { name = persona.displayName; subtitle = persona.subtitle; soul = persona.soul; memory = persona.memory }
             loaded = true
         } catch { self.error = model.describe(error) }
     }
     private func number(_ text: String) throws -> UInt64? {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
-        guard let value = UInt64(text) else { throw BackendError.Settings(detail: "Enter a whole number for each context limit, or leave it blank to inherit.") }
+        guard let value = UInt64(text) else { throw BackendError.Settings(detail: "Enter a whole number for each context limit. Limits are required for an enabled connection.") }
         return value
     }
     private func save() async {
@@ -129,7 +133,7 @@ struct SettingsSheet: View {
             case "environment": change = .environment(name: environment)
             default: change = .keep
             }
-            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: responsesSchemaFormat, hasApiKey: hasKey, apiKeyEnv: environment), credential: change, contextWindowTokens: try number(window), maxOutputTokens: try number(output), persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
+            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: responsesSchemaFormat, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil), credential: change, persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
             try await model.saveSettings(target.personaID, update: update)
             replacement = ""; dismiss()
         } catch { self.error = model.describe(error) }

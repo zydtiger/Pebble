@@ -39,6 +39,7 @@ pub(super) fn work(db: &Connection, id: &str, persona: &Persona) -> Result<Decis
         decision.event_cutoff,
         &round,
         &phase,
+        &decision.trigger_message_id,
     )?;
     Ok(DecisionWork {
         decision,

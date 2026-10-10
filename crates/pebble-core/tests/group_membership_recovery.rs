@@ -13,6 +13,8 @@ use std::time::Duration;
 fn connection(core: &pebble_core::Core, persona: &str, url: &str, api: &str) {
     let mut s = core.settings(Some(persona)).unwrap();
     s.chat.enabled = true;
+    s.chat.context_len = Some(65536);
+    s.chat.max_output_tokens = Some(4096);
     s.chat.model = "synthetic".into();
     s.chat.base_url = url.into();
     s.chat.api = api.into();
@@ -21,8 +23,6 @@ fn connection(core: &pebble_core::Core, persona: &str, url: &str, api: &str) {
         &SettingsUpdate {
             chat: s.chat,
             credential: CredentialChange::Clear,
-            context_window_tokens: s.context_window_tokens,
-            max_output_tokens: s.max_output_tokens,
             persona: s.persona,
         },
     )

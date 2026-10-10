@@ -12,12 +12,12 @@ pub struct ChatSettings {
     pub responses_schema_format: String,
     pub has_api_key: bool,
     pub api_key_env: String,
+    pub context_len: Option<u64>,
+    pub max_output_tokens: Option<u64>,
 }
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub chat: ChatSettings,
-    pub context_window_tokens: Option<u64>,
-    pub max_output_tokens: Option<u64>,
     pub persona: Option<PersonaUpdate>,
 }
 #[derive(Clone)]
@@ -48,8 +48,6 @@ pub struct PersonaUpdate {
 pub struct SettingsUpdate {
     pub chat: ChatSettings,
     pub credential: CredentialChange,
-    pub context_window_tokens: Option<u64>,
-    pub max_output_tokens: Option<u64>,
     pub persona: Option<PersonaUpdate>,
 }
 pub(crate) fn path(root: &Path, persona: Option<&str>) -> Result<PathBuf, Error> {
@@ -72,6 +70,10 @@ pub(crate) fn document(path: &Path) -> Result<DocumentMut, Error> {
         })
 }
 pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error> {
+    let workspace = config::load(root)?;
+    let inherited = persona
+        .and_then(|id| workspace.personas.iter().find(|p| p.id == id))
+        .and_then(|p| p.chat.as_ref());
     let path = path(root, persona)?;
     let doc = document(&path)?;
     let empty = Item::None;
@@ -103,11 +105,18 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error
             memory: p.memory,
         });
     let number = |key: &str| {
-        table
-            .get("context")
-            .and_then(|t| t.get(key))
+        chat.get(key)
             .and_then(Item::as_integer)
             .map(|v| v as u64)
+            .or_else(|| {
+                inherited.map(|connection| {
+                    if key == "context_len" {
+                        connection.context_len
+                    } else {
+                        connection.max_output_tokens
+                    }
+                })
+            })
     };
     Ok(Settings {
         chat: ChatSettings {
@@ -126,9 +135,9 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error
             },
             has_api_key: !string("api_key").trim().is_empty(),
             api_key_env: string("api_key_env"),
+            context_len: number("context_len"),
+            max_output_tokens: number("max_output_tokens"),
         },
-        context_window_tokens: number("context_window_tokens"),
-        max_output_tokens: number("max_output_tokens"),
         persona,
     })
 }
@@ -202,17 +211,8 @@ pub(crate) fn save(
     } else if let Some(table) = table.as_table_like_mut() {
         table.remove("chat");
     }
-    for (key, number) in [
-        ("context_window_tokens", update.context_window_tokens),
-        ("max_output_tokens", update.max_output_tokens),
-    ] {
-        if let Some(number) = number {
-            let number = i64::try_from(number)
-                .map_err(|_| Error::SettingsSave("Context limit is too large.".into()))?;
-            table["context"][key] = value(number);
-        } else if let Some(context) = table.get_mut("context").and_then(Item::as_table_like_mut) {
-            context.remove(key);
-        }
+    if update.chat.enabled {
+        put_limits(&mut table["chat"], &update.chat)?;
     }
     let mut candidates = Vec::new();
     if let Some(persona) = &update.persona {
@@ -225,4 +225,21 @@ pub(crate) fn save(
     candidates.push((path, doc.to_string())); // TOML is committed last.
     config::load_candidate(root, &candidates)?; // Validate all inherited dependent budgets before any mutation.
     files::publish(&candidates)
+}
+
+pub(crate) fn put_limits(table: &mut Item, connection: &ChatSettings) -> Result<(), Error> {
+    for (key, number) in [
+        ("context_len", connection.context_len),
+        ("max_output_tokens", connection.max_output_tokens),
+    ] {
+        let number = number.ok_or_else(|| {
+            Error::SettingsSave(format!(
+                "{key} is required for this connection; enter its model's limit."
+            ))
+        })?;
+        let number = i64::try_from(number)
+            .map_err(|_| Error::SettingsSave("Context limit is too large.".into()))?;
+        table[key] = value(number);
+    }
+    Ok(())
 }

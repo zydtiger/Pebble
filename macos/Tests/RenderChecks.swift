@@ -127,7 +127,7 @@ struct RenderChecks {
                 window.setContentSize(NSSize(width: 1000, height: 730))
                 window.contentView = NSHostingView(rootView: ContentView(model: model))
                 try await Task.sleep(for: .milliseconds(300))
-                try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
+                try "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
                     .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
                 await model.load()
                 guard model.selected?.connectionLabel == "Live · synthetic-live-model",
@@ -136,7 +136,7 @@ struct RenderChecks {
                 }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "live-context")
-                try "[defaults.chat]\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='responses'\napi_key=''\n"
+                try "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='responses'\napi_key=''\n"
                     .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
                 await model.load()
                 guard model.selected?.connectionLabel == "Live · synthetic-live-model · Responses" else {

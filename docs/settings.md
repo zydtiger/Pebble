@@ -1,10 +1,11 @@
 # Settings and recovery
 
 Native settings are a Rust read/validate/write API over local TOML and Markdown.
-The app defaults form edits the connection and per-field context defaults; the
-character form adds name/subtitle/SOUL/MEMORY and connection/budget overrides.
-An absent character chat table inherits the entire app connection. Blank budget
-fields inherit independently. An absent app connection selects the demo.
+The app defaults form edits each connection and its required context/output
+limits; the character form adds name/subtitle/SOUL/MEMORY and whole connection
+overrides. An absent character connection inherits the entire respective app
+connection, including both limits. An explicit override requires its own limits.
+An absent app chat connection selects the demo.
 
 ## Safe writes and credentials
 

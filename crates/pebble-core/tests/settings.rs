@@ -7,8 +7,6 @@ fn update(core: &Core, persona: Option<&str>) -> SettingsUpdate {
     SettingsUpdate {
         chat: s.chat,
         credential: CredentialChange::Keep,
-        context_window_tokens: s.context_window_tokens,
-        max_output_tokens: s.max_output_tokens,
         persona: s.persona,
     }
 }
@@ -27,7 +25,7 @@ fn minimal_inherited_settings_read_safely_and_keep_clear_credentials_without_rea
     assert!(!format!("{:?}", core.settings(None).unwrap()).contains("synthetic-secret"));
     assert!(!format!("{settings:?}").contains("synthetic-secret"));
     let mut unrelated = update(&core, None);
-    unrelated.max_output_tokens = Some(128);
+    unrelated.chat.max_output_tokens = Some(128);
     core.save_settings(None, &unrelated).unwrap();
     let (_task, rx) = start(&core, &id, "first");
     terminal(&rx);
@@ -61,16 +59,19 @@ fn minimal_inherited_settings_read_safely_and_keep_clear_credentials_without_rea
     assert!(core.save_settings(None, &unrelated).is_err());
 }
 #[test]
-fn candidate_validation_preserves_unknown_fields_and_rejects_dependent_invalid_budgets_before_write()
+fn candidate_validation_preserves_unknown_fields_and_rejects_invalid_connection_limits_before_write()
  {
     let (root, core, id) = isolated();
     let persona = core.workspace().unwrap().personas.remove(0);
     let path = std::path::Path::new(&persona.directory).join("config.toml");
-    fs::write(&path,"# character comment\n[persona]\ndisplay_name='Mira' # name comment\nsubtitle='Here'\nunknown='retained'\n[context]\nmax_output_tokens=5000\n[custom]\nopaque='keep me'\n[response.initial_state]\naffinity_user=20\nmood='calm'\n").unwrap();
+    fs::write(&path,"# character comment\n[persona]\ndisplay_name='Mira' # name comment\nsubtitle='Here'\nunknown='retained'\n[custom]\nopaque='keep me'\n[response.initial_state]\naffinity_user=20\nmood='calm'\n").unwrap();
     let before = fs::read(root.path().join("config.toml")).unwrap();
     let mut app = update(&core, None);
-    app.context_window_tokens = Some(4500);
-    app.max_output_tokens = Some(100);
+    app.chat.enabled = true;
+    app.chat.model = "mock".into();
+    app.chat.base_url = "http://localhost:9/v1".into();
+    app.chat.context_len = Some(50);
+    app.chat.max_output_tokens = Some(100);
     assert!(matches!(
         core.save_settings(None, &app),
         Err(Error::Configuration { .. })
@@ -93,6 +94,8 @@ fn candidate_validation_preserves_unknown_fields_and_rejects_dependent_invalid_b
         "Renamed"
     );
     edited.chat.enabled = true;
+    edited.chat.context_len = Some(65536);
+    edited.chat.max_output_tokens = Some(4096);
     edited.chat.model = "mock".into();
     edited.chat.base_url = "http://localhost:9/v1".into();
     edited.chat.api = "bad".into();
@@ -156,7 +159,7 @@ fn switch_responses_settings_to_chat_completions(persona_override: bool, dialect
     } else {
         "defaults.chat"
     };
-    fs::write(&path, format!("{original}\n[{header}]\n# preserve connection comment\nmodel='synthetic-model'\nbase_url='http://localhost:9/v1'\napi='responses'\nresponses_schema_format='{dialect}'\napi_key='synthetic-secret' # preserve credential comment\ncustom_connection='keep connection'\n\n[custom]\nopaque='keep unrelated'\n")).unwrap();
+    fs::write(&path, format!("{original}\n[{header}]\ncontext_len=65536\nmax_output_tokens=4096\n# preserve connection comment\nmodel='synthetic-model'\nbase_url='http://localhost:9/v1'\napi='responses'\nresponses_schema_format='{dialect}'\napi_key='synthetic-secret' # preserve credential comment\ncustom_connection='keep connection'\n\n[custom]\nopaque='keep unrelated'\n")).unwrap();
 
     // Saving a Responses connection must retain the explicitly selected dialect.
     let mut settings = update(&core, scope);
@@ -222,6 +225,8 @@ fn native_dialect_edits_defaults_overrides_and_protocols_without_exposing_or_los
     for persona in [None, Some(id.as_str())] {
         let mut edit = update(&core, persona);
         edit.chat.enabled = true;
+        edit.chat.context_len = Some(65536);
+        edit.chat.max_output_tokens = Some(4096);
         edit.chat.model = "synthetic".into();
         edit.chat.base_url = "http://localhost:9/v1".into();
         edit.chat.api = "responses".into();

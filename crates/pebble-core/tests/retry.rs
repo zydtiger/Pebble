@@ -44,14 +44,13 @@ fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attemp
         drop(core);
         let core = reopen(root.path());
         assert_eq!(core.messages(&id).unwrap()[1], old_reply);
-        let s = core.settings(None).unwrap();
+        let mut s = core.settings(None).unwrap();
+        s.chat.max_output_tokens = Some(256);
         core.save_settings(
             None,
             &SettingsUpdate {
                 chat: s.chat,
                 credential: CredentialChange::Replace("repaired-secret".into()),
-                context_window_tokens: s.context_window_tokens,
-                max_output_tokens: Some(256),
                 persona: None,
             },
         )

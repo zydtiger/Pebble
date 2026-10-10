@@ -91,7 +91,8 @@ enum ClassifierChecks {
         let b = model.selected!.id
         for target in [nil, Optional(a)] {
             var settings = try await model.readClassifierSettings(target)
-            settings.connection.enabled = true; settings.connection.model = "synthetic-participation"
+            settings.connection.enabled = true; settings.connection.contextLen = 16384
+            settings.connection.maxOutputTokens = 64; settings.connection.model = "synthetic-participation"
             settings.connection.baseUrl = fixture.url; settings.connection.api = "chat_completions"
             settings.requestProfile = "qwen_non_thinking"
             try await model.saveClassifierSettings(target, update: settings, credential: .clear)
@@ -99,6 +100,7 @@ enum ClassifierChecks {
                 settings.connection.api = "responses"; settings.connection.responsesSchemaFormat = dialect
                 try await model.saveClassifierSettings(target, update: settings, credential: .keep)
                 let saved = try await model.readClassifierSettings(target)
+                try check(saved.connection.contextLen == 16384 && saved.connection.maxOutputTokens == 64, "Classifier limits did not round-trip through settings bridge")
                 try check(saved.requestProfile.isEmpty && saved.connection.responsesSchemaFormat == dialect, "Native protocol switch retained Chat-only profile")
             }
             settings.connection.api = "chat_completions"

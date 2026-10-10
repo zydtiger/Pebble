@@ -119,8 +119,6 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
             &SettingsUpdate {
                 chat: settings.chat,
                 credential: CredentialChange::Keep,
-                context_window_tokens: settings.context_window_tokens,
-                max_output_tokens: settings.max_output_tokens,
                 persona: settings.persona,
             },
         )
@@ -182,6 +180,8 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
     }
     let mut settings = core.settings(None).unwrap();
     settings.chat.enabled = true;
+    settings.chat.context_len = Some(65536);
+    settings.chat.max_output_tokens = Some(1024);
     settings.chat.api = "chat_completions".into();
     settings.chat.model = chat_model;
     settings.chat.base_url = chat_proxy.url.clone();
@@ -190,8 +190,6 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
         &SettingsUpdate {
             chat: settings.chat,
             credential: CredentialChange::Clear,
-            context_window_tokens: Some(65536),
-            max_output_tokens: Some(1024),
             persona: None,
         },
     )

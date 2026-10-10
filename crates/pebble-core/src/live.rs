@@ -34,31 +34,8 @@ pub(crate) async fn generate(
         .timeout(Duration::from_secs(180))
         .build()
         .map_err(network)?;
-    let messages = request
-        .items
-        .iter()
-        .map(|item| serde_json::from_slice::<Value>(&item.payload))
-        .collect::<Result<Vec<_>, _>>()?;
-    let (route, mut body) = match chat.api.as_str() {
-        "chat_completions" => (
-            "chat/completions",
-            json!({"model":request.model, "messages":messages, "stream":true, "max_tokens":output_tokens}),
-        ),
-        "responses" => (
-            "responses",
-            json!({"model":request.model, "input":messages, "stream":true, "store":false, "include":["reasoning.encrypted_content"], "max_output_tokens":output_tokens}),
-        ),
-        _ => return Err(failure("The configured model protocol is unsupported.")),
-    };
-    if let Some(schema) = &request.response_schema {
-        if chat.api == "chat_completions"
-            || chat.responses_schema_format.as_deref() == Some("response_format")
-        {
-            body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"persona_response","strict":true,"schema":schema}});
-        } else {
-            body["text"]["format"] = json!({"type":"json_schema","name":"persona_response","strict":true,"schema":schema});
-        }
-    }
+    let (route, body) = request_body(chat, request, output_tokens)?;
+    chat.budget().check_body(&body)?;
     let url = format!("{}/{route}", chat.base_url.trim_end_matches('/'));
     let mut http = client.post(url).json(&body);
     if let Some(key) = key {
@@ -148,3 +125,39 @@ pub(crate) fn output_text(output: &[Value]) -> Result<String, Error> {
     }
     Ok(text)
 }
+
+pub(crate) fn request_body(
+    chat: &ChatConnection,
+    request: &ModelRequest,
+    output_tokens: u64,
+) -> Result<(&'static str, Value), Error> {
+    let messages = request
+        .items
+        .iter()
+        .map(|item| serde_json::from_slice::<Value>(&item.payload))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (route, mut body) = match chat.api.as_str() {
+        "chat_completions" => (
+            "chat/completions",
+            json!({"model":request.model, "messages":messages, "stream":true, "max_tokens":output_tokens}),
+        ),
+        "responses" => (
+            "responses",
+            json!({"model":request.model, "input":messages, "stream":true, "store":false, "include":["reasoning.encrypted_content"], "max_output_tokens":output_tokens}),
+        ),
+        _ => return Err(failure("The configured model protocol is unsupported.")),
+    };
+    if let Some(schema) = &request.response_schema {
+        if chat.api == "chat_completions"
+            || chat.responses_schema_format.as_deref() == Some("response_format")
+        {
+            body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"persona_response","strict":true,"schema":schema}});
+        } else {
+            body["text"]["format"] = json!({"type":"json_schema","name":"persona_response","strict":true,"schema":schema});
+        }
+    }
+    Ok((route, body))
+}
+
+#[cfg(test)]
+mod budget_tests;

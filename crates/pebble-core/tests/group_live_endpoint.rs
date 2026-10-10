@@ -27,14 +27,13 @@ fn opt_in_live_groups_both_protocols() {
             )
             .unwrap();
         }
-        let settings = core.settings(None).unwrap();
+        let mut settings = core.settings(None).unwrap();
+        settings.chat.max_output_tokens = Some(1024);
         core.save_settings(
             None,
             &SettingsUpdate {
                 chat: settings.chat,
                 credential: CredentialChange::Keep,
-                context_window_tokens: Some(65536),
-                max_output_tokens: Some(1024),
                 persona: None,
             },
         )

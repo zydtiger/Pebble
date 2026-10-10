@@ -142,7 +142,7 @@ pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &st
     std::fs::write(
         root.join("config.toml"),
         format!(
-            "[defaults.chat]\nmodel='{model}'\nbase_url='{url}'\napi='{api}'\napi_key='{key}'\n"
+            "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='{model}'\nbase_url='{url}'\napi='{api}'\napi_key='{key}'\n"
         ),
     )
     .unwrap();

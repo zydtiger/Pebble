@@ -1,20 +1,39 @@
 # Context and native item encoding
 
-Context limits belong to Rust. `[defaults.context]` in app config provides
-`context_window_tokens` (65536 by default) and `max_output_tokens` (4096).
-A persona's `[context]` overrides each supplied field independently. Both must
-be positive, with output strictly below the context window. Queued calls retain
-the budget loaded when accepted; editing budgets does not retire sessions or
-rewrite frozen native items. Output reserve is sent to the selected adapter.
+Context limits belong to each connection in Rust. App `[defaults.chat]` and
+`[defaults.classifier]`, and persona `[chat]` and `[classifier]`, require
+`context_len` and `max_output_tokens` alongside model, API root and protocol.
+`context_len` is the total input-plus-output token window. Both limits must be
+positive, with output strictly below the window. An omitted persona connection
+inherits the whole respective app connection; an explicit override supplies its
+own limits. Missing/malformed limits and obsolete separate context tables fail
+with actionable configuration errors. Only the unconfigured demo has an internal
+65536/4096 budget. The seeded classifier uses 16384/64.
+
+Accepted work retains its effective budget. Budget-only edits do not retire
+sessions or rewrite frozen native items, prefix or accepted state. The selected
+output cap is sent to either protocol, including structured repair attempts.
+`context_len` is never sent as a provider API parameter.
 
 ## Estimate and failure behavior
 
-The conservative input estimate is the total UTF-8 byte length of decoded native
-JSON items plus 64 per item. Each byte counts as one estimated token. The output
-reserve must fit within the configured window after that estimate. This includes
-the fixed prefix, system/SOUL/MEMORY, attributed user envelopes, complete native
-assistant output, reasoning, and opaque fields. It deliberately counts JSON and
-opaque strings rather than silently excluding state it cannot inspect. Structured schemas and current-state envelopes are part of that input; transient validation feedback also counts when repairing a candidate.
+The conservative input estimate is the UTF-8 byte length of the final wire JSON
+plus a 128-byte framing reserve, with one byte counted as one estimated token.
+The output cap must fit after that estimate. This covers the fixed prefix,
+system/SOUL/MEMORY, attributed user envelopes, complete native assistant output,
+reasoning, opaque state, current-state envelopes, response schema, protocol/profile
+metadata and any tool metadata present. Structured repair feedback counts too.
+
+Participation checks the same complete request accounting using its own
+connection's limits on initial decisions, reassessment and both fallback passes.
+Optional older ordinary participation excerpts may be removed, preserving
+chronological order, actual trigger identity and all eligible same-round
+predecessors. Required root/trigger/predecessor messages are selected before
+applying the optional eight-event excerpt limits and retain their full text.
+Permission retains all supplied real-user transcript/silence inputs to avoid
+silently dropping an active restriction; intent retains its complete latest
+canonical user message. Mandatory content that cannot fit fails visibly before
+HTTP, never becomes false, and never consumes chat coverage/state/history.
 
 This is not exact provider token accounting. Tokenizer behavior, native message
 framing, encrypted state, and provider-side costs are uncertain. The estimate

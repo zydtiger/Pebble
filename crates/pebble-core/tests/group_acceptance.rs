@@ -60,8 +60,6 @@ fn mentions_are_current_stable_deduplicated_and_never_guess_duplicate_names() {
         &SettingsUpdate {
             chat: settings.chat,
             credential: CredentialChange::Keep,
-            context_window_tokens: settings.context_window_tokens,
-            max_output_tokens: settings.max_output_tokens,
             persona: Some(persona),
         },
     )
@@ -170,8 +168,6 @@ fn shared_persona_queue_keeps_destinations_state_and_cancelled_public_observatio
             &SettingsUpdate {
                 chat: settings.chat,
                 credential: CredentialChange::Keep,
-                context_window_tokens: settings.context_window_tokens,
-                max_output_tokens: settings.max_output_tokens,
                 persona: settings.persona
             }
         ),

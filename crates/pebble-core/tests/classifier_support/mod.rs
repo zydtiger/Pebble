@@ -166,6 +166,8 @@ pub fn finish(submission: &ChatSubmission, rx: &mpsc::Receiver<ChatEvent>) -> Ve
 pub fn configure(core: &Core, persona: Option<&str>, url: &str, api: &str, profile: &str) {
     let mut s = core.classifier_settings(persona).unwrap();
     s.connection.enabled = true;
+    s.connection.context_len = Some(16384);
+    s.connection.max_output_tokens = Some(64);
     s.connection.model = "synthetic-participation".into();
     s.connection.base_url = url.into();
     s.connection.api = api.into();

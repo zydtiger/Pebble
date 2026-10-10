@@ -5,12 +5,14 @@ use pebble_core::{CredentialChange, Error};
 #[test]
 fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip() {
     let (root, core, id) = isolated();
-    std::fs::write(root.path().join("config.toml"),"# authored app comment\n[defaults.chat]\nmodel='chat-unchanged'\nbase_url='http://localhost:8080/v1'\napi='chat_completions'\napi_key='chat-secret'\n[custom]\nopaque='keep'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"# authored app comment\n[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='chat-unchanged'\nbase_url='http://localhost:8080/v1'\napi='chat_completions'\napi_key='chat-secret'\n[custom]\nopaque='keep'\n").unwrap();
     let chat = core.settings(None).unwrap();
     for persona in [None, Some(id.as_str())] {
         let mut s = core.classifier_settings(persona).unwrap();
         assert!(!s.connection.enabled);
         s.connection.enabled = true;
+        s.connection.context_len = Some(16384);
+        s.connection.max_output_tokens = Some(64);
         s.connection.model = "classifier".into();
         s.connection.base_url = "http://localhost:9090/v1".into();
         s.request_profile = "qwen_non_thinking".into();
@@ -22,6 +24,8 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
         .unwrap();
         let read = core.classifier_settings(persona).unwrap();
         assert!(read.connection.has_api_key);
+        assert_eq!(read.connection.context_len, Some(16384));
+        assert_eq!(read.connection.max_output_tokens, Some(64));
         assert!(!format!("{read:?}").contains("synthetic-classifier-key"));
         assert_eq!(
             core.workspace().unwrap().personas[0]
@@ -120,6 +124,6 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
 #[test]
 fn manual_inapplicable_protocol_profile_is_a_recoverable_config_error() {
     let (root, core, _) = isolated();
-    std::fs::write(root.path().join("config.toml"),"[defaults.classifier]\nmodel='synthetic'\nbase_url='http://localhost/v1'\napi='responses'\nrequest_profile='qwen_non_thinking'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"[defaults.classifier]\ncontext_len=16384\nmax_output_tokens=64\nmodel='synthetic'\nbase_url='http://localhost/v1'\napi='responses'\nrequest_profile='qwen_non_thinking'\n").unwrap();
     assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
 }

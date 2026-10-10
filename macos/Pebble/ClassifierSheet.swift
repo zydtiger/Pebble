@@ -17,6 +17,8 @@ struct ClassifierSheet: View {
     @State private var replacement = ""
     @State private var environment = ""
     @State private var hasKey = false
+    @State private var window = ""
+    @State private var output = ""
     private var character: Bool { target.personaID != nil }
 
     var body: some View {
@@ -36,8 +38,12 @@ struct ClassifierSheet: View {
                     Text("A separate small model helps each character decide when to join a group. It chooses participation; the character's chat model writes the reply.")
                         .font(.system(size: 12))
                     Toggle(character ? "Override app participation connection" : "Enable automatic participation", isOn: $enabled)
-                    Text(character ? "Off inherits the app participation connection." : "Off keeps group messages and direct mentions available, without automatic decisions.")
+                    Text(character ? "Off inherits the whole app participation connection, including its limits." : "Off keeps group messages and direct mentions available, without automatic decisions.")
                         .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    if character && !enabled && !window.isEmpty {
+                        Text("Inherited context_len: \(window) · max_output_tokens: \(output)")
+                            .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    }
                     if enabled {
                         LabeledContent("Model") { TextField("Qwen/Qwen3.5-2B", text: $modelName) }
                         LabeledContent("API root") { TextField("http://localhost:8080/v1", text: $baseURL) }
@@ -58,6 +64,10 @@ struct ClassifierSheet: View {
                             Text("Choose Qwen only for an endpoint supporting its non-thinking request extension.")
                                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         }
+                        LabeledContent("Context length") { TextField("Required total token window", text: $window) }
+                        LabeledContent("Max output tokens") { TextField("Required output cap (Qwen default: 64)", text: $output) }
+                        Text("context_len includes input and output. A conservative UTF-8 byte estimate includes rules, excerpts and schema; optional older excerpts may be trimmed. Mandatory content that cannot fit fails before HTTP.")
+                            .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         Picker("Credentials", selection: $credential) {
                             Text("Keep existing").tag("keep")
                             Text("Replace inline key").tag("replace")
@@ -84,8 +94,15 @@ struct ClassifierSheet: View {
             let settings = try await model.readClassifierSettings(target.personaID)
             enabled = settings.connection.enabled; modelName = settings.connection.model; baseURL = settings.connection.baseUrl
             api = settings.connection.api; dialect = settings.connection.responsesSchemaFormat; profile = settings.requestProfile
+            window = settings.connection.contextLen.map(String.init) ?? ""
+            output = settings.connection.maxOutputTokens.map(String.init) ?? ""
             hasKey = settings.connection.hasApiKey; environment = settings.connection.apiKeyEnv; loaded = true
         } catch { self.error = model.describe(error) }
+    }
+    private func number(_ text: String) throws -> UInt64? {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+        guard let value = UInt64(text) else { throw BackendError.Settings(detail: "Enter whole numbers for this connection's context and output limits.") }
+        return value
     }
     private func save() async {
         saving = true; error = nil
@@ -97,7 +114,7 @@ struct ClassifierSheet: View {
             case "environment": change = .environment(name: environment)
             default: change = .keep
             }
-            let update = ClassifierSettingsRecord(connection: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: dialect, hasApiKey: hasKey, apiKeyEnv: environment), requestProfile: profile)
+            let update = ClassifierSettingsRecord(connection: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: dialect, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil), requestProfile: profile)
             try await model.saveClassifierSettings(target.personaID, update: update, credential: change)
             replacement = ""; dismiss()
         } catch { self.error = model.describe(error) }

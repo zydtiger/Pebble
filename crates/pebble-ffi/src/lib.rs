@@ -65,7 +65,7 @@ pub struct PersonaRecord {
     pub api: Option<String>,
     pub connection_label: String,
     pub context_notice: String,
-    pub context_window_tokens: u64,
+    pub context_len: u64,
     pub max_output_tokens: u64,
 }
 
@@ -88,7 +88,7 @@ impl From<pebble_core::Persona> for PersonaRecord {
             memory: persona.memory,
             connection_label: persona.connection_label,
             context_notice: persona.context_notice,
-            context_window_tokens: persona.context.context_window_tokens,
+            context_len: persona.context.context_len,
             max_output_tokens: persona.context.max_output_tokens,
             model: persona.chat.as_ref().map(|chat| chat.model.clone()),
             api: persona.chat.map(|chat| chat.api),

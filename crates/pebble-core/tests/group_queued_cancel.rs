@@ -12,6 +12,8 @@ use std::time::Duration;
 fn save_chat(core: &pebble_core::Core, persona: &str, url: &str, api: &str) {
     let mut settings = core.settings(Some(persona)).unwrap();
     settings.chat.enabled = true;
+    settings.chat.context_len = Some(65536);
+    settings.chat.max_output_tokens = Some(4096);
     settings.chat.base_url = url.into();
     settings.chat.model = "synthetic".into();
     settings.chat.api = api.into();
@@ -20,8 +22,6 @@ fn save_chat(core: &pebble_core::Core, persona: &str, url: &str, api: &str) {
         &SettingsUpdate {
             chat: settings.chat,
             credential: CredentialChange::Clear,
-            context_window_tokens: settings.context_window_tokens,
-            max_output_tokens: settings.max_output_tokens,
             persona: settings.persona,
         },
     )

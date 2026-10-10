@@ -131,8 +131,6 @@ fn defaults_only_keep_and_reset_create_explicit_boundaries_preserving_native_his
         &SettingsUpdate {
             chat: settings.chat,
             credential: CredentialChange::Keep,
-            context_window_tokens: settings.context_window_tokens,
-            max_output_tokens: settings.max_output_tokens,
             persona: settings.persona,
         },
     )

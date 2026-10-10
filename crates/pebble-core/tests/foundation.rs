@@ -82,14 +82,14 @@ fn connections_inherit_as_a_whole_and_reject_partial_override() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     fs::write(root.path().join("config.toml"),
-        "[defaults.chat]\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='responses'\napi_key_env='MODEL_KEY'\n").unwrap();
+        "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='responses'\napi_key_env='MODEL_KEY'\n").unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     let chat = persona.chat.unwrap();
     assert_eq!(chat.api, "responses");
     assert_eq!(chat.api_key_env.as_deref(), Some("MODEL_KEY"));
     fs::write(
         std::path::Path::new(&persona.directory).join("config.toml"),
-        "[persona]\ndisplay_name='Mira'\n[chat]\nmodel='other'\n",
+        "[persona]\ndisplay_name='Mira'\n[chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='other'\n",
     )
     .unwrap();
     assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
@@ -100,7 +100,7 @@ fn inline_api_key_accepts_blank_and_redacts_nonempty_values() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     let config = root.path().join("config.toml");
-    let connection = "[defaults.chat]\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='chat_completions'\n";
+    let connection = "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='sample'\nbase_url='http://localhost:1234/v1'\napi='chat_completions'\n";
     for key in ["", "test-only-placeholder"] {
         fs::write(&config, format!("{connection}api_key='{key}'\n")).unwrap();
         let chat = core.workspace().unwrap().personas.remove(0).chat.unwrap();
@@ -128,7 +128,7 @@ fn invalid_and_missing_files_remain_visible_errors() {
     let core = Core::open(root.path()).unwrap();
     fs::write(
         root.path().join("config.toml"),
-        "[defaults.chat]\nmodel='test'\nbase_url='file:///tmp'\napi='responses'\n",
+        "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='test'\nbase_url='file:///tmp'\napi='responses'\n",
     )
     .unwrap();
     assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
@@ -283,8 +283,8 @@ fn malformed_config_and_url_credentials_never_echo_secrets() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     for config in [
-        "[defaults.chat]\nmodel='mock'\nbase_url='http://127.0.0.1/v1'\napi='chat_completions'\napi_key='do-not-echo' broken",
-        "[defaults.chat]\nmodel='mock'\nbase_url='http://do-not-echo@127.0.0.1/v1'\napi='chat_completions'",
+        "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='mock'\nbase_url='http://127.0.0.1/v1'\napi='chat_completions'\napi_key='do-not-echo' broken",
+        "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='mock'\nbase_url='http://do-not-echo@127.0.0.1/v1'\napi='chat_completions'",
     ] {
         fs::write(root.path().join("config.toml"), config).unwrap();
         let error = core.workspace().unwrap_err().to_string();

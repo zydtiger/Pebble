@@ -201,7 +201,7 @@ fn failed_responses_connection_and_missing_credentials_never_fall_back_to_demo()
     assert_eq!(events.last().unwrap().kind, ChatEventKind::Failed);
     assert!(events.last().unwrap().text.contains("Could not connect"));
     assert!(core.messages(&id).unwrap()[1].content.is_empty());
-    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\nmodel='mock'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key_env='PEBBLE_INTENTIONALLY_MISSING_KEY_830204'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='mock'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key_env='PEBBLE_INTENTIONALLY_MISSING_KEY_830204'\n").unwrap();
     let (_task, rx) = start(&core, &id, "missing credential");
     assert!(
         terminal(&rx)

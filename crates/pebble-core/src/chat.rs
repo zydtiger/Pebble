@@ -513,7 +513,11 @@ fn run(
                 }
                 Ok(())
             };
-            budget.check(&request)?;
+            if let Some(chat) = &chat {
+                budget.check_body(&crate::live::request_body(chat, &request, budget.max_output_tokens)?.1)?;
+            } else {
+                budget.check_demo(&request)?;
+            }
             if let Some(chat) = chat {
                 let runtime = worker_runtime()?;
                 runtime.block_on(async {
@@ -671,7 +675,13 @@ fn generate_structured(
                 ))?,
             });
         }
-        budget.check(&candidate_request)?;
+        if let Some(chat) = chat {
+            budget.check_body(
+                &crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1,
+            )?;
+        } else {
+            budget.check_demo(&candidate_request)?;
+        }
         let output = if let Some(chat) = chat {
             runtime.block_on(async {
                 tokio::select! {

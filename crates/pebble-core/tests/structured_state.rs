@@ -466,22 +466,20 @@ fn invalid_definition_initial_state_and_irrelevant_provider_selector_are_rejecte
     assert!(core.workspace().is_err());
     assert_eq!(state(root.path(), &id)["affinity_user"], 20);
     std::fs::write(Path::new(&persona.directory).join("config.toml"), initial).unwrap();
-    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\nmodel='mock'\nbase_url='http://localhost:9/v1'\napi='chat_completions'\nresponses_schema_format='response_format'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='mock'\nbase_url='http://localhost:9/v1'\napi='chat_completions'\nresponses_schema_format='response_format'\n").unwrap();
     assert!(
         core.workspace()
             .unwrap_err()
             .to_string()
             .contains("applies only to responses")
     );
-    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\nmodel='mock'\nbase_url='http://localhost:9/v1'\napi='responses'\nresponses_schema_format='response_format'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='mock'\nbase_url='http://localhost:9/v1'\napi='responses'\nresponses_schema_format='response_format'\n").unwrap();
     let settings = core.settings(None).unwrap();
     core.save_settings(
         None,
         &pebble_core::SettingsUpdate {
             chat: settings.chat,
             credential: pebble_core::CredentialChange::Keep,
-            context_window_tokens: settings.context_window_tokens,
-            max_output_tokens: settings.max_output_tokens,
             persona: None,
         },
     )

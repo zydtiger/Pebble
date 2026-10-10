@@ -152,7 +152,8 @@ of silently reseeding it.
 
 The app config optionally supplies `[defaults.chat]`. A persona can provide its
 own `[chat]` table, replacing the whole connection. Connections require `model`,
-`base_url`, and `api` (`chat_completions` or `responses`) together. `api_key = ""`
+`base_url`, `api` (`chat_completions` or `responses`), `context_len`, and
+`max_output_tokens` together. `api_key = ""`
 is the placeholder for an endpoint without authentication. Authenticated endpoints
 can use a nonempty `api_key` in the local config, or an `api_key_env` reference;
 do not configure both at once. Base URLs are API roots, normally ending in `/v1`
@@ -170,6 +171,8 @@ model = "your-model"
 base_url = "http://localhost:8080/v1"
 api = "chat_completions"
 api_key = ""
+context_len = 65536
+max_output_tokens = 4096
 ```
 
 Empty credentials omit Authorization. `api_key_env` is resolved when a request
@@ -194,8 +197,8 @@ does not change an existing session's frozen SOUL/MEMORY prefix.
 Open **App defaults** with the sidebar gear, or **Character settings** with the
 sliders button in the chat header. Edit model/API root/protocol and context
 budgets. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn off
-**Override app connection** to inherit the app connection; blank character budget
-fields inherit independently. Character edits require only that character to be
+**Override app connection** to inherit the app connection and both of its limits. An explicit connection override requires
+its own context and output limits. Character edits require only that character to be
 idle, including pending decisions and still-admittable group slots; app-default
 edits require all affected work to finish or stop.
 
@@ -239,28 +242,31 @@ See [settings and recovery](docs/settings.md) for the durable rules.
 
 ## Context budgets and fresh contexts
 
-Configure app defaults in the local `config.toml`:
+Each connection owns its total token window (`context_len`) and output cap
+(`max_output_tokens`). Configure them inside `[defaults.chat]` and
+`[defaults.classifier]`; persona `[chat]` and `[classifier]` overrides replace the
+whole respective connection, including its limits. An omitted persona connection
+inherits the whole app connection. Configured connections require both positive
+limits, with output strictly smaller than the window; missing or obsolete context
+tables report an actionable configuration error. The unconfigured demo uses an
+internal 65536/4096 budget.
 
-```toml
-[defaults.context]
-context_window_tokens = 65536
-max_output_tokens = 4096
-```
+The output cap is sent as Chat Completions `max_tokens` or Responses
+`max_output_tokens`; `context_len` is local and is never sent to the provider.
+Budget edits preserve existing history, native prefix, session and accepted state.
+Each accepted request retains its effective limits.
 
-A persona's `[context]` table overrides either field independently; omitted
-fields inherit app defaults. Old configs use the defaults above. Both limits
-must be positive, and the output reserve must be smaller than the window.
-The output limit is sent as Chat Completions `max_tokens` or Responses
-`max_output_tokens`. Editing these limits does not replace existing history.
-
-Pebble estimates input conservatively from the entire frozen native JSON:
-one UTF-8 byte counts as one estimated token, with 64 more per item. This includes
-SOUL/MEMORY, envelopes, reasoning, and opaque state; the output reserve must fit
-too. It is **not exact provider token usage**. Tokenizers and encrypted provider
-state can differ, and providers may still reject a request. An independent
-8 MiB decoded context bound limits saved-history loading regardless of token
-settings. A context-full reply fails before HTTP and keeps its input and failed
-bubble, so you can increase limits or start fresh deliberately.
+Pebble conservatively counts the final request JSON as UTF-8 bytes plus a
+128-byte framing reserve, with one byte treated as one estimated input token.
+This includes SOUL/MEMORY, native history, reasoning and opaque state, current
+state, response schema and request metadata; structured repair feedback also
+counts. The output cap must fit in the total window. This is **not exact provider
+token usage**. Providers may still reject a request. An independent 8 MiB decoded
+history bound remains in force. A context-full chat reply fails before HTTP and
+keeps its input and failed bubble, so you can increase limits or start fresh.
+Participation has an independent budget and can trim optional older excerpts;
+mandatory trigger, rules and phase inputs must fit or the decision fails visibly
+before HTTP without consuming chat observations or changing state.
 
 Choose the **Start fresh context** sparkle button in the chat header and confirm
 its explanation. Earlier messages and native items remain saved, but subsequent

@@ -140,7 +140,7 @@ memory writer, or delegated work.
 ## Settings and recovery
 
 Rust settings APIs expose connection identity, credential presence/environment
-reference, budget overrides, and editable character files; they never return an
+reference, connection-local context/output limits, and editable character files; they never return an
 inline key. Credential writes use explicit Keep/Replace/Clear/Environment actions.
 Before writing, candidate overlays validate the entire affected workspace,
 including inherited budgets. Files stage beside their targets and publish by

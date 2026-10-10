@@ -11,47 +11,12 @@ pub(crate) async fn classify(
     phase: &str,
 ) -> Result<bool, Error> {
     let connection = &config.connection;
-    let messages = vec![
-        crate::storage::input_message(
-            &connection.api,
-            "system",
-            match phase {
-                "intent" => include_str!("../../assets/fallback-intent-prompt.txt").trim_end(),
-                "permission" => {
-                    include_str!("../../assets/fallback-permission-prompt.txt").trim_end()
-                }
-                _ => super::PROMPT.trim_end(),
-            },
-        ),
-        crate::storage::input_message(&connection.api, "user", input),
-    ];
-    let (route, mut body) = if connection.api == "responses" {
-        (
-            "responses",
-            json!({"model":connection.model,"input":messages,"temperature":0,"stream":false,"store":false,"max_output_tokens":64}),
-        )
+    let body = budgeted_body(config, input, phase)?;
+    let route = if connection.api == "responses" {
+        "responses"
     } else {
-        (
-            "chat/completions",
-            json!({"model":connection.model,"messages":messages,"temperature":0,"stream":false,"max_tokens":64}),
-        )
+        "chat/completions"
     };
-    let schema = if phase == "intent" {
-        json!({"type":"object","properties":{"whole_group_question":{"type":"boolean"}},"required":["whole_group_question"],"additionalProperties":false})
-    } else {
-        super::schema()
-    };
-    if connection.api == "chat_completions"
-        || connection.responses_schema_format.as_deref() == Some("response_format")
-    {
-        body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"participation","strict":true,"schema":schema}});
-    } else {
-        body["text"]["format"] =
-            json!({"type":"json_schema","name":"participation","strict":true,"schema":schema});
-    }
-    if config.request_profile.as_deref() == Some("qwen_non_thinking") {
-        body["chat_template_kwargs"] = json!({"enable_thinking":false});
-    }
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -150,3 +115,91 @@ pub(crate) async fn classify(
     };
     super::phase_answer(&text, phase)
 }
+
+fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Result<Value, Error> {
+    let connection = &config.connection;
+    let messages = vec![
+        crate::storage::input_message(
+            &connection.api,
+            "system",
+            match phase {
+                "intent" => include_str!("../../assets/fallback-intent-prompt.txt").trim_end(),
+                "permission" => {
+                    include_str!("../../assets/fallback-permission-prompt.txt").trim_end()
+                }
+                _ => super::PROMPT.trim_end(),
+            },
+        ),
+        crate::storage::input_message(&connection.api, "user", &serde_json::to_string(input)?),
+    ];
+    let (_, mut body) = if connection.api == "responses" {
+        (
+            "responses",
+            json!({"model":connection.model,"input":messages,"temperature":0,"stream":false,"store":false,"max_output_tokens":connection.max_output_tokens}),
+        )
+    } else {
+        (
+            "chat/completions",
+            json!({"model":connection.model,"messages":messages,"temperature":0,"stream":false,"max_tokens":connection.max_output_tokens}),
+        )
+    };
+    let schema = if phase == "intent" {
+        json!({"type":"object","properties":{"whole_group_question":{"type":"boolean"}},"required":["whole_group_question"],"additionalProperties":false})
+    } else {
+        super::schema()
+    };
+    if connection.api == "chat_completions"
+        || connection.responses_schema_format.as_deref() == Some("response_format")
+    {
+        body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"participation","strict":true,"schema":schema}});
+    } else {
+        body["text"]["format"] =
+            json!({"type":"json_schema","name":"participation","strict":true,"schema":schema});
+    }
+    if config.request_profile.as_deref() == Some("qwen_non_thinking") {
+        body["chat_template_kwargs"] = json!({"enable_thinking":false});
+    }
+    Ok(body)
+}
+
+fn budgeted_body(config: &ClassifierConnection, input: &str, phase: &str) -> Result<Value, Error> {
+    let mut input: Value = serde_json::from_str(input)?;
+    let required = input
+        .as_object_mut()
+        .and_then(|v| v.remove("_required_message_ids"))
+        .unwrap_or(json!([]));
+    loop {
+        let body = request_body(config, &input, phase)?;
+        match config.connection.budget().check_body(&body) {
+            Ok(()) => return Ok(body),
+            Err(error) => {
+                // Permission's real user transcript may contain an active silence
+                // constraint: never silently remove it. Intent has only mandatory input.
+                let mut removed = false;
+                if !matches!(phase, "intent" | "permission") {
+                    for key in ["recent_persona_events", "recent_group_transcript"] {
+                        if let Some(events) = input[key].as_array_mut()
+                            && let Some(index) = events.iter().position(|event| {
+                                !required
+                                    .as_array()
+                                    .is_some_and(|ids| ids.contains(&event["message_id"]))
+                            })
+                        {
+                            events.remove(index);
+                            removed = true;
+                            break;
+                        }
+                    }
+                }
+                if !removed {
+                    return Err(failed(&format!(
+                        "Participation mandatory input exceeds this classifier connection's budget before HTTP. Increase classifier context_len or reduce mandatory content. {error}"
+                    )));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod budget_tests;
