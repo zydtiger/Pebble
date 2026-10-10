@@ -1,6 +1,6 @@
 # Durable private-chat history
 
-v0.1.0 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.1.1 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. There is no group
 scheduler, classifier, memory writer, or work-agent integration.
 
@@ -12,10 +12,11 @@ scheduler, classifier, memory writer, or work-agent integration.
 | `conversations` | One canonical `direct` room per persona; existing IDs survive migration |
 | `messages` | Visible content, explicit user/persona sender, status, timestamp; unique `(conversation_id, sequence)` |
 | `persona_events` | Received user messages and accepted sent replies; unique `(persona_id, sequence)` and `(persona_id, message_id)` |
-| `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, and covered-event frontier |
+| `model_sessions` | One active context per persona; protocol/model/API-root binding, event start boundary, covered-event frontier, and frozen response schema (NULL for preserved legacy sessions) |
 | `model_items` | Frozen raw/zstd prefix/input/output JSON BLOBs with decoded length; unique `(session_id, sequence)`; optional producing call |
 | `model_item_events` | Explicit item/event links, including own outputs; indexes support reverse lookup |
-| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error and optional retry_of |
+| `persona_states` | Persona-wide current accepted state; independent of model session |
+| `model_calls` | Queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
 they do not reorder stored history. A message ID identifies the same bubble
@@ -56,9 +57,10 @@ send(persona, text)
   commit
   load C1's items from S ordered by sequence: P, I1
   live adapter (or demo) reads that stored request outside the transaction
-  checkpoint each text delta before notifying the UI
+  buffer candidate text privately; validate JSON/schema
+  regenerate invalid format/schema at most twice from the same frozen input/state
   completion transaction
-    finalize A1 + native output items O1…On
+    independently validate; finalize A1.reply + persona state + native output items O1…On
     sent event E2 + link each O1…On -> E2
     finalize C1 and advance contiguous event coverage
   commit, then notify completion
@@ -76,8 +78,7 @@ Chat Completions stores one native assistant message with supported
 with `input_text` content; accepted output stores every whole native reasoning
 and assistant message item separately, in provider order. IDs, encrypted state,
 and unknown fields are retained without reconstructing reasoning. All output
-items link to the same sent event in one transaction. Only visible text/refusal
-is rendered.
+items link to the same sent event in one transaction. Only validated `reply` is rendered; the full native JSON retains state and reasoning.
 
 The builder appends events without a representation in the active session.
 Received events later than this call's acceptance cutoff are excluded, even if
@@ -99,7 +100,7 @@ input estimate plus output reserve before HTTP. See [context and encoding](conte
 ## Failure and lifetime boundaries
 
 Acceptance and final publication are separate atomic transactions. A failure
-cannot publish half an output/event association. Delta checkpoints retain
+cannot publish half an output/event association. Structured candidate deltas are not checkpointed; legacy plaintext contexts retain
 visible partial text; only successful completion creates native model
 items and a sent event. Stopped/failed/interrupted bubbles are explicit in the
 UI and do not masquerade as accepted assistant context. The accepted user
@@ -116,7 +117,7 @@ The draft is cleared after Rust accepts it, and callback IDs prevent updating
 the wrong visible message. Character switching keeps each room
 stream and unsent draft alive; updates reconcile only the matching room.
 Dropping a handle or disconnecting its observer cancels the worker. The UI
-reloads the final transcript from Rust. No retry or resubmission is automatic. Latest-reply retry adds a new reply/call
+reloads the final transcript from Rust. No failed-call resubmission is automatic; only completed invalid structured candidates get bounded format repair. Latest-reply retry adds a new reply/call
 referencing retry_of and the existing user/receipt. In the unchanged active
 context it reuses the nearest frozen ancestor's input/event cutoff. An
 unactivated retry admits that receipt once; explicit retry after a fresh or
@@ -142,7 +143,10 @@ runtime connection. Schema 4 upgrades to 5 by rebuilding model_items to allow
 json/zstd with decoded_length, and adding a session context_reason for persistent
 manual-boundary notices. Existing raw bytes, IDs, and item/event links remain
 unchanged; migration does not compress old payloads. Schema 5 upgrades to 6 by adding nullable model_calls.retry_of with a self-reference;
-existing calls stay unchanged. All eight tables remain. Existing IDs, records, frozen bytes, and editable files
+existing calls stay unchanged. Schema 6 upgrades to 7 with persona_states, model_sessions.response_schema, and
+model_calls.state_before/validation_errors. Existing sessions keep a NULL contract
+and remain active until an explicit fresh/connection boundary; their bytes are
+never reinterpreted. See [state and upgrade rules](state.md). All nine tables remain. Existing IDs, records, frozen bytes, and editable files
 remain intact. A database
 from a newer app is rejected rather than downgraded. The database uses WAL,
 foreign keys, and short transactions; generation waits do not hold SQL locks.

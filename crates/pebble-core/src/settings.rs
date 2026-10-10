@@ -1,4 +1,4 @@
-mod files;
+pub(crate) mod files;
 use crate::{Error, config};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, value};
@@ -159,6 +159,12 @@ pub(crate) fn save(
         &mut doc["defaults"]
     };
     if update.chat.enabled {
+        let leaving_responses = table
+            .get("chat")
+            .and_then(|chat| chat.get("api"))
+            .and_then(Item::as_str)
+            == Some("responses")
+            && update.chat.api == "chat_completions";
         for (key, text) in [
             ("model", update.chat.model.as_str()),
             ("base_url", update.chat.base_url.as_str()),
@@ -167,6 +173,11 @@ pub(crate) fn save(
             put(&mut table["chat"], key, text);
         }
         let chat = &mut table["chat"];
+        if leaving_responses {
+            chat.as_table_like_mut()
+                .unwrap()
+                .remove("responses_schema_format");
+        }
         match &update.credential {
             CredentialChange::Keep => {}
             CredentialChange::Replace(key) => {

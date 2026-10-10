@@ -66,7 +66,7 @@ fn candidate_validation_preserves_unknown_fields_and_rejects_dependent_invalid_b
     let (root, core, id) = isolated();
     let persona = core.workspace().unwrap().personas.remove(0);
     let path = std::path::Path::new(&persona.directory).join("config.toml");
-    fs::write(&path,"# character comment\n[persona]\ndisplay_name='Mira' # name comment\nsubtitle='Here'\nunknown='retained'\n[context]\nmax_output_tokens=5000\n[custom]\nopaque='keep me'\n").unwrap();
+    fs::write(&path,"# character comment\n[persona]\ndisplay_name='Mira' # name comment\nsubtitle='Here'\nunknown='retained'\n[context]\nmax_output_tokens=5000\n[custom]\nopaque='keep me'\n[response.initial_state]\naffinity_user=20\nmood='calm'\n").unwrap();
     let before = fs::read(root.path().join("config.toml")).unwrap();
     let mut app = update(&core, None);
     app.context_window_tokens = Some(4500);
@@ -140,4 +140,78 @@ fn failed_staging_changes_no_files_and_busy_rules_only_block_affected_scope() {
             .to_string_lossy()
             .starts_with(".pebble-save-")
     }));
+}
+
+fn switch_responses_settings_to_chat_completions(persona_override: bool, dialect: &str) {
+    let (root, core, id) = isolated();
+    let scope = persona_override.then_some(id.as_str());
+    let path = if persona_override {
+        root.path().join("personas").join(&id).join("config.toml")
+    } else {
+        root.path().join("config.toml")
+    };
+    let original = fs::read_to_string(&path).unwrap();
+    let header = if persona_override {
+        "chat"
+    } else {
+        "defaults.chat"
+    };
+    fs::write(&path, format!("{original}\n[{header}]\n# preserve connection comment\nmodel='synthetic-model'\nbase_url='http://localhost:9/v1'\napi='responses'\nresponses_schema_format='{dialect}'\napi_key='synthetic-secret' # preserve credential comment\ncustom_connection='keep connection'\n\n[custom]\nopaque='keep unrelated'\n")).unwrap();
+
+    // Saving a Responses connection must retain the explicitly selected dialect.
+    let mut settings = update(&core, scope);
+    core.save_settings(scope, &settings).unwrap();
+    let document: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let chat = if persona_override {
+        &document["chat"]
+    } else {
+        &document["defaults"]["chat"]
+    };
+    assert_eq!(chat["responses_schema_format"].as_str(), Some(dialect));
+
+    // The native form changes only the protocol, with CredentialChange::Keep.
+    settings.chat.api = "chat_completions".into();
+    core.save_settings(scope, &settings).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    let document: toml::Value = toml::from_str(&saved).unwrap();
+    let chat = if persona_override {
+        &document["chat"]
+    } else {
+        &document["defaults"]["chat"]
+    };
+    assert_eq!(chat["api"].as_str(), Some("chat_completions"));
+    assert!(chat.get("responses_schema_format").is_none());
+    assert_eq!(chat["api_key"].as_str(), Some("synthetic-secret"));
+    assert_eq!(chat["model"].as_str(), Some("synthetic-model"));
+    assert_eq!(chat["base_url"].as_str(), Some("http://localhost:9/v1"));
+    assert_eq!(chat["custom_connection"].as_str(), Some("keep connection"));
+    assert_eq!(
+        document["custom"]["opaque"].as_str(),
+        Some("keep unrelated")
+    );
+    assert!(saved.contains("# preserve connection comment"));
+    assert!(saved.contains("# preserve credential comment"));
+    if persona_override {
+        assert_eq!(
+            document["response"]["initial_state"]["affinity_user"].as_integer(),
+            Some(20)
+        );
+    }
+}
+
+#[test]
+fn app_defaults_switch_from_responses_text_format() {
+    switch_responses_settings_to_chat_completions(false, "text_format");
+}
+#[test]
+fn app_defaults_switch_from_responses_response_format() {
+    switch_responses_settings_to_chat_completions(false, "response_format");
+}
+#[test]
+fn persona_override_switch_from_responses_text_format() {
+    switch_responses_settings_to_chat_completions(true, "text_format");
+}
+#[test]
+fn persona_override_switch_from_responses_response_format() {
+    switch_responses_settings_to_chat_completions(true, "response_format");
 }

@@ -29,18 +29,27 @@ impl Database {
                         [&session_id], |row| row.get::<_, bool>(0))? {
             return Err(Error::Busy);
         }
+        let schema: Option<String> = tx.query_row(
+            "SELECT response_schema FROM model_sessions WHERE id=?1",
+            [&session_id],
+            |r| r.get(0),
+        )?;
+        let state = schema
+            .as_ref()
+            .map(|_| super::state::current(&tx, &persona.id))
+            .transpose()?;
         if let Some(original) = &pending.retry_of {
-            let frozen: Option<(String, i64, i64)> = tx.query_row(
-                "WITH RECURSIVE attempts(id,retry_of,session_id,input_last_sequence,event_cutoff,depth) AS (
-                    SELECT id,retry_of,session_id,input_last_sequence,event_cutoff,0 FROM model_calls WHERE id=?1
-                    UNION ALL SELECT c.id,c.retry_of,c.session_id,c.input_last_sequence,c.event_cutoff,a.depth+1
+            let frozen: Option<(String, i64, i64, Option<String>)> = tx.query_row(
+                "WITH RECURSIVE attempts(id,retry_of,session_id,input_last_sequence,event_cutoff,state_before,depth) AS (
+                    SELECT id,retry_of,session_id,input_last_sequence,event_cutoff,state_before,0 FROM model_calls WHERE id=?1
+                    UNION ALL SELECT c.id,c.retry_of,c.session_id,c.input_last_sequence,c.event_cutoff,c.state_before,a.depth+1
                     FROM model_calls c JOIN attempts a ON c.id=a.retry_of)
-                 SELECT session_id,input_last_sequence,event_cutoff FROM attempts WHERE session_id IS NOT NULL AND input_last_sequence IS NOT NULL ORDER BY depth LIMIT 1",
-                [original], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-            if let Some((source, last, cutoff)) = frozen
+                 SELECT session_id,input_last_sequence,event_cutoff,state_before FROM attempts WHERE session_id IS NOT NULL AND input_last_sequence IS NOT NULL ORDER BY depth LIMIT 1",
+                [original], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+            if let Some((source, last, cutoff, state_before)) = frozen
                 && source == session_id
             {
-                tx.execute("UPDATE model_calls SET session_id=?2,input_last_sequence=?3,event_cutoff=?4,status='streaming' WHERE id=?1 AND status='queued'",params![pending.call_id,session_id,last,cutoff])?;
+                tx.execute("UPDATE model_calls SET session_id=?2,input_last_sequence=?3,event_cutoff=?4,state_before=?5,status='streaming' WHERE id=?1 AND status='queued'",params![pending.call_id,session_id,last,cutoff,state_before])?;
                 let mut turn = pending.clone();
                 turn.session_id = session_id;
                 turn.reply = message(&tx, &pending.reply.id)?;
@@ -111,8 +120,18 @@ impl Database {
             "UPDATE model_calls SET session_id = ?2, input_last_sequence = ?3, event_cutoff = ?4, status = 'streaming' WHERE id = ?1 AND status = 'queued'",
             params![call_id, session_id, input_sequence, cutoff],
         )?;
-        let envelope = json!({"events":events, "reply_request":{
+        tx.execute(
+            "UPDATE model_calls SET state_before=?2 WHERE id=?1",
+            params![
+                call_id,
+                state.as_ref().map(serde_json::to_string).transpose()?
+            ],
+        )?;
+        let mut envelope = json!({"events":events, "reply_request":{
             "conversation_id":persona.conversation_id, "trigger_message_id":user_id}});
+        if let Some(state) = state {
+            envelope["current_state"] = state;
+        }
         let item = insert_item(
             &tx,
             &session_id,
@@ -156,12 +175,60 @@ impl Database {
     ) -> Result<Message, Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
+        let saved = message(&tx, &turn.reply.id)?;
+        if saved.status != MessageStatus::Streaming {
+            return Ok(saved);
+        }
+        let schema: Option<String> = tx.query_row(
+            "SELECT response_schema FROM model_sessions WHERE id=?1",
+            [&turn.session_id],
+            |r| r.get(0),
+        )?;
+        let accepted_state = if status == MessageStatus::Complete {
+            if let Some(schema) = schema {
+                let schema: Value = serde_json::from_str(&schema)?;
+                let output = native.ok_or_else(|| {
+                    Error::Generation("Structured completion requires native output.".into())
+                })?;
+                let text = crate::live::output_text(output)?;
+                let (reply, state) =
+                    crate::structured::candidate(&schema, &text).map_err(Error::Generation)?;
+                if reply != content {
+                    return Err(Error::Generation(
+                        "Visible reply differs from validated output.".into(),
+                    ));
+                }
+                let expected: String = tx.query_row(
+                    "SELECT state_before FROM model_calls WHERE id=?1",
+                    [&turn.call_id],
+                    |r| r.get(0),
+                )?;
+                if super::state::current(&tx, &turn.persona_id)?
+                    != serde_json::from_str::<Value>(&expected)?
+                {
+                    return Err(Error::Generation(
+                        "Accepted state changed since this turn was frozen.".into(),
+                    ));
+                }
+                Some(state)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let changed = tx.execute(
             "UPDATE messages SET content = ?2, status = ?3 WHERE id = ?1 AND status = 'streaming'",
             params![turn.reply.id, content, status.as_str()],
         )?;
         if changed > 0 {
             if status == MessageStatus::Complete {
+                if let Some(state) = accepted_state {
+                    tx.execute(
+                        "UPDATE persona_states SET current_state=?2 WHERE persona_id=?1",
+                        params![turn.persona_id, serde_json::to_string(&state)?],
+                    )?;
+                }
                 let fallback = [json!({"role":"assistant", "content":content})];
                 let outputs = native.unwrap_or(&fallback);
                 let event = insert_event_for(
@@ -293,7 +360,7 @@ fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn input_message(protocol: &str, role: &str, content: &str) -> Value {
+pub(crate) fn input_message(protocol: &str, role: &str, content: &str) -> Value {
     if protocol == "responses" {
         json!({"type":"message", "role":role, "content":[{"type":"input_text", "text":content}]})
     } else {

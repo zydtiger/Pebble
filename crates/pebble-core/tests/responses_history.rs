@@ -25,14 +25,8 @@ fn native_multiple_items_and_opaque_state_replay_after_restart_without_rewriting
         "{}",
         events.last().unwrap().text
     );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e.kind == ChatEventKind::TextDelta)
-            .map(|e| e.text.as_str())
-            .collect::<String>(),
-        "你好 🪨"
-    );
+    assert!(events.iter().all(|e| e.kind != ChatEventKind::TextDelta));
+    assert_eq!(events.last().unwrap().messages[0].content, "你好 🪨");
     let first = core.model_request(&task.id).unwrap();
     let (headers, request) = server.requests.recv().unwrap();
     assert!(headers.starts_with("POST /v1/responses HTTP/1.1"));
@@ -138,7 +132,7 @@ fn multi_item_publication_rolls_back_if_later_native_item_fails() {
     let (_task, rx) = start(&core, &id, "publication failure");
     assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Failed);
     let saved = core.messages(&id).unwrap();
-    assert_eq!(saved[1].content, "visible partial");
+    assert!(saved[1].content.is_empty());
     assert_eq!(saved[1].status, MessageStatus::Failed);
     assert_eq!(
         db.query_row(

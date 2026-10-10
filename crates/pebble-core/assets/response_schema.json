@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "state"],
+  "properties": {
+    "reply": { "type": "string", "minLength": 1, "description": "The only text shown to the user." },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["affinity_user", "mood"],
+      "properties": {
+        "affinity_user": {
+          "type": "integer", "minimum": 0, "maximum": 100,
+          "description": "Affinity toward the local user, initially 20. 0 is distant, 50 is familiar, 100 is deeply close. Change only for meaningful relational interactions; ordinary messages need no increase. Keep unchanged when no relevant interaction occurs. This range is not a mechanical per-turn transition limit."
+        },
+        "mood": { "type": "string", "minLength": 1, "maxLength": 80, "description": "A short description of the persona's present mood, initially calm; not a durable memory archive." }
+      }
+    }
+  }
+}

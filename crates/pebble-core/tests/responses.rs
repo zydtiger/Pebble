@@ -3,11 +3,11 @@ mod responses_support;
 use live_support::{Plan, Server, configure, isolated, start, stream, terminal};
 use pebble_core::{ChatEventKind, MessageStatus};
 use responses_support::{completed, event, items, success};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{Duration, Instant};
 
 #[test]
-fn non_success_or_inconsistent_streams_preserve_partial_text_without_native_output() {
+fn non_success_or_inconsistent_streams_publish_no_candidate_text_or_native_output() {
     let partial = event(
         "response.output_text.delta",
         json!({"output_index":1,"content_index":0,"delta":"partial"}),
@@ -78,9 +78,8 @@ fn non_success_or_inconsistent_streams_preserve_partial_text_without_native_outp
         assert!(last.text.contains(expected), "{}", last.text);
         assert!(!last.text.contains("test-secret"));
         assert_eq!(core.messages(&id).unwrap()[1].status, MessageStatus::Failed);
-        if events.iter().any(|e| e.kind == ChatEventKind::TextDelta) {
-            assert_eq!(core.messages(&id).unwrap()[1].content, "partial");
-        }
+        assert!(events.iter().all(|e| e.kind != ChatEventKind::TextDelta));
+        assert!(core.messages(&id).unwrap()[1].content.is_empty());
         let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
         assert_eq!(
             db.query_row(
@@ -104,7 +103,7 @@ fn non_success_or_inconsistent_streams_preserve_partial_text_without_native_outp
 }
 
 #[test]
-fn refusal_is_visible_and_native_refusal_is_retained() {
+fn refusal_is_terminal_without_format_repair_state_or_native_acceptance() {
     for streamed in [true, false] {
         let output = vec![
             json!({"id":"refusal_test","type":"message","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"I cannot help with that.","native_extension":7}]}),
@@ -125,17 +124,23 @@ fn refusal_is_visible_and_native_refusal_is_retained() {
         let (root, core, id) = isolated();
         configure(root.path(), &server.url, "mock", "responses", "");
         let (_task, rx) = start(&core, &id, "synthetic refusal prompt");
-        assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
-        assert_eq!(
-            core.messages(&id).unwrap()[1].content,
-            "I cannot help with that."
-        );
+        let result = terminal(&rx);
+        assert_eq!(result.last().unwrap().kind, ChatEventKind::Failed);
+        assert!(result.last().unwrap().text.contains("refused"));
+        assert!(core.messages(&id).unwrap()[1].content.is_empty());
         let (task, rx) = start(&core, &id, "next input");
         terminal(&rx);
         let request = core.model_request(&task.id).unwrap();
+        assert_eq!(request.items.len(), 3);
+        let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
         assert_eq!(
-            serde_json::from_slice::<Value>(&request.items[2].payload).unwrap(),
-            output[0]
+            db.query_row(
+                "SELECT validation_errors FROM model_calls ORDER BY rowid LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "[]"
         );
     }
 }
@@ -158,12 +163,9 @@ fn responses_cancels_before_headers_and_during_idle_stream_without_auth() {
             .unwrap();
         assert!(!headers_raw.to_lowercase().contains("authorization:"));
         if !headers {
-            loop {
-                if rx.recv_timeout(Duration::from_secs(2)).unwrap().kind == ChatEventKind::TextDelta
-                {
-                    break;
-                }
-            }
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(core.messages(&id).unwrap()[1].content.is_empty());
+            assert!(rx.try_iter().all(|e| e.kind != ChatEventKind::TextDelta));
         }
         let before = Instant::now();
         task.cancel();

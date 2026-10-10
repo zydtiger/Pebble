@@ -54,9 +54,48 @@ token usage. These limits are explicit parts of the first local milestone.
 The local app uses ad-hoc signing and Apple Silicon. Wider distribution and
 minimum-OS testing remain future work.
 
-## After v0.1.0
+## v0.1.1–v0.2.0 group-chat delivery
 
-Group chats and participation classifiers, explicit mentions, session
-compaction, automated memory, Codex delegation, attachments, proactive
-messages, cold archives, and cross-device sync remain deferred. Do not create
-empty tables or dormant services for them during the private-chat milestones.
+v0.1.1 is implemented. Later stages remain planned; each leaves a runnable
+increment and receives focused review before the next stage.
+
+| Stage | User-visible result and exit boundary |
+| --- | --- |
+| **v0.1.1 — Structured replies and state** | Private replies validate `reply` + complete persona state, with typing until atomic acceptance, a frozen schema/semantic contract, bounded format repair, and explicit legacy-context upgrade. Both protocols preserve opaque native replay. |
+| **v0.1.2 — State and schema controls** | Inspect current state, edit schema/initial values, and deliberately reset state. Schema changes require an explicit context boundary and compatible-state/reset decision; preserve old contracts. Initially affinity names the user as subject. |
+| **v0.1.3 — Groups with manual responses** | Create/name groups of existing characters, switch rooms, and `@` stable member IDs to request replies. Membership intervals and durable public-message fan-out preserve private → group → private continuity; silent members observe. One session/state/queue belongs to each persona across rooms. |
+| **v0.1.4 — Selective participation** | App-default/per-persona classifier connections decide separately on user messages. Supply persona-scoped room/state/memory context; `@` bypasses inference. Classifier reads change neither chat history coverage nor state. Failures remain visible and manual mentions usable. |
+| **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. |
+| **v0.1.6 — Reliable daily group use** | Add/remove/rejoin members; room-scoped Stop/Cancel/Retry, per-speaker pending/errors, drafts, and restart recovery. No duplicate acceptance/fan-out/state change or silent chain resume. Retry eligibility spans the persona's whole cross-room history. |
+| **v0.2.0 — Group-chat milestone** | Consolidate private + group chat, persistent personas, selective participation, state lifetime, membership visibility, scheduling limits, and supported provider behavior; no new subsystem at this final step. |
+
+### Group boundaries and completion scenarios
+
+Joining/rejoining observes future public messages only; leaving stops later
+observations without erasing prior knowledge. Silent members receive eligible
+public events without a model call or state mutation. Nonmembers receive no
+copy, and one persona's private exchange is never fanned out to another.
+A character may use its own private knowledge publicly; disclosure instructions
+cannot guarantee that a shared-context model will never reveal private facts.
+Mentions guarantee scheduling while still honoring validation, cancellation,
+membership, and provider errors. Bot-to-bot triggers begin only in v0.1.5 and
+remain finite and stoppable.
+
+Completion must demonstrate:
+
+1. Mira uses a private fact in her group context while Kai receives no copy of
+   Mira's private exchange.
+2. A silent Kai later sees the public messages he observed, without duplicating
+   his prior native outputs.
+3. One persona shared by private chat and two groups serializes calls/state,
+   with every reply returning to its immutable originating room.
+4. Mentions, selective silence, whole-group fallback, bounded character chains,
+   and interruption by a new user message work together.
+5. Membership changes, failure/cancel, and restart produce no backfill,
+   duplicate acceptance, private-state fan-out, or silent automatic resend.
+
+After v0.2.0: automatic memory extraction/retrieval/writing, session compaction,
+Codex delegation, attachments, proactive conversations outside a user-started
+group round, separate roleplay worlds, richer relationships, search/cold
+archives/exports/deletion, sync, notarization, and broader platform validation
+remain separately scoped. No classifier or group calls are part of v0.1.1.

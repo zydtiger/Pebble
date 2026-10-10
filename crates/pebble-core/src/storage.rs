@@ -3,7 +3,9 @@ mod contexts;
 mod items;
 mod jobs;
 mod retry;
+mod state;
 mod turns;
+pub(crate) use turns::input_message;
 
 use crate::{Error, Message, MessageStatus, Persona, file_error};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -42,7 +44,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 6 {
+        if version > 7 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -78,6 +80,16 @@ impl Database {
         if version < 6 {
             tx.execute_batch("ALTER TABLE model_calls ADD COLUMN retry_of TEXT REFERENCES model_calls(id); PRAGMA user_version=6;")?;
         }
+        if version < 7 {
+            tx.execute_batch(
+                "CREATE TABLE persona_states (
+                persona_id TEXT PRIMARY KEY REFERENCES personas(id), current_state TEXT NOT NULL);
+                ALTER TABLE model_sessions ADD COLUMN response_schema TEXT;
+                ALTER TABLE model_calls ADD COLUMN state_before TEXT;
+                ALTER TABLE model_calls ADD COLUMN validation_errors TEXT NOT NULL DEFAULT '[]';
+                PRAGMA user_version=7;",
+            )?;
+        }
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
         tx.execute_batch(
             "UPDATE messages SET status = 'interrupted' WHERE status = 'streaming';
@@ -109,6 +121,9 @@ impl Database {
                  ON CONFLICT(persona_id) DO NOTHING",
                 params![Uuid::new_v4().to_string(), persona.id],
             )?;
+            super::structured::validate_state(&persona.response_schema, &persona.initial_state)
+                .map_err(Error::Generation)?;
+            tx.execute("INSERT INTO persona_states(persona_id,current_state) VALUES (?1,?2) ON CONFLICT(persona_id) DO NOTHING", params![persona.id, serde_json::to_string(&persona.initial_state)?])?;
             let (protocol, model, base_url) = super::connection::identity(persona.chat.as_ref());
             persona.connection_label = match persona.chat.as_ref() {
                 None => "Local demo · No model connected".into(),
@@ -117,14 +132,16 @@ impl Database {
                 }
                 Some(chat) => format!("Live · {}", chat.model),
             };
-            let prior: Option<(String, String, String, i64, String)> = tx.query_row(
-                "SELECT protocol, model, base_url, event_start_sequence, context_reason FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
-                [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+            let prior: Option<(String, String, String, i64, String, Option<String>)> = tx.query_row(
+                "SELECT protocol, model, base_url, event_start_sequence, context_reason, response_schema FROM model_sessions WHERE persona_id = ?1 AND status = 'active'",
+                [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
                 .optional()?;
             persona.context_notice = match prior {
-                Some((_, _, _, _, reason)) if reason == "manual" =>
+                Some((_, _, _, _, _, None)) =>
+                    "Legacy model context: structured replies and persistent state require Start fresh context. Existing context stays unchanged until then.".into(),
+                Some((_, _, _, _, reason, _)) if reason == "manual" =>
                     "Fresh model context: earlier messages stay visible and are excluded from new requests.".into(),
-                Some((p, m, b, start, _)) if p != protocol || m != model || b != base_url || start > 0 =>
+                Some((p, m, b, start, _, _)) if p != protocol || m != model || b != base_url || start > 0 =>
                     "Connection changed: earlier messages stay visible; this model uses a fresh context.".into(),
                 _ => String::new(),
             };

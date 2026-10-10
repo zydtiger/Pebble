@@ -22,6 +22,8 @@ pub struct Persona {
     pub memory: String,
     pub chat: Option<ChatConnection>,
     pub context: crate::ContextBudget,
+    pub response_schema: serde_json::Value,
+    pub initial_state: serde_json::Value,
     pub connection_label: String,
     pub context_notice: String,
 }
@@ -33,6 +35,8 @@ pub struct ChatConnection {
     pub api: String,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+    /// Responses standard text.format or the explicitly selected llama.cpp extension.
+    pub responses_schema_format: Option<String>,
 }
 
 impl std::fmt::Debug for ChatConnection {
@@ -44,6 +48,7 @@ impl std::fmt::Debug for ChatConnection {
             .field("api", &self.api)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("api_key_env", &self.api_key_env)
+            .field("responses_schema_format", &self.responses_schema_format)
             .finish()
     }
 }
@@ -64,9 +69,15 @@ struct AppConfig {
 #[derive(Deserialize)]
 struct PersonaConfig {
     persona: Identity,
+    response: ResponseConfig,
     #[serde(default)]
     context: crate::context::Overrides,
     chat: Option<ChatConnection>,
+}
+
+#[derive(Deserialize)]
+struct ResponseConfig {
+    initial_state: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +137,18 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
     if !matches!(connection.api.as_str(), "chat_completions" | "responses") {
         return Err(invalid("chat.api must be chat_completions or responses"));
     }
+    if connection
+        .responses_schema_format
+        .as_ref()
+        .is_some_and(|format| {
+            connection.api != "responses"
+                || !matches!(format.as_str(), "text_format" | "response_format")
+        })
+    {
+        return Err(invalid(
+            "chat.responses_schema_format applies only to responses and must be text_format or response_format",
+        ));
+    }
     if connection.api_key_env.as_ref().is_some_and(|name| {
         name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     }) {
@@ -169,6 +192,10 @@ pub(crate) fn initialize(root: &Path) -> Result<(), Error> {
         (
             persona.join("config.toml"),
             include_str!("../assets/persona.toml"),
+        ),
+        (
+            persona.join("response_schema.json"),
+            crate::structured::DEFAULT_SCHEMA,
         ),
         (persona.join("SOUL.md"), include_str!("../assets/SOUL.md")),
         (
@@ -251,6 +278,11 @@ pub(crate) fn load_candidate(
             context_notice: String::new(),
             chat: config.chat.or_else(|| app.defaults.chat.clone()),
             context: config.context.apply(default_context, &config_path)?,
+            response_schema: crate::structured::load(
+                &path.join("response_schema.json"),
+                &config.response.initial_state,
+            )?,
+            initial_state: config.response.initial_state,
         });
     }
     personas.sort_by(|a, b| a.display_name.cmp(&b.display_name).then(a.id.cmp(&b.id)));

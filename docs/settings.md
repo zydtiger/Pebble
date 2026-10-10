@@ -66,3 +66,15 @@ Startup marks retained queued/active calls interrupted. The transcript exposes
 saved failure details and current retry eligibility after reopen. Nothing is
 resent automatically. Repair settings or choose a fresh context deliberately,
 then retry. The native UI keeps earlier attempts and unsent room drafts intact.
+
+
+## v0.1.1 state contract
+
+Character config also carries explicit `[response.initial_state]` and its
+separate `response_schema.json` defines the response contract. Existing settings
+saves preserve those fields/files. Structured contexts show typing until a
+validated atomic acceptance; failed attempts save errors but no candidate text.
+Legacy contexts retain their old streaming behavior until confirmed fresh
+context. Schema/state UI and deliberate reset are planned for v0.1.2; see
+[state lifetime and upgrade rules](state.md). The Responses schema capability
+selector is currently an advanced TOML field described in [providers](providers.md).

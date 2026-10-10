@@ -6,7 +6,13 @@ pub(super) fn event(kind: &str, mut body: Value) -> String {
     body["type"] = kind.into();
     format!("event: {kind}\r\ndata: {body}\r\n\r\n")
 }
+pub(super) fn structured(text: &str) -> String {
+    json!({"reply":text,"state":{"affinity_user":20,"mood":"calm"}}).to_string()
+}
 pub(super) fn items(text: &str) -> Vec<Value> {
+    raw_items(&structured(text))
+}
+pub(super) fn raw_items(text: &str) -> Vec<Value> {
     vec![
         json!({"id":"rs_test", "type":"reasoning", "summary":[], "content":[{"type":"reasoning_text","text":"hidden synthetic reasoning"}], "encrypted_content":"sealed-test-state", "unknown_reasoning_field":{"opaque":[1,"retained",null]}}),
         json!({"id":"msg_test", "type":"message", "role":"assistant", "status":"completed", "content":[{"type":"output_text","text":text,"annotations":[],"unknown_text_field":"keep"}], "unknown_message_field":{"nested":true}}),
@@ -19,7 +25,10 @@ pub(super) fn completed(items: &[Value]) -> String {
     )
 }
 pub(super) fn success(text: &str) -> String {
-    let final_items = items(text);
+    candidate(&structured(text))
+}
+pub(super) fn candidate(text: &str) -> String {
+    let final_items = raw_items(text);
     format!(
         "{}{}{}{}{}{}",
         event(

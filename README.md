@@ -6,9 +6,9 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.1.0 is the first local private-chat milestone.** Create independent
+**v0.1.1 adds structured replies and durable character state to the local private-chat baseline.** Create independent
 characters, configure their models, and continue saved conversations after
-restart. Native settings edit app defaults and character files. Streaming,
+restart. Native settings edit app defaults and character files. Validated replies,
 per-character queues, cancellation, and explicit retry keep each private room
 independent. Chat Completions/Responses retain native history with bounded
 context budgets and lossless item compression.
@@ -64,7 +64,7 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
    survive. The next request reuses the saved prefix and completed native
    assistant output. The unconfigured demo quotes the preceding user message.
 
-Cancelled replies retain their partial text with a **Stopped** label. An abrupt
+New contexts show **Typing…** until the whole structured response validates, then display only its `reply`. Accepted `state` persists per character in SQLite. Cancelled replies show a **Stopped** label without candidate text. Preserved legacy contexts retain their earlier partial-stream behavior; choose **Start fresh context** to activate structured replies. See [state and upgrade rules](docs/state.md). An abrupt
 exit leaves an **Interrupted** reply after restart; incomplete outputs are not
 accepted as assistant context. Empty drafts are not sent.
 
@@ -83,14 +83,15 @@ files. Existing files are never overwritten by the seed operation.
 ├── personas/<persona-uuid>/
 │   ├── config.toml
 │   ├── SOUL.md
-│   └── MEMORY.md
+│   ├── MEMORY.md
+│   └── response_schema.json
 └── data/
-    ├── app.sqlite        # eight private-chat/history tables
+    ├── app.sqlite        # nine private-chat/history/state tables
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 5 are upgraded transactionally to 6, preserving character, room, message,
+through 6 are upgraded transactionally to 7, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -125,12 +126,12 @@ starts; a missing variable fails the reply. Redirects are disabled and the
 client honors environment proxy settings. Connection/header/idle waits are
 bounded at 10/45/45 seconds, with a 180-second request timeout and a 4096-token
 default output budget, configurable below. Reasoning-only, truncated, filtered, or budget-exhausted outputs
-are failed replies; visible partial text stays saved. Provider reasoning stays
+are failed replies; unvalidated candidate text is not shown or saved. Provider reasoning stays
 in native model history and is never rendered as a message. Responses sends
 `store = false` and requests encrypted reasoning state. Completed native output
 items, including IDs and opaque fields, are stored and replayed in order with
 the full input history; no `previous_response_id` is sent. Tool output is
-unsupported and fails explicitly. Native refusal text is displayed and retained.
+unsupported and fails explicitly. In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
 
 Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events
@@ -153,7 +154,7 @@ Settings stay in local TOML/Markdown files; advanced folder access remains
 available. SOUL/MEMORY edits leave an existing frozen prefix intact until you
 start a fresh context. Invalid manual TOML can require opening the files to repair.
 
-A failed reply retains its error and any partial text after restart. **Retry**
+A failed structured reply retains its error after restart; legacy attempts retain any earlier partial text. **Retry**
 appears only on that character's latest failed, stopped, or interrupted reply,
 when it has no outstanding work. Retry creates a new reply/call and reuses the
 original user message; earlier attempts stay visible. In the same compatible
@@ -260,7 +261,7 @@ cargo test -p pebble-core --test live_endpoint opt_in_live_two_turns_restart_and
 ```
 
 For Responses, use the same environment variables and replace the test name
-with `opt_in_live_responses_two_turns_restart_and_cancel`.
+with `opt_in_live_responses_two_turns_restart_and_cancel`. For llama.cpp Responses, also set `PEBBLE_LIVE_RESPONSES_SCHEMA_FORMAT=response_format`; standard Responses uses `text.format` by default. See [provider contracts](docs/providers.md).
 
 `PEBBLE_LIVE_API_KEY` optionally supplies a test credential. The test does not
 read the app's actual character files or chat history and prints no reasoning

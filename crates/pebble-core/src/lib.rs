@@ -8,6 +8,7 @@ mod live;
 mod personas;
 mod settings;
 mod storage;
+mod structured;
 
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatTask};
 pub use config::{ChatConnection, Persona, Workspace};
@@ -67,8 +68,9 @@ impl Core {
     pub fn open(data_root: impl Into<PathBuf>) -> Result<Self, Error> {
         let data_root = data_root.into();
         config::initialize(&data_root)?;
-        config::load(&data_root)?;
         let database = Arc::new(storage::Database::open(&data_root)?);
+        database.upgrade_persona_contracts(&data_root)?;
+        config::load(&data_root)?;
         let core = Self {
             data_root,
             database,

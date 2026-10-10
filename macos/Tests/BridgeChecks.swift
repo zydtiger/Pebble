@@ -32,7 +32,7 @@ struct BridgeChecks {
         reopened.closeChat()
         try await exerciseConcurrentRooms(root.appendingPathComponent("concurrent"))
         try await exerciseDailySettingsAndRetry(root.appendingPathComponent("daily"))
-        print("Swift 6 FFI checks passed: durable IDs/history, native records, Unicode deltas, cancellation, listener release, UI restart and close lifecycle.")
+        print("Swift 6 FFI checks passed: durable IDs/history, native records, validated Unicode replies, cancellation, listener release, UI restart and close lifecycle.")
     }
 
     @MainActor
@@ -131,10 +131,11 @@ struct BridgeChecks {
             try require(update.runId == runID && update.conversationId == persona.conversationId, "Wrong call or room")
             try require(update.messageId == acceptedIDs[1], "Delta changed message identity")
             sequence += 1
-            if update.kind == .textDelta { text += update.text }
+            try require(update.kind != .textDelta, "Structured candidate leaked before validation")
             if update.kind == .completed {
                 terminal = true
-                try require(update.messages[0].content == text, "Final durable content differs from streamed text")
+                text = update.messages[0].content
+                try require(!text.contains("affinity_user") && !text.contains("\"reply\""), "Structured envelope leaked into the bubble")
             }
         }
         try require(terminal && text.contains("本地演示"), "Unicode demo stream did not complete")

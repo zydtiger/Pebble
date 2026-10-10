@@ -262,40 +262,51 @@ fn run(
     let mut status = MessageStatus::Complete;
     let mut failure = None;
     let mut native = None;
-    let mut checkpoint = |delta: &str| -> Result<(), Error> {
-        if !connected || control.is_cancelled() {
-            control.cancel();
-            return Err(Error::Generation("Cancelled".into()));
-        }
-        let next = format!("{content}{delta}");
-        db.checkpoint(&turn, &next)?;
-        content = next;
-        sequence += 1;
-        connected = emit(sequence, ChatEventKind::TextDelta, delta.into(), Vec::new()).is_ok();
-        if !connected {
-            control.cancel();
-        }
-        Ok(())
-    };
-    let generated = db.request(&turn.call_id).and_then(|request| {
-        budget.check(&request)?;
-        if let Some(chat) = chat {
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
-                .map_err(|_| Error::Generation("Could not initialize the model worker.".into()))?;
-            runtime.block_on(async {
-                tokio::select! {
-                    biased;
-                    _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
-                    result = crate::live::generate(&chat, &request, budget.max_output_tokens, control.clone(), &mut checkpoint) => result.map(Some),
-                }
-            })
+    let request = db.request(&turn.call_id);
+    let structured = request.as_ref().is_ok_and(|r| r.response_schema.is_some());
+    let generated = request.and_then(|request| {
+        if structured {
+            generate_structured(&db, &request, chat.as_ref(), budget, &control)
+                .map(|(reply, output)| {
+                    content = reply;
+                    Some(output)
+                })
         } else {
-            let text = demo::reply(&request)?;
-            for chunk in text.chars().collect::<Vec<_>>().chunks(7) {
-                if control.wait() { return Err(Error::Generation("Cancelled".into())); }
-                checkpoint(&chunk.iter().collect::<String>())?;
+            let mut checkpoint = |delta: &str| -> Result<(), Error> {
+                if !connected || control.is_cancelled() {
+                    control.cancel();
+                    return Err(Error::Generation("Cancelled".into()));
+                }
+                let next = format!("{content}{delta}");
+                db.checkpoint(&turn, &next)?;
+                content = next;
+                sequence += 1;
+                connected = emit(sequence, ChatEventKind::TextDelta, delta.into(), Vec::new()).is_ok();
+                if !connected {
+                    control.cancel();
+                }
+                Ok(())
+            };
+            budget.check(&request)?;
+            if let Some(chat) = chat {
+                let runtime = worker_runtime()?;
+                runtime.block_on(async {
+                    tokio::select! {
+                        biased;
+                        _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
+                        result = crate::live::generate(&chat, &request, budget.max_output_tokens, control.clone(), &mut checkpoint) => result.map(Some),
+                    }
+                })
+            } else {
+                let text = demo::reply(&request)?;
+                for chunk in text.chars().collect::<Vec<_>>().chunks(7) {
+                    if control.wait() {
+                        return Err(Error::Generation("Cancelled".into()));
+                    }
+                    checkpoint(&chunk.iter().collect::<String>())?;
+                }
+                Ok(None)
             }
-            Ok(None)
         }
     });
     match generated {
@@ -306,19 +317,24 @@ fn run(
             failure = Some(error.to_string());
         }
     }
-    if control.is_cancelled() {
-        status = MessageStatus::Cancelled;
-    }
-    if !connected {
-        status = MessageStatus::Cancelled;
-    }
-    let result = db.finish_turn(
-        &turn,
-        &content,
-        status,
-        failure.as_deref(),
-        native.as_deref(),
-    );
+    // Cancellation and acceptance have one linearization point. A cancel observed
+    // before publication cannot commit visible text, native output, or state.
+    let result = {
+        let cancelled = control.cancelled.lock().expect("cancellation lock");
+        if *cancelled || !connected {
+            status = MessageStatus::Cancelled;
+        }
+        if structured && status != MessageStatus::Complete {
+            content.clear();
+        }
+        db.finish_turn(
+            &turn,
+            &content,
+            status,
+            failure.as_deref(),
+            native.as_deref(),
+        )
+    };
     let (kind, messages, error) = match result {
         Ok(message) => (
             match status {
@@ -331,6 +347,9 @@ fn run(
         ),
         Err(error) => {
             let detail = error.to_string();
+            if structured {
+                content.clear();
+            }
             let messages = db
                 .finish_turn(&turn, &content, MessageStatus::Failed, Some(&detail), None)
                 .map(|message| vec![message])
@@ -342,4 +361,89 @@ fn run(
     if connected {
         let _ = emit(sequence + 1, kind, error, messages);
     }
+}
+
+fn worker_runtime() -> Result<tokio::runtime::Runtime, Error> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| Error::Generation("Could not initialize the model worker.".into()))
+}
+
+fn generate_structured(
+    db: &Database,
+    request: &crate::ModelRequest,
+    chat: Option<&crate::ChatConnection>,
+    budget: crate::ContextBudget,
+    control: &Arc<Control>,
+) -> Result<(String, Vec<serde_json::Value>), Error> {
+    use serde_json::json;
+    let schema = request
+        .response_schema
+        .as_ref()
+        .expect("structured session");
+    let state = request
+        .state_before
+        .as_ref()
+        .ok_or_else(|| Error::Generation("Missing frozen persona state.".into()))?;
+    let mut feedback: Option<String> = None;
+    let runtime = worker_runtime()?;
+    for attempt in 0..3 {
+        if control.is_cancelled() {
+            return Err(Error::Generation("Cancelled".into()));
+        }
+        // Retry input differs only by transient, specific validation feedback.
+        // It never includes a rejected candidate or changes persisted frozen items.
+        let mut candidate_request = request.clone();
+        if let Some(detail) = &feedback {
+            let text = format!(
+                "Response validation feedback: {detail} Regenerate only the response from the SAME frozen input and current_state. Rejected candidate state was never accepted. Return a complete valid JSON response."
+            );
+            candidate_request.items.push(crate::ModelItem {
+                id: String::new(),
+                sequence: i64::MAX,
+                payload: serde_json::to_vec(&crate::storage::input_message(
+                    &request.protocol,
+                    "user",
+                    &text,
+                ))?,
+            });
+        }
+        budget.check(&candidate_request)?;
+        let output = if let Some(chat) = chat {
+            runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
+                    result = crate::live::generate(chat,&candidate_request,budget.max_output_tokens,control.clone(),|_|Ok(())) => result,
+                }
+            })?
+        } else {
+            let text = demo::reply(request)?;
+            // The deterministic demo exercises the same pending/cancel lifecycle.
+            for _ in text.chars().collect::<Vec<_>>().chunks(7) {
+                if control.wait() {
+                    return Err(Error::Generation("Cancelled".into()));
+                }
+            }
+            vec![
+                json!({"role":"assistant","content":serde_json::to_string(&json!({"reply":text,"state":state}))?}),
+            ]
+        };
+        // Transport, refusal and truncation errors leave here, without format repair.
+        let text = crate::live::output_text(&output)?;
+        match crate::structured::candidate(schema, &text) {
+            Ok((reply, _)) => return Ok((reply, output)),
+            Err(detail) => {
+                db.validation_error(&request.call_id, &detail)?;
+                if attempt == 2 {
+                    return Err(Error::Generation(format!(
+                        "Response format/schema validation failed after 3 candidates: {detail}"
+                    )));
+                }
+                feedback = Some(detail);
+            }
+        }
+    }
+    unreachable!("bounded candidate loop")
 }

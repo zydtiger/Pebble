@@ -55,6 +55,9 @@ pub struct ModelRequest {
     pub protocol: String,
     pub model: String,
     pub items: Vec<ModelItem>,
+    /// None identifies a preserved v0.1.0 session, never reinterpreted as structured.
+    pub response_schema: Option<serde_json::Value>,
+    pub state_before: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]

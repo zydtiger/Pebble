@@ -19,14 +19,8 @@ fn live_stream_replays_native_assistant_and_frozen_prefix_after_restart() {
     let (task, rx) = start(&core, &id, "first synthetic question");
     let events = terminal(&rx);
     assert_eq!(events.last().unwrap().kind, ChatEventKind::Completed);
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e.kind == ChatEventKind::TextDelta)
-            .map(|e| e.text.as_str())
-            .collect::<String>(),
-        "你好 🪨"
-    );
+    assert!(events.iter().all(|e| e.kind != ChatEventKind::TextDelta));
+    assert_eq!(events.last().unwrap().messages[0].content, "你好 🪨");
     let first = core.model_request(&task.id).unwrap();
     let (headers, body) = server.requests.recv().unwrap();
     assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
@@ -60,7 +54,7 @@ fn live_stream_replays_native_assistant_and_frozen_prefix_after_restart() {
     let (_, body2) = server.requests.recv().unwrap();
     assert_eq!(
         body2["messages"][2],
-        json!({"role":"assistant","content":"你好 🪨","reasoning_content":"private-test-reasoning"})
+        json!({"role":"assistant","content":structured("你好 🪨"),"reasoning_content":"private-test-reasoning"})
     );
     assert_eq!(body2["messages"][0], body["messages"][0]);
     assert!(!format!("{second:?}").contains("test-secret"));
@@ -124,7 +118,7 @@ fn bad_streams_fail_durably_without_accepted_outputs() {
         let messages = core.messages(&id).unwrap();
         assert_eq!(messages[1].status, MessageStatus::Failed);
         if expected == "completion marker" || expected == "output budget" {
-            assert_eq!(messages[1].content, "partial");
+            assert!(messages[1].content.is_empty());
         }
         let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
         assert_eq!(
@@ -177,12 +171,9 @@ fn cancellation_interrupts_headers_and_idle_stream_and_omits_blank_auth() {
             .unwrap();
         assert!(!request.to_lowercase().contains("authorization:"));
         if !headers {
-            loop {
-                if rx.recv_timeout(Duration::from_secs(2)).unwrap().kind == ChatEventKind::TextDelta
-                {
-                    break;
-                }
-            }
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(core.messages(&id).unwrap()[1].content.is_empty());
+            assert!(rx.try_iter().all(|e| e.kind != ChatEventKind::TextDelta));
         }
         let before = Instant::now();
         task.cancel();
@@ -229,7 +220,8 @@ fn changed_connection_starts_fresh_context_and_preserves_transcript_and_v2_ids()
     drop(demo);
     drop(core);
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
-    db.execute_batch("ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; ALTER TABLE model_sessions DROP COLUMN base_url; ALTER TABLE model_sessions DROP COLUMN event_start_sequence; PRAGMA user_version=2;").unwrap();
+    raw_history(root.path());
+    db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; ALTER TABLE model_sessions DROP COLUMN base_url; ALTER TABLE model_sessions DROP COLUMN event_start_sequence; PRAGMA user_version=2;").unwrap();
     let core = reopen(root.path());
     assert_eq!(saved, core.messages(&id).unwrap());
     let server = Server::new(vec![stream(success("live")), stream(success("changed"))]);
@@ -271,5 +263,84 @@ fn changed_connection_starts_fresh_context_and_preserves_transcript_and_v2_ids()
         !reopen(root.path()).workspace().unwrap().personas[0]
             .context_notice
             .is_empty()
+    );
+}
+
+#[test]
+fn legacy_refusal_only_fails_retryably_without_native_acceptance_or_format_repair() {
+    let refusal = format!(
+        "{}{}data: [DONE]\n\n",
+        event(json!({"refusal":"Synthetic legacy refusal."}), Value::Null),
+        event(json!({}), json!("stop"))
+    );
+    let server = Server::new(vec![stream(success("accepted seed")), stream(refusal)]);
+    let (root, core, id) = isolated();
+    configure(root.path(), &server.url, "mock", "chat_completions", "");
+    let (seed, rx) = start(&core, &id, "seed user");
+    assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
+    let request = core.model_request(&seed.id).unwrap();
+    let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
+    let state_before: String = db
+        .query_row(
+            "SELECT current_state FROM persona_states WHERE persona_id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    // Emulate a preserved migrated v0.1.0 session without a response contract.
+    db.execute(
+        "UPDATE model_sessions SET response_schema=NULL WHERE id=?1",
+        [&request.session_id],
+    )
+    .unwrap();
+    let (task, rx) = start(&core, &id, "refused legacy input");
+    let events = terminal(&rx);
+    let messages = core.messages(&id).unwrap();
+    let last = messages.last().unwrap();
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    let state_after: String = db
+        .query_row(
+            "SELECT current_state FROM persona_states WHERE persona_id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let validation_errors: String = db
+        .query_row(
+            "SELECT validation_errors FROM model_calls WHERE id=?1",
+            [&task.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            events.last().unwrap().kind,
+            last.status,
+            last.can_retry,
+            last.content.as_str(),
+            state_after,
+            count("SELECT COUNT(*) FROM model_items WHERE kind='output'"),
+            count("SELECT COUNT(*) FROM persona_events WHERE kind='sent'"),
+            validation_errors,
+            server.requests.try_iter().count(),
+        ),
+        (
+            ChatEventKind::Failed,
+            MessageStatus::Failed,
+            true,
+            "",
+            state_before,
+            1,
+            1,
+            "[]".into(),
+            2,
+        )
+    );
+    assert!(events.last().unwrap().text.contains("refused"));
+    assert!(
+        core.model_request(&task.id)
+            .unwrap()
+            .response_schema
+            .is_none()
     );
 }

@@ -2,21 +2,24 @@ mod live_support;
 mod responses_support;
 use live_support::{Server, configure, isolated, start, stream, terminal};
 use pebble_core::ChatEventKind;
-use responses_support::{completed, event, items, success};
+use responses_support::{completed, event, success};
 use serde_json::{Value, json};
 
 #[test]
 fn id_only_events_use_content_part_lifecycle_and_authoritative_item_order() {
-    let mut output = items("alpha");
+    let text = responses_support::structured("alphaβ 🪨");
+    let split = text.find("β").unwrap();
+    let parts = [&text[..split], &text[split..]];
+    let mut output = responses_support::raw_items(parts[0]);
     output[1]["content"]
         .as_array_mut()
         .unwrap()
-        .push(json!({"type":"output_text","text":"β 🪨","annotations":[]}));
+        .push(json!({"type":"output_text","text":parts[1],"annotations":[]}));
     let mut body = event(
         "response.output_item.added",
         json!({"item":{"id":"msg_test","type":"message","role":"assistant","status":"in_progress","content":[]}}),
     );
-    for text in ["alpha", "β 🪨"] {
+    for text in parts {
         body += &event(
             "response.content_part.added",
             json!({"item_id":"msg_test","part":{"type":"output_text","text":""}}),

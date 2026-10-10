@@ -5,3 +5,7 @@ subtitle = "A curious mind. A soft place to land."
 # An optional [chat] table replaces the entire app-level connection.
 # Include model, base_url, and api together. api_key = "" means no authentication;
 # a nonempty api_key or an api_key_env reference can supply credentials later.
+
+[response.initial_state]
+affinity_user = 20
+mood = "calm"

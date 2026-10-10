@@ -11,11 +11,12 @@ fn interrupted_queued_fixture() {
     let id = core.workspace().unwrap().personas[0].id.clone();
     let (_first, rx) = start(&core, &id, "activated before crash");
     let (_queued, _qrx) = start(&core, &id, "queued before crash");
-    loop {
-        if rx.recv_timeout(Duration::from_secs(2)).unwrap().kind == ChatEventKind::TextDelta {
-            std::process::exit(0);
-        }
-    }
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(2)).unwrap().kind,
+        ChatEventKind::Started
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    std::process::exit(0);
 }
 #[test]
 fn restart_exposes_interrupted_queued_retry_without_duplicating_received_events() {
@@ -33,7 +34,7 @@ fn restart_exposes_interrupted_queued_retry_without_duplicating_received_events(
     let saved = core.messages(&id).unwrap();
     assert_eq!(saved.len(), 4);
     assert_eq!(saved[1].status, MessageStatus::Interrupted);
-    assert!(!saved[1].content.is_empty());
+    assert!(saved[1].content.is_empty());
     assert_eq!(saved[3].status, MessageStatus::Interrupted);
     assert!(saved[3].can_retry);
     assert!(saved[3].failure_detail.contains("Application stopped"));

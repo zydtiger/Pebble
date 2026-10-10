@@ -10,7 +10,7 @@ impl Drop for Staged {
         let _ = std::fs::remove_file(&self.path);
     }
 }
-pub(super) fn publish(candidates: &[(PathBuf, String)]) -> Result<(), Error> {
+pub(crate) fn publish(candidates: &[(PathBuf, String)]) -> Result<(), Error> {
     let mut staged = Vec::new();
     for (target, text) in candidates {
         if std::fs::metadata(target).is_ok_and(|m| !m.is_file()) {

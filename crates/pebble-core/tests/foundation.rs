@@ -4,7 +4,7 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 #[test]
-fn restart_keeps_identity_and_eight_tables() {
+fn restart_keeps_identity_and_state_table() {
     let root = tempfile::tempdir().unwrap();
     let first = Core::open(root.path()).unwrap().workspace().unwrap();
     let second = Core::open(root.path()).unwrap().workspace().unwrap();
@@ -33,6 +33,7 @@ fn restart_keeps_identity_and_eight_tables() {
             "model_items",
             "model_sessions",
             "persona_events",
+            "persona_states",
             "personas"
         ]
     );
@@ -51,7 +52,7 @@ fn manual_edits_reload_without_reseeding_or_changing_room() {
     .unwrap();
     fs::write(
         directory.join("config.toml"),
-        "[persona]\ndisplay_name = '米拉'\n",
+        "[persona]\ndisplay_name = '米拉'\n[response.initial_state]\naffinity_user=20\nmood='calm'\n",
     )
     .unwrap();
     let after = core.workspace().unwrap().personas.remove(0);
@@ -127,6 +128,7 @@ fn invalid_and_missing_files_remain_visible_errors() {
     .unwrap();
     assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
     fs::remove_file(root.path().join("config.toml")).unwrap();
+    drop(core);
     assert!(matches!(Core::open(root.path()), Err(Error::File { .. })));
     assert!(!root.path().join("config.toml").exists());
 }
@@ -189,7 +191,12 @@ fn stream_keeps_unicode_order_and_origin_and_releases_listener() {
         assert_eq!(event.conversation_id, persona.conversation_id);
         assert_eq!(event.persona_id, persona.id);
     }
-    let text: String = events.iter().map(|event| event.text.as_str()).collect();
+    assert!(
+        events
+            .iter()
+            .all(|event| event.kind != ChatEventKind::TextDelta)
+    );
+    let text = &events.last().unwrap().messages[0].content;
     assert!(text.starts_with("本地演示 · 第 1 次对话"));
     assert!(text.ends_with("没有调用模型。"));
     released.recv_timeout(Duration::from_secs(1)).unwrap();

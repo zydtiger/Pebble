@@ -22,6 +22,19 @@ fn exercise(api: &str) {
     let key = std::env::var("PEBBLE_LIVE_API_KEY").unwrap_or_default();
     let (root, core, id) = isolated();
     configure(root.path(), &url, &model, api, &key);
+    if api == "responses"
+        && let Ok(format) = std::env::var("PEBBLE_LIVE_RESPONSES_SCHEMA_FORMAT")
+    {
+        use std::io::Write;
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(root.path().join("config.toml"))
+                .unwrap(),
+            "responses_schema_format = {format:?}"
+        )
+        .unwrap();
+    }
     let settings = core.settings(None).unwrap();
     core.save_settings(
         None,
@@ -43,6 +56,16 @@ fn exercise(api: &str) {
         events.last().unwrap().text
     );
     let first = core.model_request(&task.id).unwrap();
+    assert!(first.response_schema.is_some());
+    assert!(events.iter().all(|e| e.kind != ChatEventKind::TextDelta));
+    let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
+    let saved_state: String = db
+        .query_row(
+            "SELECT current_state FROM persona_states WHERE persona_id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
     let saved = core.messages(&id).unwrap();
     assert!(saved[1].content.contains("PEBBLE_OK"));
     println!(
@@ -57,6 +80,15 @@ fn exercise(api: &str) {
     drop(core);
     let core = reopen(root.path());
     assert_eq!(saved, core.messages(&id).unwrap());
+    assert_eq!(
+        db.query_row(
+            "SELECT current_state FROM persona_states WHERE persona_id=?1",
+            [&id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        saved_state
+    );
     let (task, rx) = start(&core, &id, "Reply with exactly: PEBBLE_REPLAY_OK");
     let events = terminal(&rx);
     assert_eq!(
@@ -67,6 +99,10 @@ fn exercise(api: &str) {
     );
     let request = core.model_request(&task.id).unwrap();
     assert_eq!(request.session_id, first.session_id);
+    assert_eq!(
+        request.state_before,
+        Some(serde_json::from_str::<Value>(&saved_state).unwrap())
+    );
     assert!(request.items.len() >= 4);
     assert_eq!(request.protocol, api);
     for (a, b) in first.items.iter().zip(&request.items) {

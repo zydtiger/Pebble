@@ -37,7 +37,7 @@ fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attemp
         assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Failed);
         let old = core.model_request(&original.id).unwrap();
         let old_reply = core.messages(&id).unwrap()[1].clone();
-        assert_eq!(old_reply.content, "partial");
+        assert!(old_reply.content.is_empty());
         assert!(old_reply.can_retry);
         assert!(!old_reply.failure_detail.is_empty());
         drop(original);
@@ -72,7 +72,7 @@ fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attemp
         let saved = core.messages(&id).unwrap();
         assert_eq!(saved.len(), 3);
         assert_eq!(saved[0].content, "one original user");
-        assert_eq!(saved[1].content, "partial");
+        assert!(saved[1].content.is_empty());
         assert_eq!(saved[1].status, MessageStatus::Failed);
         assert!(!saved[1].can_retry);
         assert_eq!(saved[2].status, MessageStatus::Complete);
@@ -150,7 +150,7 @@ fn queued_cancel_retry_admits_user_once_after_predecessor_native_output() {
     assert_eq!(request.items.len(), 4);
     assert_eq!(
         serde_json::from_slice::<Value>(&request.items[2].payload).unwrap()["content"],
-        "predecessor"
+        live_support::structured("predecessor")
     );
     assert!(String::from_utf8_lossy(&request.items[3].payload).contains("queued unique user"));
     let (next, nrx) = start(&core, &id, "followup user");

@@ -87,6 +87,11 @@ impl Stream {
             return Err(failure("The model stream has no successful finish reason."));
         }
         if self.content.trim().is_empty() {
+            if !self.refusal.is_empty() {
+                return Err(failure(
+                    "The model refused this reply; character state is unchanged.",
+                ));
+            }
             return Err(failure(
                 "The model completed without visible reply content.",
             ));

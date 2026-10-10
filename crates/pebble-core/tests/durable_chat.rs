@@ -74,7 +74,10 @@ fn restart_replays_frozen_prefix_and_links_own_output_once() {
     }
     let output: Value = serde_json::from_slice(&request.items[2].payload).unwrap();
     assert_eq!(output["role"], "assistant");
-    assert_eq!(output["content"], saved[1].content);
+    assert_eq!(
+        serde_json::from_str::<Value>(output["content"].as_str().unwrap()).unwrap()["reply"],
+        saved[1].content
+    );
     let last: Value = serde_json::from_slice(&request.items[3].payload).unwrap();
     let envelope: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
     assert_eq!(envelope["events"].as_array().unwrap().len(), 1);
@@ -148,27 +151,26 @@ fn reopen(root: &std::path::Path) -> Core {
 }
 
 #[test]
-fn cancellation_preserves_partial_bubble_but_not_an_accepted_output() {
+fn cancellation_preserves_empty_pending_bubble_without_accepted_output() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);
     let (task, events) = start(&core, &persona.id, "A partial thought");
     let started = events.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(started.messages.len(), 2);
-    let delta = events.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert_eq!(delta.kind, ChatEventKind::TextDelta);
-    // Every displayed delta is already durable.
+    std::thread::sleep(Duration::from_millis(100));
     assert!(
-        core.messages(&persona.id).unwrap()[1]
-            .content
-            .starts_with(&delta.text)
+        events
+            .try_iter()
+            .all(|e| e.kind != ChatEventKind::TextDelta)
     );
+    assert!(core.messages(&persona.id).unwrap()[1].content.is_empty());
     task.cancel();
     let terminal = finish(&events);
     assert_eq!(terminal.last().unwrap().kind, ChatEventKind::Cancelled);
     let saved = core.messages(&persona.id).unwrap();
     assert_eq!(saved[1].status, MessageStatus::Cancelled);
-    assert!(!saved[1].content.is_empty());
+    assert!(saved[1].content.is_empty());
     let (next, events) = start(&core, &persona.id, "Next thought");
     finish(&events);
     let request = core.model_request(&next.id).unwrap();
@@ -222,26 +224,7 @@ fn persona_history_is_isolated() {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     let mira = core.workspace().unwrap().personas.remove(0);
-    let directory = root
-        .path()
-        .join("personas")
-        .join(uuid::Uuid::new_v4().to_string());
-    std::fs::create_dir(&directory).unwrap();
-    for file in ["SOUL.md", "MEMORY.md"] {
-        std::fs::write(directory.join(file), "Kai").unwrap();
-    }
-    std::fs::write(
-        directory.join("config.toml"),
-        "[persona]\ndisplay_name='Kai'\n",
-    )
-    .unwrap();
-    let kai = core
-        .workspace()
-        .unwrap()
-        .personas
-        .into_iter()
-        .find(|p| p.display_name == "Kai")
-        .unwrap();
+    let kai = core.create_persona("Kai").unwrap();
     let (_mira_task, events) = start(&core, &mira.id, "Mira's private fact");
     finish(&events);
     let (kai_task, events) = start(&core, &kai.id, "Hello Kai");
@@ -282,7 +265,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     let persona = core.workspace().unwrap().personas.remove(0);
     drop(core);
     let db = db(root.path());
-    db.execute_batch("DROP TABLE model_item_events; DROP TABLE model_items; DROP TABLE model_calls;
+    db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; DROP TABLE model_item_events; DROP TABLE model_items; DROP TABLE model_calls;
         DROP TABLE model_sessions; DROP TABLE persona_events; DROP TABLE messages; PRAGMA user_version = 1;").unwrap();
     let core = Core::open(root.path()).unwrap();
     let migrated = core.workspace().unwrap().personas.remove(0);
@@ -291,7 +274,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        6
+        7
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }
@@ -310,7 +293,7 @@ fn abrupt_exit_recovers_durable_delta_without_accepting_output() {
     let messages = core.messages(&persona.id).unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].status, MessageStatus::Interrupted);
-    assert!(!messages[1].content.is_empty());
+    assert!(messages[1].content.is_empty());
     let db = db(root.path());
     assert_eq!(count(&db, "model_items"), 2);
     assert_eq!(
@@ -333,8 +316,8 @@ fn crash_fixture() {
     let persona = core.workspace().unwrap().personas.remove(0);
     let (_task, events) = start(&core, &persona.id, "Before abrupt exit");
     events.recv_timeout(Duration::from_secs(1)).unwrap();
-    let delta = events.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert_eq!(delta.kind, ChatEventKind::TextDelta);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(core.messages(&persona.id).unwrap()[1].content.is_empty());
     std::process::exit(0);
 }
 

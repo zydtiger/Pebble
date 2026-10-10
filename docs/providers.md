@@ -5,8 +5,10 @@ credentials, bounded cancellable HTTP, and byte-framed SSE. An absent connection
 selects the deterministic demo; a configured connection never falls back to it.
 
 Chat Completions sends the saved native message list to `/chat/completions`.
-Only content deltas are visible. A stop finish and `[DONE]` are required; the
-accepted assistant message retains supported reasoning and refusal fields.
+Content deltas are buffered privately until structured validation and acceptance. A stop finish and `[DONE]` are required; the
+accepted assistant message retains supported reasoning fields. Legacy plaintext
+contexts also retain refusal fields when nonempty content is present; structured
+contexts reject provider refusal before acceptance.
 
 Responses sends the saved native input list to `/responses`, with `stream: true`,
 `store: false`, `include: ["reasoning.encrypted_content"]`, and
@@ -19,7 +21,7 @@ The [Responses streaming reference](https://developers.openai.com/api/reference/
 distinguishes added items from completed items. Added reasoning may be
 incomplete; final item events and the completed response output are authoritative.
 A successful terminal response must have completed status, nonempty visible
-text/refusal, and agreement with streamed text and final item events. Failed or
+text (or a separately classified refusal), and agreement with streamed text and final item events. Failed or
 incomplete responses and truncated streams publish no native output. Reasoning
 is neither rendered nor copied into diagnostics.
 
@@ -33,3 +35,30 @@ a different order.
 Ordinary tests use deterministic local servers. The opt-in tests documented in
 README use synthetic temporary characters and verify actual native replay across
 two turns and restart. They never read the app's existing files or conversation.
+
+## Structured-output constraints
+
+New structured contexts send Chat Completions `response_format` with
+`type: "json_schema"` and a strict named `json_schema`. Standard Responses sends
+`text.format` with `type: "json_schema"`, name, strict, and the schema. The frozen
+prefix also includes the schema and response semantics; provider constraints do
+not replace Rust validation. Legacy sessions send neither constraint.
+
+Some compatible Responses servers expose the Chat Completions constraint as an
+extension instead of implementing standard `text.format`. Explicitly configure
+that connection with `responses_schema_format = "response_format"`; default or
+`"text_format"` selects standard Responses. This field is valid only for
+`api = "responses"`; invalid/irrelevant selections fail configuration validation.
+It can be set in app-default or persona connection TOML. Native settings saves
+for Responses preserve it; switching the connection to Chat Completions removes
+this Responses-only field. No endpoint sniffing or automatic capability fallback occurs.
+
+On 2026-10-09, synthetic probes against llama-server build `b11146-7fe450e19`,
+model `gemma-4-31b-uncensored`, tested a schema enum deliberately contrary to the
+prompt. Chat Completions `response_format` enforced the enum. Responses ignored
+standard `text.format` and returned the prompt's conflicting values; its explicit
+`response_format` extension enforced the enum. Thus merely receiving HTTP 200
+does not establish constraint support. The two actual adapters were additionally
+exercised with synthetic characters through acceptance, state persistence,
+restart/native replay, cancellation, and explicit retry. These observations do
+not establish support for every JSON Schema keyword or another server version.

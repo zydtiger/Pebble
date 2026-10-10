@@ -13,11 +13,11 @@ fn mixed_codec_native_history_restarts_and_replays_exact_bytes_for_both_protocol
             output[0]["encrypted_content"] = opaque.clone().into();
             responses_support::event(
                 "response.output_text.delta",
-                serde_json::json!({"output_index":1,"content_index":0,"delta":"first"}),
+                serde_json::json!({"output_index":1,"content_index":0,"delta":live_support::structured("first")}),
             ) + &responses_support::completed(&output)
         } else {
             live_support::event(
-                serde_json::json!({"content":"first", "reasoning_content":opaque}),
+                serde_json::json!({"content":live_support::structured("first"), "reasoning_content":opaque}),
                 serde_json::Value::Null,
             ) + &live_support::event(serde_json::json!({}), serde_json::json!("stop"))
                 + "data: [DONE]\n\n"
@@ -112,7 +112,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
         )
         .unwrap();
     }
-    db.execute_batch("ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=4;").unwrap();
+    db.execute_batch("DROP TABLE persona_states; ALTER TABLE model_sessions DROP COLUMN response_schema; ALTER TABLE model_calls DROP COLUMN state_before; ALTER TABLE model_calls DROP COLUMN validation_errors; ALTER TABLE model_calls DROP COLUMN retry_of; ALTER TABLE model_items DROP COLUMN decoded_length; ALTER TABLE model_sessions DROP COLUMN context_reason; PRAGMA user_version=4;").unwrap();
     let core = reopen(root.path());
     assert_eq!(core.messages(&id).unwrap(), messages);
     let after = core.model_request(&before.call_id).unwrap();
@@ -124,7 +124,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
     assert_eq!(
         db.query_row(

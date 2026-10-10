@@ -14,7 +14,7 @@ JSON items plus 64 per item. Each byte counts as one estimated token. The output
 reserve must fit within the configured window after that estimate. This includes
 the fixed prefix, system/SOUL/MEMORY, attributed user envelopes, complete native
 assistant output, reasoning, and opaque fields. It deliberately counts JSON and
-opaque strings rather than silently excluding state it cannot inspect.
+opaque strings rather than silently excluding state it cannot inspect. Structured schemas and current-state envelopes are part of that input; transient validation feedback also counts when repairing a candidate.
 
 This is not exact provider token accounting. Tokenizer behavior, native message
 framing, encrypted state, and provider-side costs are uncertain. The estimate
@@ -26,7 +26,7 @@ The user can increase configured limits or deliberately start a fresh context.
 
 ## Storage and memory bounds
 
-Schema 6 keeps eight tables. `model_items.codec` is `json` or `zstd`, with a
+Schema 7 keeps nine tables, adding persona-wide accepted state to the history records. `model_items.codec` is `json` or `zstd`, with a
 nonnegative `decoded_length`. Migration records the length of existing raw bytes
 without rewriting or recompressing them. New items below 1024 bytes remain raw;
 larger items use zstd level 3 only when the compressed bytes are smaller.
@@ -52,7 +52,7 @@ expected production compression ratio. Tests also keep noncompressible bytes raw
 Start fresh context keeps all saved bubbles and native items. Rust serializes
 the operation against queue acceptance, refuses queued/active work for that
 persona, and atomically retires its current session and saves a new frozen prefix
-with current files. The current event frontier becomes the boundary. Subsequent
+with current files and the unchanged accepted persona state. An incompatible response schema fails without replacing the active session or resetting state. The current event frontier becomes the boundary. Subsequent
 requests contain only events after it; earlier native output never becomes user
 input. A manual reason persists the notice even before the first received event.
 Other personas may continue generating.

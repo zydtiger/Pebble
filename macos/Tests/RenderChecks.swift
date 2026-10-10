@@ -72,6 +72,8 @@ struct RenderChecks {
                 guard model.isReplying, model.draft.isEmpty, model.bubbles.first?.text == prompt else {
                     throw RenderError.failed("Enter did not send the draft")
                 }
+                guard model.bubbles.last?.text.isEmpty == true else { throw RenderError.failed("Unvalidated candidate became visible") }
+                try capture(window, name: "typing")
                 for _ in 0..<150 where model.isReplying { try await Task.sleep(for: .milliseconds(30)) }
                 guard !model.isReplying, model.error == nil else { throw RenderError.failed("Demo reply did not finish") }
                 try await Task.sleep(for: .milliseconds(300))

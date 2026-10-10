@@ -39,7 +39,7 @@ pub(crate) async fn generate(
         .iter()
         .map(|item| serde_json::from_slice::<Value>(&item.payload))
         .collect::<Result<Vec<_>, _>>()?;
-    let (route, body) = match chat.api.as_str() {
+    let (route, mut body) = match chat.api.as_str() {
         "chat_completions" => (
             "chat/completions",
             json!({"model":request.model, "messages":messages, "stream":true, "max_tokens":output_tokens}),
@@ -50,6 +50,15 @@ pub(crate) async fn generate(
         ),
         _ => return Err(failure("The configured model protocol is unsupported.")),
     };
+    if let Some(schema) = &request.response_schema {
+        if chat.api == "chat_completions"
+            || chat.responses_schema_format.as_deref() == Some("response_format")
+        {
+            body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"persona_response","strict":true,"schema":schema}});
+        } else {
+            body["text"]["format"] = json!({"type":"json_schema","name":"persona_response","strict":true,"schema":schema});
+        }
+    }
     let url = format!("{}/{route}", chat.base_url.trim_end_matches('/'));
     let mut http = client.post(url).json(&body);
     if let Some(key) = key {
@@ -108,4 +117,34 @@ pub(crate) async fn generate(
             };
         }
     }
+}
+
+/// Extract only authoritative completed answer text, never opaque reasoning.
+/// Refusal is a provider terminal outcome, not a candidate format error.
+pub(crate) fn output_text(output: &[Value]) -> Result<String, Error> {
+    let mut text = String::new();
+    for item in output {
+        if item["role"] == "assistant" {
+            if item.get("refusal").is_some_and(|r| !r.is_null() && r != "") {
+                return Err(failure(
+                    "The model refused this reply; character state is unchanged.",
+                ));
+            }
+            if item["content"].is_string() {
+                text.push_str(item["content"].as_str().unwrap());
+            } else if let Some(parts) = item["content"].as_array() {
+                for part in parts {
+                    if part["type"] == "refusal" {
+                        return Err(failure(
+                            "The model refused this reply; character state is unchanged.",
+                        ));
+                    }
+                    if part["type"] == "output_text" {
+                        text.push_str(part["text"].as_str().unwrap_or_default());
+                    }
+                }
+            }
+        }
+    }
+    Ok(text)
 }

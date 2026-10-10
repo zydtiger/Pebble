@@ -11,7 +11,7 @@ pub(crate) fn create(root: &Path, name: &str) -> Result<String, Error> {
         });
     }
     let id = Uuid::new_v4().to_string();
-    // Publish all three files together so readers never see an incomplete character.
+    // Publish all character files together so readers never see an incomplete character.
     let staging = root.join(format!(".new-persona-{id}"));
     std::fs::create_dir(&staging).map_err(|e| file_error(&staging, e))?;
     let result = (|| {
@@ -26,7 +26,14 @@ pub(crate) fn create(root: &Path, name: &str) -> Result<String, Error> {
         let config = toml::to_string(&document)
             .map_err(|_| Error::Generation("Could not encode character settings.".into()))?;
         for (file, text) in [
-            ("config.toml", config),
+            (
+                "config.toml",
+                format!("{config}{}", crate::structured::DEFAULT_INITIAL),
+            ),
+            (
+                "response_schema.json",
+                crate::structured::DEFAULT_SCHEMA.into(),
+            ),
             (
                 "SOUL.md",
                 format!(

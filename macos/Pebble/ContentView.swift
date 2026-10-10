@@ -100,7 +100,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.1.0").font(.system(size: 10, design: .monospaced))
+                    Text("v0.1.1").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -191,7 +191,10 @@ struct ContentView: View {
                                     .font(.system(size: 9, weight: .semibold)).tracking(1)
                                     .foregroundStyle(PebbleTheme.muted)
                                 if bubble.text.isEmpty && bubble.status == .streaming {
-                                    ProgressView().controlSize(.small).padding(17)
+                                    HStack(spacing: 9) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Typing…").font(.system(size: 12)).foregroundStyle(PebbleTheme.muted)
+                                    }.padding(17)
                                 } else {
                                     Text(bubble.status == .queued ? "Waiting for earlier reply…" : (bubble.text.isEmpty ? "No reply text." : bubble.text))
                                         .font(.system(size: 14)).lineSpacing(6)

@@ -7,7 +7,7 @@ impl Database {
         let connection = self.connection.lock().expect("database lock");
         let (mut request, last): (ModelRequest, i64) = connection.query_row(
             "SELECT c.session_id, c.conversation_id, c.trigger_message_id, c.event_cutoff,
-                    s.protocol, s.model, c.input_last_sequence
+                    s.protocol, s.model, c.input_last_sequence, s.response_schema, c.state_before
              FROM model_calls c JOIN model_sessions s ON s.id = c.session_id WHERE c.id = ?1",
             [call_id],
             |row| {
@@ -21,11 +21,17 @@ impl Database {
                         protocol: row.get(4)?,
                         model: row.get(5)?,
                         items: Vec::new(),
+                        response_schema: None,
+                        state_before: None,
                     },
                     row.get(6)?,
                 ))
             },
         )?;
+        let (schema, state): (Option<String>, Option<String>) = connection.query_row(
+            "SELECT s.response_schema,c.state_before FROM model_calls c JOIN model_sessions s ON s.id=c.session_id WHERE c.id=?1", [call_id], |r| Ok((r.get(0)?,r.get(1)?)))?;
+        request.response_schema = schema.map(|s| serde_json::from_str(&s)).transpose()?;
+        request.state_before = state.map(|s| serde_json::from_str(&s)).transpose()?;
         // First scan metadata only: never materialize an oversized saved history.
         let mut query = connection.prepare("SELECT codec, decoded_length, length(payload) FROM model_items WHERE session_id=?1 AND sequence<=?2")?;
         let mut rows = query.query(params![request.session_id, last])?;

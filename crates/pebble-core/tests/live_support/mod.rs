@@ -34,7 +34,13 @@ pub(super) fn event(fields: Value, reason: Value) -> String {
         json!({"choices":[{"index":0,"delta":fields,"finish_reason":reason}]})
     )
 }
+pub(super) fn structured(text: &str) -> String {
+    json!({"reply":text,"state":{"affinity_user":20,"mood":"calm"}}).to_string()
+}
 pub(super) fn success(text: &str) -> String {
+    candidate(&structured(text))
+}
+pub(super) fn candidate(text: &str) -> String {
     format!(
         "{}{}{}data: [DONE]\r\n\r\n",
         event(
@@ -203,4 +209,24 @@ pub(super) fn retry(
         .retry_message(persona, reply, Arc::new(Listener(tx)))
         .unwrap();
     (task, rx)
+}
+
+/// Downgrade fixtures predating per-item encoding must contain raw native JSON.
+pub(super) fn raw_history(root: &Path) {
+    let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
+    let rows: Vec<(String, Vec<u8>)> = db
+        .prepare("SELECT id,payload FROM model_items WHERE codec='zstd'")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    for (id, bytes) in rows {
+        let raw = zstd::stream::decode_all(std::io::Cursor::new(bytes)).unwrap();
+        db.execute(
+            "UPDATE model_items SET codec='json',payload=?2 WHERE id=?1",
+            rusqlite::params![id, raw],
+        )
+        .unwrap();
+    }
 }

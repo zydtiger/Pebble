@@ -35,7 +35,7 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the eight private-chat/history tables and schema migration. Visible
+Rust owns the nine private-chat/history/state tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
@@ -46,8 +46,9 @@ Swift sends text and observer
     → persona queue activates the call and freezes its request atomically
     → Rust returns a cancellable handle and authoritative message IDs
     → Chat Completions, Responses, or unconfigured demo consumes the stored request
-    → Rust checkpoints visible deltas, then notifies Swift
-    → Rust atomically publishes output/event links and terminal state
+    → Rust buffers candidate JSON privately and validates complete reply/state
+    → Rust retries only format/schema failures from the same frozen request (at most twice)
+    → Rust atomically publishes reply/state/native output/event links and terminal state
     → Swift reloads the saved transcript
 ```
 
@@ -74,7 +75,7 @@ Early cancellation is retained until a handle arrives. Startup marks both queued
 and active calls interrupted, with no accepted partial output or hidden resubmit.
 
 Rust character creation atomically publishes a UUID directory containing
-config.toml, SOUL.md, and MEMORY.md. It inherits the app's default connection,
+config.toml, SOUL.md, MEMORY.md, and response_schema.json. It inherits the app's default connection,
 creates a stable private room, and exposes a minimal name form in Swift. Native settings edits authoritative TOML/Markdown through Rust; deletion remains
 outside this milestone.
 
@@ -92,11 +93,11 @@ never enter model history or call records, and provider bodies/URLs are not
 copied into error diagnostics.
 
 SSE is framed as bytes before decoding complete UTF-8 lines. Chat Completions
-renders only `content` deltas and requires a successful `stop` finish plus
+buffers `content` deltas privately and requires a successful `stop` finish plus
 `[DONE]` and nonempty visible text. Native assistant content, `reasoning_content`,
 and `refusal` are retained for replay.
 
-Responses renders output text and refusal deltas. A completed-status
+Responses buffers output text and refusal deltas privately. A completed-status
 `response.completed` event supplies authoritative native output in array order;
 `[DONE]` is unnecessary. Whole accepted reasoning/message items, including IDs,
 encrypted state, and unknown fields, are persisted once and replayed unchanged
@@ -106,8 +107,11 @@ stream. Both indexed events and item-ID events with an unambiguous content-part
 lifecycle are supported. See [provider contracts](providers.md).
 
 Reasoning never appears in the UI. Tool requests, errors, incomplete terminal
-states, truncation, text mismatch, and exhausted budgets preserve visible partial
-text as failed output and publish no native output. No retry is automatic.
+states, truncation, text mismatch, refusal, and exhausted budgets fail without
+publishing structured candidate text, state, or native output. Only JSON/schema
+failures permit bounded automatic format repair. Preserved v0.1.0 sessions keep
+their frozen plaintext behavior until an explicit context boundary. See [state
+and upgrade rules](state.md).
 
 Sessions bind protocol, model, and credential-free API root. A changed binding
 retires the previous context and starts after the current event frontier. Old
@@ -146,7 +150,7 @@ reuse the nearest frozen ancestor's cutoff, including across unactivated
 cancelled retry attempts. Otherwise activation explicitly selects the original
 user event into the new context and excludes other earlier events. Durable
 failure detail and eligibility are derived for snapshots after restart. See
-[settings and recovery](settings.md). There is no automatic retry.
+[settings and recovery](settings.md). There is no automatic resend of failed calls; bounded candidate format repair occurs within a structured call.
 
 ## Build decisions
 
