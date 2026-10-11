@@ -125,3 +125,70 @@ no-op. Budget tests verify exact initial/maintenance boundaries. The local demo
 explicitly preserves memory without claiming model-backed consolidation.
 No Codex adapter, delegated task tables, work tools, retrieval or automatic
 rollover is included.
+
+## Next development stages
+
+This is a proposed sequence after v0.3.0, not implemented functionality. Keep
+the existing delegation version labels; the two conversation improvements below
+remain version-unassigned. Each increment should leave a runnable app.
+
+### Conversation improvements before delegation
+
+1. **Direct model request parameters.** Add concrete app/persona `request`
+   values for both chat and classification, with native editing and nested
+   object support. Preserve whole-connection inheritance and distinguish omitted
+   values from false/zero. Replace the classifier's named non-thinking profile
+   with its explicit request value. Rust protects model/input/tool/schema/output
+   fields, validates conflicts, freezes accepted parameters across continuations,
+   and accounts for the final wire body. Maintenance uses the effective chat
+   parameters. Verify settings round trips and both protocols; endpoint-specific
+   thinking support must be measured rather than inferred from a model name.
+2. **Image input and durable attachments.** Add paste/drop/pick, draft thumbnails,
+   image-only messages and image viewing, starting with bounded static JPEG/PNG.
+   Rust stores immutable assets and frozen rendition references; adapters load
+   actual images for chat, every applicable classifier phase and explicit memory
+   consolidation. Preserve membership/cutoff visibility and native text history;
+   do not duplicate base64 throughout SQLite. Separate vision estimates from
+   text-token estimates and hard byte/pixel limits. No vision toggle or silent
+   text-only fallback. Exit with private/group send, silent observation,
+   retry/restart and fresh-context coverage through both protocols.
+
+These are useful independent increments while delegation details are discussed.
+Neither requires exposing work tools to personas or launching Codex tasks.
+
+### Proposed v0.3.1–v0.4.0 delegation sequence
+
+| Stage | Runnable outcome | Completion boundary |
+| --- | --- | --- |
+| v0.3.1 — Local connection | Rust adapter for a local Codex app-server child process, capability checks and separate app settings | Verify installed protocol, authentication, available tools and one bounded read-only turn; missing CLI/login and disconnects are actionable. Desktop capabilities are not assumed. |
+| v0.3.2 — Task manager | Durable task cards, progress, cancellation and startup reconciliation, initially launched explicitly for read-only work | Persist identity before dispatch; distinguish uncertain execution from failure, retain actual results, and never silently resubmit on restart. Chat remains usable. |
+| v0.3.3 — Private delegation | Persona `delegate_task` returns promptly; Rust delivers a stored completion through the persona queue to the original private chat | Native tool/reply contracts remain valid. Chat and fresh contexts can continue during work; retries cannot repeat execution or completion delivery. |
+| v0.3.4 — Interactive work | Task questions, required approvals and follow-ups resume the same task; add authorized file/code work in the selected workspace | Preserve execution scope and actual effects on cancellation; validate a scoped code task and its artifact, including interrupted question/approval flows. |
+| v0.3.5 — Group delegation | One reporting owner for each assigned shared task, with original-room delivery and current-membership checks | Avoid duplicate execution without collapsing deliberately distinct tasks; keep private source material private and late completion reports bounded. |
+| v0.4.0 — Delegation milestone | Consolidate the private/group task experience and documentation | Exercise research and scoped code work, continued chat, artifacts, cancellation, restart and context changes; add no new subsystem here. |
+
+Rust owns dispatch, event subscriptions, reconciliation and any necessary polling;
+chat models only formulate requests and explain outcomes. Pebble owns task IDs
+and origin bindings, while Codex thread/turn IDs identify execution. A result
+reply uses the current persona context and its original destination. If that
+destination is no longer eligible, retain the result in its card for explicit
+routing. Retrying the explanation must not repeat completed work.
+
+Before starting v0.3.1, settle the first allowed workspaces/execution scope,
+the task-card question/approval experience, and app-quit behavior. The proposed
+first lifecycle is app-managed while Pebble is open, with restart reconciliation,
+not a promise of an independent always-running service.
+
+### Image generation and later work
+
+**Persona image generation** remains a separate, version-unassigned increment.
+It depends on durable image input/history and a verified Codex image-result
+contract. A narrow tool should persist the actual generated asset, let the
+persona inspect it, then publish validated text/state/attachments together.
+Reuse saved images after reply failure; uncertain external completion must not
+cause an automatic second generation. Queue blocking versus task-card background
+delivery still needs a product decision. A standalone generation/recovery probe
+does not establish the complete Pebble dispatch/cancel/restart contract.
+
+Automatic threshold compaction, richer memory retrieval, attachment deletion,
+sync and broader distribution remain outside these increments.
