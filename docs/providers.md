@@ -126,3 +126,15 @@ The [llama.cpp server contract](https://github.com/ggml-org/llama.cpp/blob/7fe45
 and [Qwen model card](https://huggingface.co/Qwen/Qwen3.5-2B)
 describe their concrete template controls. Sampling and this per-request switch
 preserve Pebble history; other template options require a compatible fresh boundary.
+
+## Image input
+
+Configured chat and classifier endpoints are assumed to accept vision input.
+There is no capability toggle, model-name inference or text-only fallback.
+Chat Completions uses attributed text plus native `image_url` content parts;
+Responses uses `input_text` and `input_image`. Data URLs contain verified saved
+renditions, never external filesystem paths. All classifier phases and explicit
+memory consolidation use the same adapter boundary. Endpoint rejection is a
+visible failure. [Image input](images.md) records the immutable-reference format,
+768-pixel limit, separate vision reserve, selected-service measurements and
+synthetic visual-control checks.

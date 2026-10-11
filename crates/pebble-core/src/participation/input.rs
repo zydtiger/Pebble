@@ -62,6 +62,13 @@ fn view(
             let required: bool = r.get(6)?;
             Ok((json!({"event_sequence":r.get::<_,i64>(0)?,"message_id":id,"conversation_id":r.get::<_,String>(2)?,"speaker":{"kind":r.get::<_,String>(3)?,"id":r.get::<_,String>(4)?},"text":if required {text} else {clip(&text,500)}}), required.then_some(id)))
         })?.collect::<Result<Vec<_>,_>>()?;
+        let mut rows = rows;
+        for (event, _) in &mut rows {
+            event["image_attachments"] = json!(crate::storage::images::references(
+                db,
+                event["message_id"].as_str().unwrap()
+            )?);
+        }
         let required = rows.iter().filter_map(|(_, id)| id.clone()).collect();
         Ok((rows.into_iter().map(|(event, _)| event).collect(), required))
     };
@@ -94,10 +101,11 @@ pub(crate) fn round_input(
                 r.get(0)
             })?;
         return Ok(serde_json::to_string(
-            &json!({"latest_user_message":{"speaker":"You","content":text}}),
+            &json!({"_asset_root":crate::storage::images::root(db)?,"latest_user_message":{"message_id":round,"speaker":"You","content":text,"image_attachments":crate::storage::images::references(db,round)?}}),
         )?);
     }
     let mut input = view(db, persona, room, cutoff, round, trigger)?;
+    input["_asset_root"] = json!(crate::storage::images::root(db)?);
     let trigger_event = ["recent_persona_events", "recent_group_transcript"].into_iter()
         .filter_map(|key| input[key].as_array()).flatten()
         .find(|event| event["message_id"] == trigger)
@@ -119,6 +127,6 @@ pub(crate) fn round_input(
     transcript.retain(|event| event["speaker"]["kind"] == "user");
     transcript.sort_by_key(|event| event["event_sequence"].as_i64().unwrap_or(0));
     Ok(serde_json::to_string(
-        &json!({"persona":input["persona"],"recent_real_user_transcript":transcript,"silence_constraints":[],"latest_trigger":input["latest_trigger"],"context_limits":"Bounded delivered transcript excerpts, chronological; no inferred permission or interest rules."}),
+        &json!({"_asset_root":input["_asset_root"],"persona":input["persona"],"recent_real_user_transcript":transcript,"silence_constraints":[],"latest_trigger":input["latest_trigger"],"context_limits":"Bounded delivered transcript excerpts, chronological; no inferred permission or interest rules."}),
     )?)
 }

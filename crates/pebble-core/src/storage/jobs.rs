@@ -14,6 +14,16 @@ impl Database {
         picked: &[String],
         personas: &[Persona],
     ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
+        self.enqueue_room_images(room_id, prompt, picked, personas, &[])
+    }
+    pub(crate) fn enqueue_room_images(
+        &self,
+        room_id: &str,
+        prompt: &str,
+        picked: &[String],
+        personas: &[Persona],
+        images: &[String],
+    ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         let room = super::rooms::room(&tx, room_id)?;
@@ -28,7 +38,7 @@ impl Database {
         } else {
             crate::rooms::mentions(prompt, picked, &room.members, personas)?
         };
-        if text.trim().is_empty() {
+        if text.trim().is_empty() && images.is_empty() {
             return Err(Error::EmptyMessage);
         }
         let user = insert_message(
@@ -39,6 +49,7 @@ impl Database {
             &text,
             MessageStatus::Complete,
         )?;
+        super::images::attach(&tx, &user, images)?;
         super::rooms::publish(&tx, room_id, &user, None)?;
         if let Some(persona) = room.persona_id.as_ref() {
             super::turns::insert_event_for(&tx, persona, room_id, &user, "received")?;

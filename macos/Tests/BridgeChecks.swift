@@ -67,8 +67,8 @@ server.serve_forever()
 struct BridgeChecks {
     @MainActor
     static func main() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pebble-bridge-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let root = ProcessInfo.processInfo.environment["PEBBLE_DATA_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory.appendingPathComponent("pebble-bridge-\(UUID())")
+        defer { if ProcessInfo.processInfo.environment["PEBBLE_DATA_DIR"] == nil { try? FileManager.default.removeItem(at: root) } }
         let (personaID, roomID, messageIDs) = try await exerciseBridge(root)
         try await Task.sleep(for: .milliseconds(100))
         do {

@@ -8,17 +8,26 @@ pub(crate) fn reply(request: &ModelRequest) -> Result<String, Error> {
     for item in &request.items {
         let payload: Value = serde_json::from_slice(&item.payload)?;
         if payload["role"] == "user" {
-            let envelope: Value = serde_json::from_str(
-                payload["content"]
-                    .as_str()
-                    .ok_or_else(|| Error::Generation("Invalid demo input envelope".into()))?,
-            )?;
+            let content = payload["content"]
+                .as_str()
+                .or_else(|| payload["content"].as_array()?.first()?["text"].as_str())
+                .ok_or_else(|| Error::Generation("Invalid demo input envelope".into()))?;
+            let envelope: Value = serde_json::from_str(content)?;
             for event in envelope["events"]
                 .as_array()
                 .ok_or_else(|| Error::Generation("Missing demo events".into()))?
             {
                 if event["speaker"]["kind"] == "user" {
-                    inputs.push(event["text"].as_str().unwrap_or_default().to_owned());
+                    let text = event["text"].as_str().unwrap_or_default();
+                    let images = event["image_attachments"].as_array().map_or(0, Vec::len);
+                    let displayed = if images > 0 {
+                        format!(
+                            "{text} [Attached {images} image(s); the local demo cannot inspect images.]"
+                        )
+                    } else {
+                        text.to_owned()
+                    };
+                    inputs.push(displayed);
                 }
             }
         }

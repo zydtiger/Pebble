@@ -128,8 +128,8 @@ rollover is included.
 
 ## Next development stages
 
-Conversation request parameters are implemented below; image input and delegation
-remain proposed work after v0.3.0. Keep the existing delegation version labels;
+Conversation request parameters and image input are implemented below; delegation
+remains proposed work after v0.3.0. Keep the existing delegation version labels;
 the conversation improvements remain version-unassigned. Each increment should
 leave a runnable app.
 
@@ -146,15 +146,17 @@ leave a runnable app.
    protocol/dialect, classifier phase, repair and memory tests cover the contract;
    selected endpoint thinking behavior is measured separately in
    [provider contracts](providers.md#request-parameters-and-thinking-support).
-2. **Image input and durable attachments.** Add paste/drop/pick, draft thumbnails,
-   image-only messages and image viewing, starting with bounded static JPEG/PNG.
-   Rust stores immutable assets and frozen rendition references; adapters load
-   actual images for chat, every applicable classifier phase and explicit memory
-   consolidation. Preserve membership/cutoff visibility and native text history;
-   do not duplicate base64 throughout SQLite. Separate vision estimates from
-   text-token estimates and hard byte/pixel limits. No vision toggle or silent
-   text-only fallback. Exit with private/group send, silent observation,
-   retry/restart and fresh-context coverage through both protocols.
+2. **Image input and durable attachments — implemented, version unassigned.**
+   Native pick/paste/drop, removable room drafts, image-only/private/group sends,
+   transcript viewing and enlarged images use Rust-owned immutable JPEG/PNG
+   assets. Typed frozen rendition references preserve real pixels through chat,
+   every classifier phase, Retry/restart and explicit memory consolidation.
+   Schema v12 is additive; old text/native output bytes remain intact. Public
+   visibility and future-only membership follow existing delivered events;
+   fresh contexts exclude old images after visual consolidation. Separate vision
+   reserves, original/decode/model limits and bounded transport are documented
+   with the selected-service evidence and test entry points in
+   [image input](images.md). Image generation and general delegation are excluded.
 
 These are useful independent increments while delegation details are discussed.
 Neither requires exposing work tools to personas or launching Codex tasks.

@@ -8,6 +8,8 @@ mod connection;
 mod context;
 mod demo;
 mod history;
+mod images;
+pub use images::ImageAsset;
 mod live;
 mod maintenance;
 mod memory;
@@ -68,6 +70,8 @@ pub enum Error {
     Room(String),
     #[error("{0}")]
     Participation(String),
+    #[error("{0}")]
+    Image(String),
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> Error {
@@ -152,9 +156,43 @@ impl Core {
         self.chats.start_room(
             self.database.clone(),
             || self.workspace(),
-            room,
-            prompt.trim(),
-            mentions,
+            chat::RoomInput {
+                room,
+                text: prompt.trim(),
+                mentions,
+                images: &[],
+            },
+            listener,
+        )
+    }
+
+    pub fn import_image(&self, path: &Path) -> Result<ImageAsset, Error> {
+        self.database
+            .import_image(&images::read_bounded(path, images::MAX_SOURCE_BYTES)?)
+    }
+    pub fn import_image_data(&self, bytes: &[u8]) -> Result<ImageAsset, Error> {
+        self.database.import_image(bytes)
+    }
+    pub fn send_room_images(
+        &self,
+        room: &str,
+        prompt: &str,
+        mentions: &[String],
+        images: &[String],
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatSubmission, Error> {
+        if prompt.trim().is_empty() && mentions.is_empty() && images.is_empty() {
+            return Err(Error::EmptyMessage);
+        }
+        self.chats.start_room(
+            self.database.clone(),
+            || self.workspace(),
+            chat::RoomInput {
+                room,
+                text: prompt.trim(),
+                mentions,
+                images,
+            },
             listener,
         )
     }

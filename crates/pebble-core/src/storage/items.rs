@@ -13,6 +13,7 @@ impl Database {
             |row| {
                 Ok((
                     ModelRequest {
+                        image_root: self.root.clone(),
                         call_id: call_id.into(),
                         session_id: row.get(0)?,
                         conversation_id: row.get(1)?,

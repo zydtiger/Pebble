@@ -17,8 +17,12 @@ output cap is sent to either protocol, including structured repair attempts.
 
 ## Estimate and failure behavior
 
-The conservative input estimate is the UTF-8 byte length of the final wire JSON
-plus a 128-byte framing reserve, with one byte counted as one estimated token.
+The conservative input estimate is the UTF-8 byte length of the final JSON's
+text and metadata plus a 128-byte framing reserve, with one byte counted as one
+estimated token. Image payloads are replaced in this estimate by fixed metadata
+and a nonzero 2048-token reserve per image occurrence; base64 is never counted
+as ordinary text. The final transport has a separate 32 MiB hard limit. See
+[image limits and selected-service evidence](images.md).
 The output cap must fit after that estimate. This covers the fixed prefix,
 system/SOUL/MEMORY, attributed user envelopes, complete native assistant output,
 reasoning, opaque state, current-state envelopes, response schema, protocol/profile
@@ -71,7 +75,7 @@ expected production compression ratio. Tests also keep noncompressible bytes raw
 
 New live memory-capable sessions reserve `min(98304, context_len / 3)` bytes
 (integer division) below the ordinary chat input ceiling. An initial chat request
-must satisfy `wire_json_bytes + 128 <= context_len - max_output_tokens - reserve`.
+must satisfy `estimated_input <= context_len - max_output_tokens - reserve`.
 For 262144/4096, reserve is 87381 and the initial ceiling is 170667 bytes.
 Tool continuation and final repair use the full `context_len - max_output_tokens`
 ceiling. Existing frozen contexts retain their earlier accounting until an

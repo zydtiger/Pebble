@@ -17,6 +17,12 @@ Chat Completions/Responses retain native history with bounded context budgets
 and lossless item compression.
 Without a connection, the app uses its clearly labeled deterministic local demo.
 
+Image input is available as a separate, version-unassigned increment: pick,
+paste or drop up to four JPEG/PNG images, send them with text or alone, and open
+saved images from the transcript. Rust stores durable originals and frozen model
+renditions; chat, classification and explicit memory consolidation receive real
+pixels. See [image input and limits](docs/images.md).
+
 See [completion evidence and current limits](docs/roadmap.md#group-boundaries-and-completion-scenarios)
 for the verified end-to-end scenarios. Participation remains a model judgment;
 manual mentions provide an explicit request, and whole-group fallback permits
@@ -138,12 +144,13 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── .MEMORY-<operation-id>.displaced # retained displaced inode after memory publication
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # eighteen chat/history/state/memory/context tables
-    └── app.lock          # exclusive app ownership; released automatically on exit
+    ├── app.sqlite        # twenty chat/history/state/memory/context/image tables (schema v12)
+    ├── app.lock          # exclusive app ownership; released automatically on exit
+    └── assets/<image-uuid>/ # original, fixed model rendition and thumbnail
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 10 are upgraded transactionally to 11, preserving character, room, message,
+through 11 are upgraded transactionally to 12, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -261,8 +268,10 @@ The output cap is sent as Chat Completions `max_tokens` or Responses
 Budget edits preserve existing history, native prefix, session and accepted state.
 Each accepted request retains its effective limits.
 
-Pebble conservatively counts the final request JSON as UTF-8 bytes plus a
+Pebble conservatively counts text and metadata in the final request JSON as UTF-8 bytes plus a
 128-byte framing reserve, with one byte treated as one estimated input token.
+Image base64 is excluded from this text estimate; each image occurrence adds a
+2048-token vision reserve, and final transport has a separate 32 MiB bound.
 This includes SOUL/MEMORY, native history, reasoning and opaque state, current
 state, response schema and request metadata; structured repair feedback also
 counts. The output cap must fit in the total window. This is **not exact provider

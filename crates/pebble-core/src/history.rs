@@ -35,6 +35,7 @@ pub struct Message {
     pub created_at: String,
     pub failure_detail: String,
     pub can_retry: bool,
+    pub images: Vec<crate::ImageAsset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,9 @@ pub struct ModelItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRequest {
+    /// Runtime resolver only; never stored in frozen native history.
+    #[serde(skip)]
+    pub image_root: std::path::PathBuf,
     pub call_id: String,
     pub session_id: String,
     pub conversation_id: String,

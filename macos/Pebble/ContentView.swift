@@ -127,10 +127,10 @@ struct ContentView: View {
             }.scrollIndicators(.hidden)
             Button { model.showNewCharacter = true } label: {
                 Label("New character", systemImage: "plus").font(.system(size: 11))
-            }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 14)
+            }.buttonStyle(SidebarActionButtonStyle()).foregroundStyle(PebbleTheme.muted).padding(.top, 14)
             Button { model.showNewGroup = true } label: {
                 Label("New group", systemImage: "person.2.badge.plus").font(.system(size: 11))
-            }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 12)
+            }.buttonStyle(SidebarActionButtonStyle()).foregroundStyle(PebbleTheme.muted).padding(.top, 12)
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
@@ -145,7 +145,7 @@ struct ContentView: View {
                         .disabled(model.hasActiveReplies || model.loading)
                         .help("Reload character files")
                 }
-                .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
+                .buttonStyle(SidebarActionButtonStyle()).foregroundStyle(PebbleTheme.muted)
             }
             .padding(.bottom, 23)
         }
@@ -252,7 +252,9 @@ struct ContentView: View {
                                 Text(bubble.isUser ? "YOU" : model.speakerName(bubble.senderID).uppercased())
                                     .font(.system(size: 9, weight: .semibold)).tracking(1)
                                     .foregroundStyle(PebbleTheme.muted)
-                                if bubble.text.isEmpty && bubble.status == .streaming {
+                                if !bubble.images.isEmpty { ImageAttachments(images: bubble.images) }
+                                if bubble.text.isEmpty && !bubble.images.isEmpty { EmptyView() }
+                                else if bubble.text.isEmpty && bubble.status == .streaming {
                                     HStack(spacing: 9) {
                                         ProgressView().controlSize(.small)
                                         Text("Typing…").font(.system(size: 12)).foregroundStyle(PebbleTheme.muted)
@@ -343,11 +345,17 @@ struct ContentView: View {
                     }.scrollIndicators(.hidden)
                 }.foregroundStyle(PebbleTheme.sage)
             }
+            if !model.draftImages.isEmpty { ImageAttachments(images: model.draftImages, remove: model.removeImage) }
             HStack(alignment: .bottom, spacing: 12) {
-                MessageEditor(text: $model.draft, height: $composerHeight,
-                              isFocused: $composerFocused, isEditable: !model.loading) {
-                    model.sendMessage()
+                Button { model.pickImages() } label: {
+                    Image(systemName: "plus").font(.system(size: 14))
+                        .frame(width: 33, height: 33).contentShape(Rectangle())
                 }
+                    .buttonStyle(.plain).help("Add images").accessibilityLabel("Add images").disabled(model.loading || model.importingImages)
+                MessageEditor(text: $model.draft, height: $composerHeight,
+                              isFocused: $composerFocused, isEditable: !model.loading,
+                              onSubmit: { model.sendMessage() }, onImages: model.importImages,
+                              onImageError: { model.error = $0 })
                     .frame(height: composerHeight)
                 if model.isReplying {
                     Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
@@ -359,7 +367,7 @@ struct ContentView: View {
                         .foregroundStyle(.white).frame(width: 33, height: 33)
                         .background(PebbleTheme.sage, in: Circle())
                 }.buttonStyle(.plain)
-                    .disabled(model.loading || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.mentionedIDs.isEmpty))
+                    .disabled(model.loading || model.importingImages || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.mentionedIDs.isEmpty && model.draftImages.isEmpty))
                     .help(model.isReplying ? "Queue message (Enter)" : "Send message (Enter)")
                     .accessibilityLabel(model.isReplying ? "Queue message" : "Send message")
             }

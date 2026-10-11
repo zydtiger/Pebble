@@ -1,5 +1,8 @@
 mod codec;
 mod contexts;
+pub(crate) mod images;
+#[cfg(test)]
+mod images_tests;
 mod items;
 mod jobs;
 pub(crate) mod maintenance;
@@ -52,7 +55,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 11 {
+        if version > 12 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -109,6 +112,10 @@ impl Database {
         }
         if version < 11 {
             tx.execute_batch(include_str!("storage/memory-migration.sql"))?;
+        }
+        if version < 12 {
+            tx.execute_batch("CREATE TABLE image_assets(id TEXT PRIMARY KEY,mime TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,source_bytes INTEGER NOT NULL,model_bytes INTEGER NOT NULL,source_name TEXT NOT NULL,reference TEXT NOT NULL);
+                CREATE TABLE message_images(message_id TEXT NOT NULL REFERENCES messages(id),asset_id TEXT NOT NULL REFERENCES image_assets(id),position INTEGER NOT NULL,PRIMARY KEY(message_id,position),UNIQUE(message_id,asset_id)); PRAGMA user_version=12;")?;
         }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
@@ -203,14 +210,18 @@ impl Database {
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;
-        Ok(query
+        let mut messages: Vec<Message> = query
             .query_map([conversation_id], |row| {
                 let mut message = read_message(row)?;
                 message.failure_detail = row.get(8)?;
                 message.can_retry = row.get::<_, Option<bool>>(9)?.unwrap_or(false);
                 Ok(message)
             })?
-            .collect::<Result<_, _>>()?)
+            .collect::<Result<_, _>>()?;
+        for message in &mut messages {
+            message.images = images::assets(&connection, &message.id)?;
+        }
+        Ok(messages)
     }
 }
 
@@ -236,5 +247,6 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         created_at: row.get(7)?,
         failure_detail: String::new(),
         can_retry: false,
+        images: Vec::new(),
     })
 }

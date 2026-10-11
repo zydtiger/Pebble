@@ -18,6 +18,7 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
             max_output_tokens: 77,
         };
         let request = ModelRequest {
+            image_root: Default::default(),
             call_id: String::new(),
             session_id: String::new(),
             conversation_id: String::new(),

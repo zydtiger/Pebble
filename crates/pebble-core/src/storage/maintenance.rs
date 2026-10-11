@@ -120,7 +120,8 @@ impl Database {
         }) = recovery
         {
             let old_state: Value = serde_json::from_str(&old_state)?;
-            let request: ModelRequest = serde_json::from_str(&frozen)?;
+            let mut request: ModelRequest = serde_json::from_str(&frozen)?;
+            request.image_root = self.root.clone();
             let same_native = old_source == source.as_ref().map(|s| s.0.clone())
                 && (old_source.is_none()
                     || (request.items.len() == items.len() + 1
@@ -153,8 +154,8 @@ impl Database {
         }
         let mut events = Vec::new();
         {
-            let mut q=tx.prepare("SELECT e.id,e.sequence,e.conversation_id,m.sender_kind,m.sender_id,m.content,COALESCE(p.display_name,'You') FROM persona_events e JOIN messages m ON m.id=e.message_id LEFT JOIN personas p ON p.id=m.sender_id WHERE e.persona_id=?1 AND e.sequence>?2 AND e.sequence<=?3 AND e.kind='received' AND NOT EXISTS(SELECT 1 FROM model_item_events x JOIN model_items i ON i.id=x.item_id WHERE x.event_id=e.id AND i.session_id=?4) AND NOT EXISTS(SELECT 1 FROM model_calls c WHERE c.trigger_message_id=e.message_id AND c.persona_id=e.persona_id AND c.session_id IS NULL AND c.status IN ('cancelled','interrupted','failed') AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct') ORDER BY e.sequence")?;
-            for row in q.query_map(params![persona.id,start,cutoff,session],|r|Ok(json!({"event_id":r.get::<_,String>(0)?,"sequence":r.get::<_,i64>(1)?,"conversation_id":r.get::<_,String>(2)?,"speaker":{"kind":r.get::<_,String>(3)?,"id":r.get::<_,String>(4)?,"name":r.get::<_,String>(6)?},"text":r.get::<_,String>(5)?})))? {events.push(row?);}
+            let mut q=tx.prepare("SELECT e.id,e.sequence,e.conversation_id,m.sender_kind,m.sender_id,m.content,COALESCE(p.display_name,'You'),m.id FROM persona_events e JOIN messages m ON m.id=e.message_id LEFT JOIN personas p ON p.id=m.sender_id WHERE e.persona_id=?1 AND e.sequence>?2 AND e.sequence<=?3 AND e.kind='received' AND NOT EXISTS(SELECT 1 FROM model_item_events x JOIN model_items i ON i.id=x.item_id WHERE x.event_id=e.id AND i.session_id=?4) AND NOT EXISTS(SELECT 1 FROM model_calls c WHERE c.trigger_message_id=e.message_id AND c.persona_id=e.persona_id AND c.session_id IS NULL AND c.status IN ('cancelled','interrupted','failed') AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct') ORDER BY e.sequence")?;
+            for row in q.query_map(params![persona.id,start,cutoff,session],|r|Ok(json!({"message_id":r.get::<_,String>(7)?,"event_id":r.get::<_,String>(0)?,"sequence":r.get::<_,i64>(1)?,"conversation_id":r.get::<_,String>(2)?,"speaker":{"kind":r.get::<_,String>(3)?,"id":r.get::<_,String>(4)?,"name":r.get::<_,String>(6)?},"text":r.get::<_,String>(5)?})))? {let mut event=row?;event["image_attachments"]=json!(super::images::references(&tx,event["message_id"].as_str().unwrap())?);events.push(event);}
         }
         has_knowledge |= !events.is_empty();
         let instructions = json!({"maintenance":"Review the whole outgoing knowledge and current MEMORY below. Preserve useful existing memory, correct outdated facts, distinguish fictional/real context, and exclude current affinity/mood state. You MUST call update_memory once with the complete revised MEMORY, even when unchanged. Do not reply to the user or update accepted state. No conversational response is requested.","current_memory":memory,"current_state":state,"eligible_observations":events,"rules":crate::memory::INSTRUCTIONS});
@@ -172,13 +173,10 @@ impl Database {
         items.push(ModelItem {
             id: String::new(),
             sequence: i64::MAX,
-            payload: serde_json::to_vec(&input_message(
-                &protocol,
-                "user",
-                &instructions.to_string(),
-            ))?,
+            payload: serde_json::to_vec(&crate::images::input_message(&protocol, &instructions)?)?,
         });
         let request = ModelRequest {
+            image_root: self.root.clone(),
             call_id: id.clone(),
             session_id: session.clone(),
             conversation_id: persona.conversation_id.clone(),

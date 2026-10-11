@@ -130,7 +130,7 @@ fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Re
                 _ => super::PROMPT.trim_end(),
             },
         ),
-        crate::storage::input_message(&connection.api, "user", &serde_json::to_string(input)?),
+        crate::images::input_message(&connection.api, input)?,
     ];
     let (_, mut body) = if connection.api == "responses" {
         (
@@ -162,14 +162,28 @@ fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Re
 
 fn budgeted_body(config: &ClassifierConnection, input: &str, phase: &str) -> Result<Value, Error> {
     let mut input: Value = serde_json::from_str(input)?;
+    let root = input
+        .as_object_mut()
+        .and_then(|v| v.remove("_asset_root"))
+        .and_then(|v| v.as_str().map(std::path::PathBuf::from))
+        .unwrap_or_default();
     let required = input
         .as_object_mut()
         .and_then(|v| v.remove("_required_message_ids"))
         .unwrap_or(json!([]));
     loop {
-        let body = request_body(config, &input, phase)?;
+        let mut body = request_body(config, &input, phase)?;
         match config.connection.budget().check_body(&body) {
-            Ok(()) => return Ok(body),
+            Ok(()) => {
+                let key = if config.connection.api == "responses" {
+                    "input"
+                } else {
+                    "messages"
+                };
+                crate::images::materialize(&root, body[key].as_array_mut().unwrap())?;
+                crate::images::check_transport(&body)?;
+                return Ok(body);
+            }
             Err(error) => {
                 // Permission's real user transcript may contain an active silence
                 // constraint: never silently remove it. Intent has only mandatory input.

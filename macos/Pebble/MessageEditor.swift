@@ -7,6 +7,8 @@ struct MessageEditor: NSViewRepresentable {
     @Binding var isFocused: Bool
     var isEditable: Bool
     var onSubmit: () -> Void
+    var onImages: ([ImageImportSource]) -> Void = { _ in }
+    var onImageError: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -25,6 +27,9 @@ struct MessageEditor: NSViewRepresentable {
             guard let coordinator, coordinator.parent.isFocused != focused else { return }
             coordinator.parent.isFocused = focused
         }
+        scroll.editor.onImages = { [weak coordinator] sources in coordinator?.parent.onImages(sources) }
+        scroll.editor.onImageError = { [weak coordinator] error in coordinator?.parent.onImageError(error) }
+        scroll.editor.registerForDraggedTypes(ImageInput.pasteTypes)
         scroll.editor.onSubmit = { [weak coordinator] in coordinator?.parent.onSubmit() }
         scroll.onAttach = { [weak coordinator] in coordinator?.focusIfNeeded() }
         return scroll
@@ -48,6 +53,8 @@ struct MessageEditor: NSViewRepresentable {
         scroll.editor.delegate = nil
         scroll.editor.onFocusChange = nil
         scroll.editor.onSubmit = nil
+        scroll.editor.onImages = nil
+        scroll.editor.onImageError = nil
         scroll.onAttach = nil
         scroll.onHeightChange = nil
     }
@@ -163,6 +170,38 @@ final class ComposerScrollView: NSScrollView {
 final class ComposerTextView: NSTextView {
     var onFocusChange: ((Bool) -> Void)?
     var onSubmit: (() -> Void)?
+    var onImages: (([ImageImportSource]) -> Void)?
+    var onImageError: ((String) -> Void)?
+
+    @discardableResult
+    func importImages(from pasteboard: NSPasteboard) -> Bool {
+        guard isEditable else { return false }
+        do {
+            guard let sources = try ImageInput.read(pasteboard) else { return false }
+            onImages?(sources); return true
+        } catch { onImageError?(error.localizedDescription); return true }
+    }
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        // Plain-text NSTextView otherwise disables Paste for image-only clipboard
+        // content before the responder chain can reach our attachment importer.
+        if item.action == #selector(paste(_:)), NSPasteboard.general.availableType(from: ImageInput.pasteTypes) != nil {
+            return isEditable
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+    override func paste(_ sender: Any?) {
+        guard isEditable else { return }
+        if !importImages(from: .general) { super.paste(sender) }
+    }
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if isEditable && sender.draggingPasteboard.availableType(from: ImageInput.pasteTypes) != nil { return .copy }
+        return super.draggingEntered(sender)
+    }
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if importImages(from: sender.draggingPasteboard) { return true }
+        return super.performDragOperation(sender)
+    }
+
 
     override func keyDown(with event: NSEvent) {
         guard (event.keyCode == 36 || event.keyCode == 76), isEditable, !hasMarkedText() else {

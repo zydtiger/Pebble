@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 actor CoreClient {
     private var backend: PebbleBackend?
@@ -99,9 +100,17 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.removeGroupMember(roomId: room, personaId: persona)
     }
-    func send(room: String, prompt: String, mentions: [String], observer: ChatObserver) throws -> ChatSubmissionRecord {
+    func send(room: String, prompt: String, mentions: [String], images: [String] = [], observer: ChatObserver) throws -> ChatSubmissionRecord {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
-        return try backend.sendRoomMessage(roomId: room, prompt: prompt, mentions: mentions, observer: observer)
+        return try backend.sendRoomImages(roomId: room, prompt: prompt, mentions: mentions, images: images, observer: observer)
+    }
+
+    func importImage(_ source: ImageImportSource) throws -> ImageAssetRecord {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        switch source {
+        case let .file(url): return try backend.importImage(path: url.path)
+        case let .data(data): return try backend.importImageData(bytes: data)
+        }
     }
 
 }
@@ -132,6 +141,7 @@ struct ChatBubble: Identifiable {
     var status: MessageStatus
     var failureDetail: String
     var canRetry: Bool
+    var images: [ImageAssetRecord]
 
     init(_ message: MessageRecord) {
         id = message.id
@@ -142,6 +152,7 @@ struct ChatBubble: Identifiable {
         status = message.status
         failureDetail = message.failureDetail
         canRetry = message.canRetry
+        images = message.images
     }
 
     var statusLabel: String? {
@@ -207,6 +218,32 @@ final class ChatModel {
     private func conversationID(_ id: String) -> String { workspace?.personas.first { $0.id == id }?.conversationId ?? id }
     private var selectedRoom: RoomState? { selectedID.map { room($0) } }
     var draft: String { get { selectedRoom?.draft ?? "" } set { selectedRoom?.draft = newValue } }
+    var draftImages: [ImageAssetRecord] { selectedRoom?.images ?? [] }
+    var importingImages: Bool { (selectedRoom?.importingImages ?? 0) > 0 }
+    func removeImage(_ id: String) { selectedRoom?.images.removeAll { $0.id == id } }
+    func pickImages(panel: NSOpenPanel = NSOpenPanel()) {
+        panel.allowedContentTypes = [.jpeg, .png]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        importImages(panel.urls.map(ImageImportSource.file))
+    }
+    func importImages(_ sources: [ImageImportSource]) {
+        guard let id = selectedID, !sources.isEmpty else { return }
+        let state = room(id)
+        guard state.images.count + state.importingImages + sources.count <= 4 else {
+            state.error = "Send at most four images in one message."; return
+        }
+        state.importingImages += sources.count
+        Task { [client] in
+            defer { state.importingImages -= sources.count }
+            do {
+                var imported: [ImageAssetRecord] = []
+                for source in sources { imported.append(try await client.importImage(source)) }
+                state.images.append(contentsOf: imported)
+            } catch { state.error = describe(error) }
+        }
+    }
     var bubbles: [ChatBubble] { selectedRoom?.bubbles ?? [] }
     var participation: [ParticipationRecord] {
         guard let latest = bubbles.last(where: { $0.isUser }) else { return [] }
@@ -377,19 +414,24 @@ final class ChatModel {
     func retryReply(_ reply: String) {
         guard let conversation = selectedConversation, !loading,
               let bubble = bubbles.first(where: { $0.id == reply }), canRetry(bubble) else { return }
-        beginReply(conversation, prompt: "", mentions: [], retry: (bubble.senderID, reply))
+        beginReply(conversation, prompt: "", usesDraft: false, retry: (bubble.senderID, reply))
     }
     func sendMessage(_ suggested: String? = nil) {
         guard let conversation = selectedConversation, !loading else { return }
         let state = room(conversation.id)
         let prompt = (suggested ?? state.draft).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty || !state.mentions.isEmpty else { return }
-        beginReply(conversation, prompt: prompt, mentions: state.mentions, retry: nil)
+        let usesDraft = suggested == nil
+        guard !importingImages, !prompt.isEmpty || (usesDraft && (!state.mentions.isEmpty || !state.images.isEmpty)) else { return }
+        beginReply(conversation, prompt: prompt, usesDraft: usesDraft, retry: nil)
     }
-    private func beginReply(_ conversation: RoomRecord, prompt: String, mentions: [String], retry: (String, String)?) {
+    private func beginReply(_ conversation: RoomRecord, prompt: String, usesDraft: Bool, retry: (String, String)?) {
         let state = room(conversation.id)
+        let acceptedDraft = state.draft
         let draftRevision = state.draftRevision
         let mentionRevision = state.mentionRevision
+        let imageRevision = state.imageRevision
+        let mentions = usesDraft ? state.mentions : []
+        let images = usesDraft ? state.images.map(\.id) : []
         state.error = nil
         let run = RoomRun()
         // Before Rust resolves typed mentions, conservatively cover possible speakers.
@@ -405,7 +447,7 @@ final class ChatModel {
                 let handles: [ChatHandle]
                 if let retry { handles = [try await client.retry(persona: retry.0, reply: retry.1, observer: observer)] }
                 else {
-                    let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, observer: observer)
+                    let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, images: images, observer: observer)
                     state.apply([submission.message], conversation: conversation.id)
                     handles = submission.handles
                     run.group = submission.group; run.classifying = submission.group != nil
@@ -414,9 +456,11 @@ final class ChatModel {
                 }
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handles.forEach { $0.cancel() }; sink.finish(); return }
                 run.handles = handles; run.accepting = false; run.pendingIDs = Set(handles.map { $0.id() })
-                if retry == nil {
-                    if state.draftRevision == draftRevision && state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
-                    if state.mentionRevision == mentionRevision && state.mentions == mentions { state.mentions = [] }
+                if retry == nil && usesDraft {
+                    if state.draftRevision == draftRevision && state.mentionRevision == mentionRevision && state.imageRevision == imageRevision && state.draft == acceptedDraft {
+                        if state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
+                        state.mentions = []; state.images = []
+                    }
                 }
                 for handle in handles { state.apply(handle.messages(), conversation: conversation.id) }
                 if run.cancelRequested { run.cancel() }

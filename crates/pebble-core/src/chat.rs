@@ -77,6 +77,13 @@ impl Control {
     }
 }
 
+pub(crate) struct RoomInput<'a> {
+    pub room: &'a str,
+    pub text: &'a str,
+    pub mentions: &'a [String],
+    pub images: &'a [String],
+}
+
 pub struct ChatSubmission {
     pub message: Message,
     pub tasks: Vec<Arc<ChatTask>>,
@@ -211,15 +218,18 @@ impl Chats {
         self: &Arc<Self>,
         db: Arc<Database>,
         load: impl FnOnce() -> Result<crate::Workspace, Error>,
-        room: &str,
-        prompt: &str,
-        mentions: &[String],
+        input: RoomInput<'_>,
         listener: Arc<dyn ChatListener>,
     ) -> Result<ChatSubmission, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
-        let (message, turns, decisions) =
-            db.enqueue_room(room, prompt, mentions, &workspace.personas)?;
+        let (message, turns, decisions) = db.enqueue_room_images(
+            input.room,
+            input.text,
+            input.mentions,
+            &workspace.personas,
+            input.images,
+        )?;
         let mut tasks = Vec::new();
         for turn in turns {
             let persona = workspace

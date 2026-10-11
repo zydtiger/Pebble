@@ -24,6 +24,9 @@ final class RoomRun {
 final class RoomState {
     var draft = "" { didSet { draftRevision += 1 } }
     var mentions: [String] = [] { didSet { mentionRevision += 1 } }
+    var images: [ImageAssetRecord] = [] { didSet { imageRevision += 1 } }
+    var imageRevision = 0
+    var importingImages = 0
     var draftRevision = 0
     var mentionRevision = 0
     var bubbles: [ChatBubble] = []

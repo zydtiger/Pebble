@@ -140,11 +140,12 @@ pub(crate) fn request_body(
     request: &ModelRequest,
     output_tokens: u64,
 ) -> Result<(&'static str, Value), Error> {
-    let messages = request
+    let mut messages = request
         .items
         .iter()
         .map(|item| serde_json::from_slice::<Value>(&item.payload))
         .collect::<Result<Vec<_>, _>>()?;
+    crate::images::materialize(&request.image_root, &mut messages)?;
     let (route, mut body) = match chat.api.as_str() {
         "chat_completions" => (
             "chat/completions",
@@ -187,6 +188,7 @@ pub(crate) fn request_body(
         }
     }
     crate::request_parameters::apply(&chat.request, &mut body);
+    crate::images::check_transport(&body)?;
     Ok((route, body))
 }
 

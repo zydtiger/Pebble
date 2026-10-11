@@ -23,7 +23,7 @@ enum GroupRetryChecks {
         for index in 0..<8 { model.sendMessage("B private predecessor \(index)") }
         model.select(group)
         model.mentionedIDs = [a, b]
-        model.sendMessage("Both characters may answer")
+        model.draft = "Both characters may answer"; model.sendMessage()
         try await wait { model.bubbles.contains { !$0.isUser && $0.senderID == a } }
         let firstA = model.bubbles.first { !$0.isUser && $0.senderID == a }!.id
         model.cancelReply(firstA)
@@ -45,7 +45,7 @@ enum GroupRetryChecks {
         try await wait { !model.loading }
         let retryRoom = model.selectedID!
         model.mentionedIDs = [a]
-        model.sendMessage("Cancel A again before its private call")
+        model.draft = "Cancel A again before its private call"; model.sendMessage()
         try await wait { model.bubbles.last?.senderID == a }
         let secondA = model.bubbles.last!.id
         model.cancelReply(secondA)

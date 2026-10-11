@@ -106,3 +106,113 @@ fn omission_sends_no_hidden_temperature_or_template_switch() {
         }
     }
 }
+
+#[test]
+fn four_normalized_images_fit_16k_and_prune_optional_images_as_complete_events() {
+    let root = tempfile::tempdir().unwrap();
+    let pixels = image::RgbImage::from_pixel(768, 768, image::Rgb([255, 0, 0]));
+    let mut bytes = Vec::new();
+    pixels
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let refs = (0..4)
+        .map(|_| crate::images::import(root.path(), &bytes).unwrap().1)
+        .collect::<Vec<_>>();
+    for api in ["chat_completions", "responses"] {
+        let mut config = config(api, None);
+        config.connection.context_len = 16384;
+        config.connection.max_output_tokens = 256;
+        for phase in ["initial", "reassess", "intent", "permission"] {
+            let event = json!({"message_id":"root","speaker":{"kind":"user","id":"owner"},"text":"","image_attachments":refs});
+            let mut input = json!({"_asset_root":root.path(),"_required_message_ids":["root"],"latest_trigger":{"message_id":"root","text":""}});
+            let key = match phase {
+                "intent" => "latest_user_message",
+                "permission" => "recent_real_user_transcript",
+                _ => "recent_group_transcript",
+            };
+            input[key] = if phase == "intent" {
+                event.clone()
+            } else {
+                json!([event.clone()])
+            };
+            let body = budgeted_body(&config, &input.to_string(), phase).unwrap();
+            assert_eq!(
+                body.to_string().matches("data:image/png;base64,").count(),
+                4,
+                "{api} {phase}"
+            );
+            assert!(body.to_string().contains("root"));
+            assert!(crate::images::estimate(&body).unwrap() > 8192);
+            assert!(crate::images::estimate(&body).unwrap() < 16384 - 256);
+            if phase == "initial" || phase == "reassess" {
+                input["recent_persona_events"] = json!([{"message_id":"optional","text":"old".repeat(3000),"image_attachments":[refs[0]]}]);
+                let trimmed = budgeted_body(&config, &input.to_string(), phase).unwrap();
+                assert_eq!(
+                    trimmed
+                        .to_string()
+                        .matches("data:image/png;base64,")
+                        .count(),
+                    4
+                );
+                assert!(!trimmed.to_string().contains("optional"));
+            }
+            config.connection.context_len = 4096;
+            let error = budgeted_body(&config, &input.to_string(), phase)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("mandatory input"));
+            config.connection.context_len = 16384;
+        }
+    }
+}
+
+#[test]
+#[ignore = "explicit selected classifier; synthetic vision controls only"]
+fn opt_in_selected_classifier_consumes_changed_image_pixels() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config("chat_completions", None);
+    config.connection.base_url =
+        std::env::var("PEBBLE_CLASSIFIER_API_ROOT").expect("PEBBLE_CLASSIFIER_API_ROOT");
+    config.connection.model =
+        std::env::var("PEBBLE_CLASSIFIER_MODEL").expect("PEBBLE_CLASSIFIER_MODEL");
+    config.connection.context_len = 16384;
+    config.connection.max_output_tokens = 64;
+    config.connection.request =
+        json!({"temperature":0,"chat_template_kwargs":{"enable_thinking":false}})
+            .as_object()
+            .unwrap()
+            .clone();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for (color, expected) in [([255, 0, 0], true), ([0, 0, 255], false)] {
+        let pixels = image::RgbImage::from_fn(256, 256, |x, y| {
+            if (x as i32 - 128).pow(2) + (y as i32 - 128).pow(2) < 80 * 80 {
+                image::Rgb(color)
+            } else {
+                image::Rgb([255, 255, 255])
+            }
+        });
+        let mut bytes = Vec::new();
+        pixels
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let (_, reference) = crate::images::import(root.path(), &bytes).unwrap();
+        let event = json!({"message_id":"root","speaker":{"kind":"user","id":"owner"},"text":"For this synthetic conversation, please respond if and only if the attached image contains a red circle. Otherwise stay silent.","image_attachments":[reference]});
+        let input = json!({"_asset_root":root.path(),"_required_message_ids":["root"],"persona":{"id":"synthetic","name":"Synthetic"},"SOUL":"You are interested in red circles only. Follow the user's conditional participation request.","MEMORY_current_state":{"MEMORY":"","current_state":{}},"latest_trigger":{"message_id":"root","text":event["text"]},"recent_persona_events":[],"recent_group_transcript":[event]});
+        let actual = rt
+            .block_on(classify(&config, &input.to_string(), "participation"))
+            .unwrap();
+        assert_eq!(actual, expected, "image color {color:?}");
+        println!(
+            "Classifier native adapter: changed synthetic pixels {color:?} => respond={actual}"
+        );
+    }
+}

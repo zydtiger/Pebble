@@ -20,7 +20,7 @@ impl ContextBudget {
         98_304.min(self.context_len / 3)
     }
     pub(crate) fn check_chat_start(&self, body: &Value) -> Result<(), Error> {
-        let estimate = (serde_json::to_vec(body)?.len() as u64).saturating_add(128);
+        let estimate = crate::images::estimate(body)?;
         let ceiling = self
             .context_len
             .saturating_sub(self.max_output_tokens)
@@ -45,7 +45,7 @@ impl ContextBudget {
     pub(crate) fn check_body(&self, body: &Value) -> Result<(), Error> {
         // Count the final wire JSON, including all envelopes, schema, profile,
         // native reasoning/state and any future tool metadata. Add framing reserve.
-        let estimate = (serde_json::to_vec(body)?.len() as u64).saturating_add(128);
+        let estimate = crate::images::estimate(body)?;
         if estimate > self.context_len.saturating_sub(self.max_output_tokens) {
             return Err(Error::ContextLimit(format!(
                 "Context is full: conservative input estimate {estimate} UTF-8 bytes, output reserve {}, configured context_len {}. Increase this connection's limits in config.toml or start a fresh context; earlier messages stay saved. This estimate is not exact provider token usage.",

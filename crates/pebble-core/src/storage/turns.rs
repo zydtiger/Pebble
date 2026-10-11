@@ -117,9 +117,10 @@ impl Database {
             )?;
             for row in rows {
                 let (id, sequence, conversation, message, kind, speaker, text, name) = row?;
+                let images = super::images::references(&tx, &message)?;
                 events.push(
                     json!({"event_id":id, "sequence":sequence, "conversation_id":conversation,
-                    "message_id":message, "speaker":{"kind":kind,"id":speaker,"name":name}, "text":text}),
+                    "message_id":message, "speaker":{"kind":kind,"id":speaker,"name":name}, "text":text,"image_attachments":images}),
                 );
                 event_ids.push(id);
             }
@@ -183,7 +184,7 @@ impl Database {
             &session_id,
             Some(&call_id),
             "input",
-            &input_message(&protocol, "user", &serde_json::to_string(&envelope)?),
+            &crate::images::input_message(&protocol, &envelope)?,
         )?;
         for event in event_ids {
             link(&tx, &item, &event)?;
@@ -351,6 +352,7 @@ pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
         message.failure_detail = detail;
         message.can_retry = retry;
     }
+    message.images = super::images::assets(db, id)?;
     Ok(message)
 }
 

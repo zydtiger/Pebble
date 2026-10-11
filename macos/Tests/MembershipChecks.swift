@@ -69,7 +69,7 @@ enum MembershipChecks {
         model.select(a)
         for index in 0..<3 { model.sendMessage("Independent private work \(index)") }
         model.select(room); model.mentionedIDs = [a, b]
-        model.sendMessage("Remove waiting member, let the other finish")
+        model.draft = "Remove waiting member, let the other finish"; model.sendMessage()
         try await wait(model, until: { model.bubbles.contains { $0.senderID == a && $0.status == .queued } })
         try await model.removeGroupMember(a, room: room)
         try check(model.pendingCount(a) > 0, "Removal cancelled independent private work")

@@ -39,13 +39,13 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the eighteen chat/history/state/membership/decision/round/memory/context tables and schema migration. Visible
+Rust owns the twenty chat/history/state/membership/decision/round/memory/context tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
 
 ```text
-Swift sends room, text, explicit mentions, and observer
+Swift sends room, text, immutable imported image IDs, explicit mentions, and observer
     → Rust accepts one user message, member receipts, group round/decisions/slots atomically
     → room coordinator admits only its ready speaker into the persona queue
     → persona queue activates the call and freezes its request atomically
@@ -139,6 +139,18 @@ bound; zstd window and output reads have independent bounds. A conservative
 byte-based input estimate plus configured output reserve is checked before the
 adapter starts. Budget edits alone leave the session and prefix unchanged.
 See [context and encoding](context.md). There is no background service, threshold-triggered rollover, or delegated work. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
+
+## Image boundary
+
+Rust owns immutable assets, content validation, normalization, metadata,
+message ordering, visibility, frozen references, request materialization and
+image/transport budgets. Swift owns the native picker, paste/drop conversion,
+removable room drafts and image presentation; UniFFI carries typed records.
+Schema v12 adds two tables without rewriting old native items. All chat,
+classifier and maintenance adapters use the same 768-pixel model rendition.
+Frozen user parts reference exact bytes; base64 exists only in a bounded HTTP
+request. Required images fail visibly if unavailable. See [image input](images.md)
+for limits, replay, attribution and verification.
 
 ## Settings and recovery
 

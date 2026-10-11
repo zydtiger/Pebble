@@ -50,3 +50,14 @@ struct SoftButtonStyle: ButtonStyle {
             .foregroundStyle(PebbleTheme.ink)
     }
 }
+
+struct SidebarActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? (hovering || configuration.isPressed ? 0.55 : 1) : 0.4)
+            .onHover { hovering = $0 }
+    }
+}

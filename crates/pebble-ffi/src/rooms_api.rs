@@ -80,6 +80,36 @@ impl PebbleBackend {
             .map(Into::into)
             .collect())
     }
+    pub fn send_room_images(
+        &self,
+        room_id: String,
+        prompt: String,
+        mentions: Vec<String>,
+        images: Vec<String>,
+        observer: Arc<dyn ChatObserver>,
+    ) -> Result<ChatSubmissionRecord, BackendError> {
+        let submission = self.core.send_room_images(
+            &room_id,
+            &prompt,
+            &mentions,
+            &images,
+            Arc::new(ObserverAdapter(observer)),
+        )?;
+        Ok(ChatSubmissionRecord {
+            message: submission.message.into(),
+            group: submission.group.map(|task| Arc::new(GroupHandle { task })),
+            participation: submission
+                .participation
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            handles: submission
+                .tasks
+                .into_iter()
+                .map(|task| Arc::new(ChatHandle { task }))
+                .collect(),
+        })
+    }
     pub fn send_room_message(
         &self,
         room_id: String,

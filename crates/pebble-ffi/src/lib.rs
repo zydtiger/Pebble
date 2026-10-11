@@ -1,3 +1,5 @@
+mod images_api;
+pub use images_api::*;
 mod participation_api;
 pub use participation_api::*;
 mod rooms_api;
@@ -139,6 +141,7 @@ pub struct MessageRecord {
     pub created_at: String,
     pub failure_detail: String,
     pub can_retry: bool,
+    pub images: Vec<ImageAssetRecord>,
 }
 
 impl From<pebble_core::Message> for MessageRecord {
@@ -162,6 +165,7 @@ impl From<pebble_core::Message> for MessageRecord {
             created_at: message.created_at,
             failure_detail: message.failure_detail,
             can_retry: message.can_retry,
+            images: message.images.into_iter().map(Into::into).collect(),
         }
     }
 }
