@@ -5,8 +5,6 @@ use toml_edit::Item;
 #[derive(Debug, Clone)]
 pub struct ClassifierSettings {
     pub connection: ChatSettings,
-    /// Empty means standard protocol; the Qwen extension is explicit and Chat-only.
-    pub request_profile: String,
 }
 
 pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<ClassifierSettings, Error> {
@@ -46,6 +44,7 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<ClassifierSetti
             } else {
                 string("responses_schema_format")
             },
+            request_json: settings::request_json(classifier)?,
             has_api_key: !string("api_key").trim().is_empty(),
             api_key_env: string("api_key_env"),
             context_len: classifier
@@ -59,7 +58,6 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<ClassifierSetti
                 .map(|v| v as u64)
                 .or_else(|| inherited.map(|c| c.max_output_tokens)),
         },
-        request_profile: string("request_profile"),
     })
 }
 
@@ -96,25 +94,14 @@ pub(crate) fn save(
                 "responses_schema_format",
                 &update.connection.responses_schema_format,
             );
-            classifier
-                .as_table_like_mut()
-                .unwrap()
-                .remove("request_profile");
         } else {
             classifier
                 .as_table_like_mut()
                 .unwrap()
                 .remove("responses_schema_format");
-            if update.request_profile.is_empty() {
-                classifier
-                    .as_table_like_mut()
-                    .unwrap()
-                    .remove("request_profile");
-            } else {
-                settings::put(classifier, "request_profile", &update.request_profile);
-            }
         }
         settings::put_limits(classifier, &update.connection)?;
+        settings::put_request(classifier, &update.connection)?;
         match credential {
             CredentialChange::Keep => {}
             CredentialChange::Replace(key) => {

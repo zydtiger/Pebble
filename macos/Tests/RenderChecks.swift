@@ -182,6 +182,9 @@ struct RenderChecks {
                 }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "failed-retry")
+                var parameterPreview = try await model.readSettings(nil)
+                parameterPreview.chat.requestJson = #"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#
+                try await model.saveSettings(nil, update: SettingsUpdateRecord(chat: parameterPreview.chat, credential: .keep, persona: nil))
                 window.setContentSize(NSSize(width: 600, height: 620))
                 window.contentView = NSHostingView(rootView: SettingsSheet(model: model, target: SettingsTarget(personaID: nil)))
                 try await Task.sleep(for: .milliseconds(400))

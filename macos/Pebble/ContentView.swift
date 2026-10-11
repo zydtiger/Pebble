@@ -360,8 +360,6 @@ struct ContentView: View {
                         }
                     }.scrollIndicators(.hidden)
                 }.foregroundStyle(PebbleTheme.sage)
-                Text(model.mentionedIDs.isEmpty ? "Type @Name or choose a member to request a reply. Characters can also choose to join." : "Selected mentions request a reply directly; others may also join. Remove a chip to change the request.")
-                    .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
             }
             HStack(alignment: .bottom, spacing: 12) {
                 MessageEditor(text: $model.draft, height: $composerHeight,

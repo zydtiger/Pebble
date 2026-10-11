@@ -9,7 +9,7 @@ subtitle = "A curious mind. A soft place to land."
 # a nonempty api_key or an api_key_env reference can supply credentials later.
 
 # An optional [classifier] independently replaces the entire app classifier.
-# Use the same connection fields, plus explicit request_profile only when needed.
+# Use the same connection fields and optional concrete [classifier.request] parameters.
 
 [response.initial_state]
 affinity_user = 20

@@ -37,6 +37,9 @@ fn exercise(api: &str) {
     }
     let mut settings = core.settings(None).unwrap();
     settings.chat.max_output_tokens = Some(1024);
+    if let Ok(request) = std::env::var("PEBBLE_LIVE_REQUEST_JSON") {
+        settings.chat.request_json = request;
+    }
     core.save_settings(
         None,
         &SettingsUpdate {

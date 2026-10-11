@@ -167,7 +167,7 @@ pub fn finish(submission: &ChatSubmission, rx: &mpsc::Receiver<ChatEvent>) -> Ve
     }
     events
 }
-pub fn configure(core: &Core, persona: Option<&str>, url: &str, api: &str, profile: &str) {
+pub fn configure(core: &Core, persona: Option<&str>, url: &str, api: &str, request: &str) {
     let mut s = core.classifier_settings(persona).unwrap();
     s.connection.enabled = true;
     s.connection.context_len = Some(16384);
@@ -175,7 +175,11 @@ pub fn configure(core: &Core, persona: Option<&str>, url: &str, api: &str, profi
     s.connection.model = "synthetic-participation".into();
     s.connection.base_url = url.into();
     s.connection.api = api.into();
-    s.request_profile = profile.into();
+    s.connection.request_json = if request.is_empty() {
+        "{}".into()
+    } else {
+        request.into()
+    };
     core.save_classifier_settings(persona, &s, &pebble_core::CredentialChange::Clear)
         .unwrap();
 }

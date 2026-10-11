@@ -135,12 +135,12 @@ fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Re
     let (_, mut body) = if connection.api == "responses" {
         (
             "responses",
-            json!({"model":connection.model,"input":messages,"temperature":0,"stream":false,"store":false,"max_output_tokens":connection.max_output_tokens}),
+            json!({"model":connection.model,"input":messages,"stream":false,"store":false,"max_output_tokens":connection.max_output_tokens}),
         )
     } else {
         (
             "chat/completions",
-            json!({"model":connection.model,"messages":messages,"temperature":0,"stream":false,"max_tokens":connection.max_output_tokens}),
+            json!({"model":connection.model,"messages":messages,"stream":false,"max_tokens":connection.max_output_tokens}),
         )
     };
     let schema = if phase == "intent" {
@@ -156,9 +156,7 @@ fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Re
         body["text"]["format"] =
             json!({"type":"json_schema","name":"participation","strict":true,"schema":schema});
     }
-    if config.request_profile.as_deref() == Some("qwen_non_thinking") {
-        body["chat_template_kwargs"] = json!({"enable_thinking":false});
-    }
+    crate::request_parameters::apply(&connection.request, &mut body);
     Ok(body)
 }
 

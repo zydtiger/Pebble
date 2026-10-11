@@ -12,13 +12,13 @@ struct ClassifierSheet: View {
     @State private var baseURL = ""
     @State private var api = "chat_completions"
     @State private var dialect = "text_format"
-    @State private var profile = ""
     @State private var credential = "keep"
     @State private var replacement = ""
     @State private var environment = ""
     @State private var hasKey = false
     @State private var window = ""
     @State private var output = ""
+    @State private var requestJSON = "{}"
     private var character: Bool { target.personaID != nil }
 
     var body: some View {
@@ -56,14 +56,8 @@ struct ClassifierSheet: View {
                                 Text("Standard · text.format").tag("text_format")
                                 Text("llama.cpp · response_format").tag("response_format")
                             }
-                        } else {
-                            Picker("Request mode", selection: $profile) {
-                                Text("Standard protocol").tag("")
-                                Text("Qwen · non-thinking").tag("qwen_non_thinking")
-                            }
-                            Text("Choose Qwen only for an endpoint supporting its non-thinking request extension.")
-                                .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         }
+                        RequestParametersEditor(text: $requestJSON)
                         LabeledContent("Context length") { TextField("Required total token window", text: $window) }
                         LabeledContent("Max output tokens") { TextField("Required output cap (Qwen default: 64)", text: $output) }
                         Text("context_len includes input and output. A conservative UTF-8 byte estimate includes rules, excerpts and schema; optional older excerpts may be trimmed. Mandatory content that cannot fit fails before HTTP.")
@@ -93,7 +87,7 @@ struct ClassifierSheet: View {
         do {
             let settings = try await model.readClassifierSettings(target.personaID)
             enabled = settings.connection.enabled; modelName = settings.connection.model; baseURL = settings.connection.baseUrl
-            api = settings.connection.api; dialect = settings.connection.responsesSchemaFormat; profile = settings.requestProfile
+            api = settings.connection.api; dialect = settings.connection.responsesSchemaFormat; requestJSON = settings.connection.requestJson
             window = settings.connection.contextLen.map(String.init) ?? ""
             output = settings.connection.maxOutputTokens.map(String.init) ?? ""
             hasKey = settings.connection.hasApiKey; environment = settings.connection.apiKeyEnv; loaded = true
@@ -114,7 +108,7 @@ struct ClassifierSheet: View {
             case "environment": change = .environment(name: environment)
             default: change = .keep
             }
-            let update = ClassifierSettingsRecord(connection: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: dialect, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil), requestProfile: profile)
+            let update = ClassifierSettingsRecord(connection: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: dialect, requestJson: requestJSON, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil))
             try await model.saveClassifierSettings(target.personaID, update: update, credential: change)
             replacement = ""; dismiss()
         } catch { self.error = model.describe(error) }

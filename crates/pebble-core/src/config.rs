@@ -34,7 +34,6 @@ pub struct Persona {
 pub struct ClassifierConnection {
     #[serde(flatten)]
     pub connection: ChatConnection,
-    pub request_profile: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -48,6 +47,8 @@ pub struct ChatConnection {
     pub api_key_env: Option<String>,
     /// Responses standard text.format or the explicitly selected llama.cpp extension.
     pub responses_schema_format: Option<String>,
+    #[serde(default)]
+    pub request: serde_json::Map<String, serde_json::Value>,
 }
 
 impl std::fmt::Debug for ChatConnection {
@@ -114,9 +115,12 @@ fn parse<T: serde::de::DeserializeOwned>(
         path: path.display().to_string(),
         detail: "Invalid TOML configuration; repair this file.".into(),
     })?;
-    for table in [Some(&document), document.get("defaults")]
-        .into_iter()
-        .flatten()
+    for (prefix, table) in [
+        Some(("", &document)),
+        document.get("defaults").map(|table| ("defaults.", table)),
+    ]
+    .into_iter()
+    .flatten()
     {
         if ["context", "classifier_context"]
             .iter()
@@ -126,6 +130,24 @@ fn parse<T: serde::de::DeserializeOwned>(
         }
         for name in ["chat", "classifier"] {
             if let Some(connection) = table.get(name) {
+                if let Some(request) = connection.get("request") {
+                    crate::request_parameters::validate_toml(
+                        request,
+                        &format!("{prefix}{name}.request"),
+                    )
+                    .map_err(|detail| Error::Configuration {
+                        path: path.display().to_string(),
+                        detail,
+                    })?;
+                }
+                if connection.get("request_profile").is_some() {
+                    return Err(Error::Configuration {
+                        path: path.display().to_string(),
+                        detail: format!(
+                            "{name}.request_profile is obsolete; remove it and configure concrete values in the same connection’s request table, for example chat_template_kwargs.enable_thinking = false."
+                        ),
+                    });
+                }
                 if connection.get("context_window_tokens").is_some() {
                     return Err(Error::Configuration {
                         path: path.display().to_string(),
@@ -224,6 +246,8 @@ fn validate_connection(connection: &ChatConnection, path: &Path) -> Result<(), E
             "Set either chat.api_key or chat.api_key_env, not both",
         ));
     }
+    crate::request_parameters::validate(&connection.request, &connection.api)
+        .map_err(|detail| invalid(&detail))?;
     Ok(())
 }
 
@@ -235,15 +259,6 @@ fn validate_classifier(connection: &ClassifierConnection, path: &Path) -> Result
         },
         error => error,
     })?;
-    if connection
-        .request_profile
-        .as_deref()
-        .is_some_and(|profile| {
-            profile != "qwen_non_thinking" || connection.connection.api != "chat_completions"
-        })
-    {
-        return Err(Error::Configuration { path: path.display().to_string(), detail: "classifier.request_profile supports only qwen_non_thinking with chat_completions; omit it for standard requests.".into() });
-    }
     Ok(())
 }
 

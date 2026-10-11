@@ -16,9 +16,13 @@ model = "Qwen/Qwen3.5-2B"
 base_url = "http://beluga:4014/v1"
 api = "chat_completions"
 api_key = ""
-request_profile = "qwen_non_thinking"
 context_len = 16384
 max_output_tokens = 64
+
+[defaults.classifier.request]
+temperature = 0
+[defaults.classifier.request.chat_template_kwargs]
+enable_thinking = false
 ```
 
 Existing authored config is never overwritten or extended silently. An absent
@@ -33,15 +37,17 @@ Disabling a character override inherits app defaults. Saving requires idle
 replies, decisions and still-admittable slots in the affected scope; validation precedes atomic TOML
 replacement. No chat session or state boundary changes.
 
-Both Chat Completions and Responses use temperature 0, streaming false, a
-configured output cap (64 in the seed) and required-boolean-only strict JSON schema. Chat sends
-`response_format.json_schema`. Responses sends `store=false`, `max_output_tokens`,
-and standard `text.format`, or the explicitly selected `responses_schema_format =
-"response_format"` llama-compatible extension. There is no provider/hostname/model
-sniffing and no alternate-model retry. `request_profile = "qwen_non_thinking"`
-explicitly sends Chat-only `chat_template_kwargs.enable_thinking=false`; it is
-invalid with Responses. Without this setting, standard endpoints receive no Qwen
-extension. Native protocol switches remove inapplicable profile/dialect fields.
+Both protocols use streaming false, a configured output cap (64 in the seed),
+and required-boolean-only strict JSON schema. The seed explicitly configures
+`temperature = 0` and nested `chat_template_kwargs.enable_thinking = false`;
+otherwise optional parameters are omitted. Both connections use the concrete
+[request settings contract](settings.md#concrete-request-parameters).
+Chat sends `response_format.json_schema`. Responses sends `store=false`,
+`max_output_tokens`, and standard `text.format`, or the explicitly selected
+`responses_schema_format = "response_format"` llama-compatible extension.
+There is no provider/hostname/model sniffing or alternate-model retry.
+Backend support for thinking controls must be verified independently; parameters
+remain explicit across protocol switches, with incompatible values rejected.
 
 Rust independently rejects invalid JSON, absent/nonboolean/duplicate/extra fields,
 refusal, empty text, unsupported tools/content, and incomplete/truncated outcomes.
@@ -71,7 +77,7 @@ or silence. It treats supplied content as data. The compact JSON input includes:
   or memory consolidation is implied.
 
 Each pass checks the final request JSON (UTF-8 bytes plus 128-byte reserve),
-including rules, identity, schema, protocol/profile metadata and its output cap.
+including rules, identity, schema, concrete request parameters and its output cap.
 Ordinary decisions/reassessments may drop optional older excerpts to fit;
 mandatory trigger and same-round inputs remain. Intent and permission never
 trim their mandatory user/permission/silence inputs. Overflow fails visibly

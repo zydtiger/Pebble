@@ -196,7 +196,9 @@ does not change an existing session's frozen SOUL/MEMORY prefix.
 
 Open **App defaults** with the sidebar gear, or **Character settings** with the
 sliders button in the chat header. Edit model/API root/protocol and context
-budgets. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn off
+budgets and concrete request parameters. The JSON object editor preserves typed
+nested values (including explicit false and zero); backend/model support stays
+unverified until checked. Character settings also edits name, subtitle, SOUL, and MEMORY. Turn off
 **Override app connection** to inherit the app connection and both of its limits. An explicit connection override requires
 its own context and output limits. Character edits require only that character to be
 idle, including pending decisions and still-admittable group slots; app-default
@@ -205,7 +207,11 @@ edits require all affected work to finish or stop.
 The Responses connection form offers **Standard · text.format** and the explicit
 **llama.cpp · response_format** schema dialect. It appears only for Responses;
 switching to Chat Completions removes the exclusive field. A character override
-replaces the whole app connection, including this dialect.
+replaces the whole app connection, including this dialect and request parameters.
+Optional `[defaults.chat.request]`, `[defaults.classifier.request]`, `[chat.request]`
+and `[classifier.request]` tables flatten into the HTTP body while nested objects
+stay nested. Rust protects native input/tool/schema/output/privacy contracts and
+budgets the final body. See [concrete request settings](docs/settings.md#concrete-request-parameters).
 
 **State & response** shows current accepted state separately from editable JSON
 initial defaults and response schema. **Save initial defaults only** preserves

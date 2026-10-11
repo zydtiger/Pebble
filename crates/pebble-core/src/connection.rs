@@ -6,7 +6,11 @@ pub(crate) fn identity(chat: Option<&ChatConnection>) -> (String, String, String
         Some(chat) => (
             chat.api.clone(),
             chat.model.clone(),
-            chat.base_url.trim_end_matches('/').into(),
+            format!(
+                "{}{}",
+                chat.base_url.trim_end_matches('/'),
+                crate::request_parameters::template_identity(&chat.request)
+            ),
         ),
     }
 }

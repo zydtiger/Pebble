@@ -55,7 +55,7 @@ unchanged. There is no second user bubble or received event. Acceptance and
 activation retain the same durable queue and cancellation rules as normal sends.
 
 When the current compatible active session matches the nearest frozen ancestor,
-activation reuses its exact input/event cutoff. Keys and budgets resolve from the
+activation reuses its exact input/event cutoff. Keys, budgets and request parameters resolve from the
 new attempt's current runtime configuration. An intervening retry cancelled before
 activation does not prevent reuse of an earlier frozen ancestor. New native output
 is published once only after a successful completion.
@@ -95,8 +95,58 @@ off a character override inherits the app classifier; turning off the app
 classifier leaves manual mentions. Credentials use the same explicit secure
 Keep/Replace/Clear/Environment choices and per-file atomic publication rules.
 
-Responses offers its standard/llama schema dialect. Chat Completions offers
-Standard or explicit Qwen non-thinking request mode. Saving a protocol switch
-removes the other protocol's exclusive field; ordinary saves preserve applicable
-fields and authored comments/unknown configuration. These changes do not retire
+Responses offers its standard/llama schema dialect. Both protocols expose the same
+concrete request-parameter JSON editor as chat settings. Protocol switches remove
+the inapplicable schema dialect; incompatible request parameters fail validation
+and remain in the form for explicit correction. Classifier changes do not retire
 chat sessions or reset state. See [request contracts](participation.md).
+
+## Concrete request parameters
+
+Each complete connection may contain a `request` table:
+
+```toml
+[defaults.chat.request]
+temperature = 0
+top_p = 0.9
+[defaults.chat.request.chat_template_kwargs]
+enable_thinking = false
+```
+
+The same shape applies to `[defaults.classifier.request]`, persona `[chat.request]`
+and `[classifier.request]`. A persona override replaces its entire connection,
+including parameters; there is no merge with app-default values. The native
+**Request parameters · JSON object** editor reads and saves that table directly.
+Numbers, booleans, strings, arrays and nested objects keep their types. `{}` omits
+optional parameters; `false` and `0` are explicit values. JSON `null` and integers
+outside TOML's signed 64-bit range fail before publication. TOML date/time values,
+including nested values, are rejected before conversion; quote date text when a
+JSON string is intended. Use omission for an
+unset value. Named profiles, presets and a separate parameter registry are absent.
+An obsolete `request_profile` field is an actionable configuration error: remove
+it and write its intended concrete values. No automatic conversion occurs.
+
+Rust validates known sampling types/ranges, protocol-specific fields and
+contradictory thinking controls. Enablement, effort and budget are separate:
+compatible controls can be combined, but disabled/none/zero conflicts with
+active effort or a positive/unlimited budget. Backend-specific effort strings and
+extension keys remain unverified; the editor states that backend/model support
+must be checked, and HTTP success alone proves no behavioral effect.
+
+The local `request` namespace is flattened into the final HTTP body. Nested
+`chat_template_kwargs` stays nested; Responses `text.verbosity` shares `text`
+with Pebble's protected `text.format`. Parameters cannot override identity,
+credentials, inputs, streaming, output limits (including `n_predict`), native
+tools, schema/parser contracts, Responses privacy/replay, or app state/control
+fields. `context_len`, `max_output_tokens`, protocol and schema dialect retain
+their dedicated controls. Grammar, tool-parser and reasoning-format overrides
+are rejected because they can break the native reply contract.
+
+The final composed body is budgeted before HTTP for chat, every participation
+phase, repair, tool continuation and memory consolidation. Accepted work freezes
+its effective parameters; native saves remain idle-only. Explicit Retry uses
+current settings with its existing compatible input boundary. Sampling and the
+per-request `enable_thinking` switch preserve active history. Other template
+options may change history formatting, so their exact values participate in the
+existing durable connection binding and cause a fresh context when changed.
+No database migration or duplicate parameter store is required.

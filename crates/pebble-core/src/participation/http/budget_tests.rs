@@ -2,6 +2,7 @@ use super::*;
 fn config(api: &str, dialect: Option<&str>) -> ClassifierConnection {
     ClassifierConnection {
         connection: crate::ChatConnection {
+            request: json!({"temperature":0,"chat_template_kwargs":{"enable_thinking":false},"vendor":{"nested":[0,false]}}).as_object().unwrap().clone(),
             model: "classifier".into(),
             base_url: "http://127.0.0.1:9/v1".into(),
             api: api.into(),
@@ -11,7 +12,6 @@ fn config(api: &str, dialect: Option<&str>) -> ClassifierConnection {
             context_len: 100_000,
             max_output_tokens: 91,
         },
-        request_profile: (api == "chat_completions").then(|| "qwen_non_thinking".into()),
     }
 }
 #[test]
@@ -35,6 +35,9 @@ fn every_phase_has_complete_budget_and_configured_output_before_http() {
                 91
             );
             assert!(body.get("context_len").is_none());
+            assert_eq!(body["temperature"], 0);
+            assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+            assert_eq!(body["vendor"]["nested"], json!([0, false]));
             config.connection.context_len = estimated + 91;
             budgeted_body(&config, &input.to_string(), phase).unwrap();
             config.connection.context_len -= 1;
@@ -87,6 +90,19 @@ fn pruning_retains_trigger_and_same_round_predecessor_by_identity_and_permission
             input["recent_real_user_transcript"] =
                 json!([{"text":"old explicit silence".repeat(1000)}]);
             assert!(budgeted_body(&config, &input.to_string(), "permission").is_err());
+        }
+    }
+}
+
+#[test]
+fn omission_sends_no_hidden_temperature_or_template_switch() {
+    for api in ["chat_completions", "responses"] {
+        let mut config = config(api, None);
+        config.connection.request.clear();
+        for phase in ["initial", "reassess", "intent", "permission"] {
+            let body = request_body(&config, &json!({}), phase).unwrap();
+            assert!(body.get("temperature").is_none());
+            assert!(body.get("chat_template_kwargs").is_none());
         }
     }
 }

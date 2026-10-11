@@ -15,7 +15,8 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
         s.connection.max_output_tokens = Some(64);
         s.connection.model = "classifier".into();
         s.connection.base_url = "http://localhost:9090/v1".into();
-        s.request_profile = "qwen_non_thinking".into();
+        s.connection.request_json =
+            r#"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#.into();
         core.save_classifier_settings(
             persona,
             &s,
@@ -43,13 +44,13 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
             core.save_classifier_settings(persona, &s, &CredentialChange::Keep)
                 .unwrap();
             let read = core.classifier_settings(persona).unwrap();
-            assert_eq!(read.request_profile, "");
+            assert!(read.connection.request_json.contains("enable_thinking"));
             assert_eq!(read.connection.responses_schema_format, dialect);
             s.connection.api = "chat_completions".into();
             core.save_classifier_settings(persona, &s, &CredentialChange::Keep)
                 .unwrap();
             let read = core.classifier_settings(persona).unwrap();
-            assert_eq!(read.request_profile, "qwen_non_thinking");
+            assert!(read.connection.request_json.contains("enable_thinking"));
             assert!(read.connection.has_api_key);
             let path = if let Some(id) = persona {
                 root.path().join("personas").join(id).join("config.toml")
@@ -64,12 +65,12 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
             };
             assert!(table.get("responses_schema_format").is_none());
         }
-        s.request_profile = "unknown".into();
+        s.connection.request_json = r#"{"stream":false}"#.into();
         assert!(matches!(
             core.save_classifier_settings(persona, &s, &CredentialChange::Keep),
-            Err(Error::Configuration { .. })
+            Err(Error::SettingsSave(_))
         ));
-        s.request_profile = "".into();
+        s.connection.request_json = "{}".into();
         core.save_classifier_settings(
             persona,
             &s,
@@ -122,8 +123,8 @@ fn independent_inheritance_credentials_comments_and_protocol_switches_round_trip
 }
 
 #[test]
-fn manual_inapplicable_protocol_profile_is_a_recoverable_config_error() {
+fn obsolete_request_mode_is_a_recoverable_config_error() {
     let (root, core, _) = isolated();
-    std::fs::write(root.path().join("config.toml"),"[defaults.classifier]\ncontext_len=16384\nmax_output_tokens=64\nmodel='synthetic'\nbase_url='http://localhost/v1'\napi='responses'\nrequest_profile='qwen_non_thinking'\n").unwrap();
+    std::fs::write(root.path().join("config.toml"),"[defaults.classifier]\ncontext_len=16384\nmax_output_tokens=64\nmodel='synthetic'\nbase_url='http://localhost/v1'\napi='responses'\nrequest_profile='obsolete'\n").unwrap();
     assert!(matches!(core.workspace(), Err(Error::Configuration { .. })));
 }

@@ -20,6 +20,7 @@ struct SettingsSheet: View {
     @State private var hasKey = false
     @State private var window = ""
     @State private var output = ""
+    @State private var requestJSON = "{}"
     @State private var name = ""
     @State private var subtitle = ""
     @State private var soul = ""
@@ -65,6 +66,7 @@ struct SettingsSheet: View {
                             Text("Use Standard for Responses providers. Select the llama.cpp extension when your endpoint requires response_format for JSON Schema. Pebble always validates replies independently.")
                                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                         }
+                        RequestParametersEditor(text: $requestJSON)
                         LabeledContent("Context length") { TextField("Required total token window", text: $window) }
                         LabeledContent("Max output tokens") { TextField("Required output cap", text: $output) }
                         Text("context_len includes input and output. Input uses a conservative UTF-8 byte estimate, not exact provider token usage. The output cap must be smaller than the window.")
@@ -111,6 +113,7 @@ struct SettingsSheet: View {
             enabled = settings.chat.enabled; modelName = settings.chat.model
             baseURL = settings.chat.baseUrl; api = settings.chat.api
             responsesSchemaFormat = settings.chat.responsesSchemaFormat
+            requestJSON = settings.chat.requestJson
             hasKey = settings.chat.hasApiKey; environment = settings.chat.apiKeyEnv
             window = settings.chat.contextLen.map(String.init) ?? ""
             output = settings.chat.maxOutputTokens.map(String.init) ?? ""
@@ -133,7 +136,7 @@ struct SettingsSheet: View {
             case "environment": change = .environment(name: environment)
             default: change = .keep
             }
-            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: responsesSchemaFormat, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil), credential: change, persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
+            let update = SettingsUpdateRecord(chat: ConnectionSettingsRecord(enabled: enabled, model: modelName, baseUrl: baseURL, api: api, responsesSchemaFormat: responsesSchemaFormat, requestJson: requestJSON, hasApiKey: hasKey, apiKeyEnv: environment, contextLen: enabled ? try number(window) : nil, maxOutputTokens: enabled ? try number(output) : nil), credential: change, persona: character ? PersonaSettingsRecord(displayName: name, subtitle: subtitle, soul: soul, memory: memory) : nil)
             try await model.saveSettings(target.personaID, update: update)
             replacement = ""; dismiss()
         } catch { self.error = model.describe(error) }

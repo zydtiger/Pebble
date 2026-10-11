@@ -7,6 +7,7 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
         ("responses", Some("response_format")),
     ] {
         let chat = ChatConnection {
+            request: json!({"temperature":0,"chat_template_kwargs":{"enable_thinking":false},"vendor":{"nested":[0,false,"你好"]}}).as_object().unwrap().clone(),
             model: "test".into(),
             base_url: "http://localhost/v1".into(),
             api: api.into(),
@@ -49,6 +50,9 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
             77
         );
         assert!(body.get("context_len").is_none());
+        assert_eq!(body["temperature"], 0);
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(body["vendor"]["nested"][0], 0);
         let estimate = serde_json::to_vec(&body).unwrap().len() as u64 + 128;
         let mut budget = crate::ContextBudget {
             context_len: estimate + 77,

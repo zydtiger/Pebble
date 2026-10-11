@@ -61,13 +61,11 @@ impl GroupHandle {
 #[derive(uniffi::Record)]
 pub struct ClassifierSettingsRecord {
     pub connection: ConnectionSettingsRecord,
-    pub request_profile: String,
 }
 impl From<pebble_core::ClassifierSettings> for ClassifierSettingsRecord {
     fn from(s: pebble_core::ClassifierSettings) -> Self {
         Self {
             connection: s.connection.into(),
-            request_profile: s.request_profile,
         }
     }
 }
@@ -79,6 +77,7 @@ impl From<ConnectionSettingsRecord> for pebble_core::ChatSettings {
             base_url: s.base_url,
             api: s.api,
             responses_schema_format: s.responses_schema_format,
+            request_json: s.request_json,
             has_api_key: s.has_api_key,
             api_key_env: s.api_key_env,
             context_len: s.context_len,
@@ -94,6 +93,7 @@ impl From<pebble_core::ChatSettings> for ConnectionSettingsRecord {
             base_url: s.base_url,
             api: s.api,
             responses_schema_format: s.responses_schema_format,
+            request_json: s.request_json,
             has_api_key: s.has_api_key,
             api_key_env: s.api_key_env,
             context_len: s.context_len,
@@ -142,7 +142,6 @@ impl PebbleBackend {
                 persona_id.as_deref(),
                 &pebble_core::ClassifierSettings {
                     connection: update.connection.into(),
-                    request_profile: update.request_profile,
                 },
                 &credential.into(),
             )?

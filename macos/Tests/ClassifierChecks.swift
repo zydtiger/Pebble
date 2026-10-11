@@ -94,14 +94,14 @@ enum ClassifierChecks {
             settings.connection.enabled = true; settings.connection.contextLen = 16384
             settings.connection.maxOutputTokens = 64; settings.connection.model = "synthetic-participation"
             settings.connection.baseUrl = fixture.url; settings.connection.api = "chat_completions"
-            settings.requestProfile = "qwen_non_thinking"
+            settings.connection.requestJson = #"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#
             try await model.saveClassifierSettings(target, update: settings, credential: .clear)
             for dialect in ["text_format", "response_format"] {
                 settings.connection.api = "responses"; settings.connection.responsesSchemaFormat = dialect
                 try await model.saveClassifierSettings(target, update: settings, credential: .keep)
                 let saved = try await model.readClassifierSettings(target)
                 try check(saved.connection.contextLen == 16384 && saved.connection.maxOutputTokens == 64, "Classifier limits did not round-trip through settings bridge")
-                try check(saved.requestProfile.isEmpty && saved.connection.responsesSchemaFormat == dialect, "Native protocol switch retained Chat-only profile")
+                try check(saved.connection.requestJson.contains("enable_thinking") && saved.connection.responsesSchemaFormat == dialect, "Native request parameters did not round-trip")
             }
             settings.connection.api = "chat_completions"
             try await model.saveClassifierSettings(target, update: settings, credential: .keep)

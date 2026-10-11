@@ -69,7 +69,7 @@ not establish support for every JSON Schema keyword or another server version.
 ## Consolidated live coverage
 
 The v0.2.0 isolated integration uses Gemma for structured Chat Completions and
-the explicitly configured Qwen non-thinking profile for separate participation.
+explicit Qwen `chat_template_kwargs.enable_thinking = false` for separate participation.
 It records raw synthetic requests/responses, initial primary results separately
 from later phases, and bounded whole-round outcomes; see
 [measured limits](participation.md#validation-and-measured-limits). It does not
@@ -106,3 +106,23 @@ maintenance and continued chat from the new prefix. Run it explicitly with
 `opt_in_live_memory_and_maintenance_both_native_protocols` test in
 `tests/memory_context.rs`. The Responses branch selects the documented compatible
 `response_format` dialect; this does not claim standard text.format enforcement.
+
+## Request parameters and thinking support
+
+Concrete [request settings](settings.md#concrete-request-parameters) are composed
+before final budgeting for both protocols, including repair and memory phases.
+Pebble reserves native fields and rejects alternate output caps such as llama.cpp
+`n_predict`, schema/grammar and reasoning-parser overrides. No arbitrary merge
+can silently replace those contracts.
+
+On 2026-10-10, bounded synthetic math probes against the selected
+`gemma-4-31b-uncensored` llama-server build `b11146-7fe450e19` and the independent
+`Qwen/Qwen3.5-2B` service measured nested `enable_thinking=false` producing the
+correct answer without reasoning. The same prompt with `true` produced reasoning;
+Qwen exhausted the probe's 256-token cap before visible content. These observations
+establish a behavior change on those two deployments, not universal parameter
+support or a guarantee that the application's full structured contract succeeds.
+The [llama.cpp server contract](https://github.com/ggml-org/llama.cpp/blob/7fe450e19/tools/server/README.md)
+and [Qwen model card](https://huggingface.co/Qwen/Qwen3.5-2B)
+describe their concrete template controls. Sampling and this per-request switch
+preserve Pebble history; other template options require a compatible fresh boundary.

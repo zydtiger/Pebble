@@ -136,7 +136,7 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
             None,
             &proxy.url,
             "chat_completions",
-            "qwen_non_thinking",
+            r#"{"chat_template_kwargs":{"enable_thinking":false}}"#,
         );
         let mut connection = core.classifier_settings(None).unwrap();
         connection.connection.model = model.clone();
@@ -199,7 +199,7 @@ fn opt_in_selected_participation_regression_and_group_latency_under_chat_load() 
         None,
         &proxy.url,
         "chat_completions",
-        "qwen_non_thinking",
+        r#"{"chat_template_kwargs":{"enable_thinking":false}}"#,
     );
     let mut connection = core.classifier_settings(None).unwrap();
     connection.connection.model = model;

@@ -13,6 +13,7 @@ mod maintenance;
 mod memory;
 mod participation;
 mod personas;
+mod request_parameters;
 mod response_settings;
 mod rooms;
 mod settings;

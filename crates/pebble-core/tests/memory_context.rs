@@ -82,6 +82,18 @@ fn tool_effect_survives_failed_final_restart_and_retry_without_reexecution() {
         ]);
         let (root, core, id) = isolated();
         configure(root.path(), &server.url, "mock", api, "");
+        let mut settings = core.settings(None).unwrap();
+        settings.chat.request_json =
+            r#"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#.into();
+        core.save_settings(
+            None,
+            &pebble_core::SettingsUpdate {
+                chat: settings.chat,
+                credential: pebble_core::CredentialChange::Keep,
+                persona: None,
+            },
+        )
+        .unwrap();
         let (task, rx) = start(&core, &id, "Remember my synthetic preference.");
         let terminal_event = terminal(&rx).pop().unwrap();
         assert_eq!(terminal_event.kind, ChatEventKind::Failed);
@@ -97,9 +109,16 @@ fn tool_effect_survives_failed_final_restart_and_retry_without_reexecution() {
         let failed = core.messages(&id).unwrap()[1].clone();
         assert!(failed.content.is_empty());
         let initial = server.requests.recv().unwrap().1;
+        assert_eq!(initial["temperature"], 0);
+        assert_eq!(initial["chat_template_kwargs"]["enable_thinking"], false);
         assert!(initial.get("response_format").is_none());
         assert!(initial.get("text").is_none());
         let continuation = server.requests.recv().unwrap().1;
+        assert_eq!(continuation["temperature"], 0);
+        assert_eq!(
+            continuation["chat_template_kwargs"]["enable_thinking"],
+            false
+        );
         assert_eq!(continuation["tool_choice"], "none");
         let field = if api == "responses" {
             "input"
@@ -117,9 +136,23 @@ fn tool_effect_survives_failed_final_restart_and_retry_without_reexecution() {
         drop(task);
         drop(core);
         let core = reopen(root.path());
+        let mut settings = core.settings(None).unwrap();
+        settings.chat.request_json =
+            r#"{"temperature":0.25,"chat_template_kwargs":{"enable_thinking":false}}"#.into();
+        core.save_settings(
+            None,
+            &pebble_core::SettingsUpdate {
+                chat: settings.chat,
+                credential: pebble_core::CredentialChange::Keep,
+                persona: None,
+            },
+        )
+        .unwrap();
         let (retried, rx) = retry(&core, &id, &failed.id);
         assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
         let replay = server.requests.recv().unwrap().1;
+        assert_eq!(replay["temperature"], 0.25);
+        assert_eq!(replay["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(replay["tool_choice"], "none");
         assert_eq!(
             db(root.path())
@@ -220,6 +253,18 @@ fn maintenance_consolidates_silent_group_observations_and_preserves_post_cutoff_
         ]);
         let (root, core, id) = isolated();
         configure(root.path(), &server.url, "mock", api, "");
+        let mut settings = core.settings(None).unwrap();
+        settings.chat.request_json =
+            r#"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#.into();
+        core.save_settings(
+            None,
+            &pebble_core::SettingsUpdate {
+                chat: settings.chat,
+                credential: pebble_core::CredentialChange::Keep,
+                persona: None,
+            },
+        )
+        .unwrap();
         let other = core.create_persona("Other").unwrap();
         let room = core
             .create_group("Observed", &[id.clone(), other.id.clone()])
@@ -235,6 +280,8 @@ fn maintenance_consolidates_silent_group_observations_and_preserves_post_cutoff_
         let before = state(root.path(), &id);
         let task = core.start_fresh_context(&id).unwrap();
         let request = server.requests.recv().unwrap().1;
+        assert_eq!(request["temperature"], 0);
+        assert_eq!(request["chat_template_kwargs"]["enable_thinking"], false);
         let field = if api == "responses" {
             "input"
         } else {
@@ -267,6 +314,8 @@ fn maintenance_consolidates_silent_group_observations_and_preserves_post_cutoff_
         let (chat, rx) = start(&core, &id, "continue privately");
         assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
         let next = server.requests.recv().unwrap().1;
+        assert_eq!(next["temperature"], 0);
+        assert_eq!(next["chat_template_kwargs"]["enable_thinking"], false);
         assert!(
             next[field]
                 .to_string()

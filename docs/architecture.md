@@ -118,7 +118,9 @@ failures permit bounded automatic format repair. Preserved v0.1.0 sessions keep
 their frozen plaintext behavior until an explicit context boundary. See [state
 and upgrade rules](state.md).
 
-Sessions bind protocol, model, and credential-free API root. A changed binding
+Sessions bind protocol, model, credential-free API root and history-formatting
+template parameters. The existing durable binding includes those template values;
+sampling and the verified per-request `enable_thinking` switch are excluded. A changed binding
 retires the previous context and starts after the current event frontier. Old
 transcript and model items remain intact; a persistent notice explains the fresh
 context. SOUL/MEMORY stays frozen inside an unchanged session after file reload.
@@ -139,6 +141,14 @@ adapter starts. Budget edits alone leave the session and prefix unchanged.
 See [context and encoding](context.md). There is no background service, threshold-triggered rollover, or delegated work. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
 
 ## Settings and recovery
+
+Rust owns concrete typed request-parameter validation, composition and final-body
+budgeting for chat, classifier phases, repairs, native memory continuations and
+consolidation. Accepted workers retain their connection snapshot; explicit Retry
+uses current parameters with a compatible frozen input boundary. Native forms
+edit one JSON object backed by the connection's TOML `request` table. No named
+profile registry or duplicate durable parameter source exists. See
+[request settings](settings.md#concrete-request-parameters).
 
 Rust settings APIs expose connection identity, credential presence/environment
 reference, connection-local context/output limits, and editable character files; they never return an

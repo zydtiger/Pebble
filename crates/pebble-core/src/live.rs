@@ -186,6 +186,7 @@ pub(crate) fn request_body(
             body["text"]["format"] = json!({"type":"json_schema","name":"persona_response","strict":true,"schema":schema});
         }
     }
+    crate::request_parameters::apply(&chat.request, &mut body);
     Ok((route, body))
 }
 

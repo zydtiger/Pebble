@@ -128,21 +128,24 @@ rollover is included.
 
 ## Next development stages
 
-This is a proposed sequence after v0.3.0, not implemented functionality. Keep
-the existing delegation version labels; the two conversation improvements below
-remain version-unassigned. Each increment should leave a runnable app.
+Conversation request parameters are implemented below; image input and delegation
+remain proposed work after v0.3.0. Keep the existing delegation version labels;
+the conversation improvements remain version-unassigned. Each increment should
+leave a runnable app.
 
 ### Conversation improvements before delegation
 
-1. **Direct model request parameters.** Add concrete app/persona `request`
-   values for both chat and classification, with native editing and nested
-   object support. Preserve whole-connection inheritance and distinguish omitted
-   values from false/zero. Replace the classifier's named non-thinking profile
-   with its explicit request value. Rust protects model/input/tool/schema/output
-   fields, validates conflicts, freezes accepted parameters across continuations,
-   and accounts for the final wire body. Maintenance uses the effective chat
-   parameters. Verify settings round trips and both protocols; endpoint-specific
-   thinking support must be measured rather than inferred from a model name.
+1. **Direct model request parameters — implemented.** Concrete app/persona
+   `request` tables serve chat and classification through one native JSON editor,
+   preserving nested types, whole-connection inheritance and omission/false/zero.
+   Rust rejects protected field collisions and known conflicts, composes before
+   final budgeting, and freezes effective parameters through repair, tools and
+   consolidation. Explicit Retry uses current settings with compatible input.
+   Sampling and per-request `enable_thinking` preserve active contexts; other
+   template changes participate in the durable connection boundary. Settings,
+   protocol/dialect, classifier phase, repair and memory tests cover the contract;
+   selected endpoint thinking behavior is measured separately in
+   [provider contracts](providers.md#request-parameters-and-thinking-support).
 2. **Image input and durable attachments.** Add paste/drop/pick, draft thumbnails,
    image-only messages and image viewing, starting with bounded static JPEG/PNG.
    Rust stores immutable assets and frozen rendition references; adapters load

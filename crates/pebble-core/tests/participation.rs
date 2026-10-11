@@ -32,9 +32,9 @@ fn false_reads_are_private_bounded_nonconsuming_and_both_protocol_requests_are_s
             &server.url,
             api,
             if api == "chat_completions" {
-                "qwen_non_thinking"
+                r#"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#
             } else {
-                ""
+                r#"{"temperature":0}"#
             },
         );
         let mut settings = core.classifier_settings(None).unwrap();

@@ -10,6 +10,8 @@ pub struct ChatSettings {
     pub base_url: String,
     pub api: String,
     pub responses_schema_format: String,
+    /// One JSON object, matching the TOML request table without a second parameter source.
+    pub request_json: String,
     pub has_api_key: bool,
     pub api_key_env: String,
     pub context_len: Option<u64>,
@@ -133,6 +135,7 @@ pub(crate) fn read(root: &Path, persona: Option<&str>) -> Result<Settings, Error
             } else {
                 string("responses_schema_format")
             },
+            request_json: request_json(chat)?,
             has_api_key: !string("api_key").trim().is_empty(),
             api_key_env: string("api_key_env"),
             context_len: number("context_len"),
@@ -213,6 +216,7 @@ pub(crate) fn save(
     }
     if update.chat.enabled {
         put_limits(&mut table["chat"], &update.chat)?;
+        put_request(&mut table["chat"], &update.chat)?;
     }
     let mut candidates = Vec::new();
     if let Some(persona) = &update.persona {
@@ -240,6 +244,44 @@ pub(crate) fn put_limits(table: &mut Item, connection: &ChatSettings) -> Result<
         let number = i64::try_from(number)
             .map_err(|_| Error::SettingsSave("Context limit is too large.".into()))?;
         table[key] = value(number);
+    }
+    Ok(())
+}
+
+pub(crate) fn request_json(connection: &Item) -> Result<String, Error> {
+    let Some(request) = connection.get("request") else {
+        return Ok("{}".into());
+    };
+    let mut doc = DocumentMut::new();
+    doc["request"] = request.clone();
+    let text = doc.to_string();
+    let value: toml::Value = toml::from_str(&text)
+        .map_err(|_| Error::SettingsSave("Could not read request parameters.".into()))?;
+    Ok(serde_json::to_string_pretty(&value["request"])?)
+}
+
+pub(crate) fn put_request(table: &mut Item, connection: &ChatSettings) -> Result<(), Error> {
+    let value: serde_json::Value =
+        serde_json::from_str(&connection.request_json).map_err(|_| {
+            Error::SettingsSave("Request parameters must be a valid JSON object.".into())
+        })?;
+    let params = value
+        .as_object()
+        .ok_or_else(|| Error::SettingsSave("Request parameters must be a JSON object.".into()))?;
+    crate::request_parameters::validate(params, &connection.api).map_err(Error::SettingsSave)?;
+    if params.is_empty() {
+        table.as_table_like_mut().unwrap().remove("request");
+    } else {
+        let value = toml::Value::try_from(&value).map_err(|_| {
+            Error::SettingsSave("Request parameters cannot be represented in TOML.".into())
+        })?;
+        let text = toml::to_string(&value).map_err(|_| {
+            Error::SettingsSave("Request parameters cannot be represented in TOML.".into())
+        })?;
+        let document: DocumentMut = text
+            .parse()
+            .map_err(|_| Error::SettingsSave("Could not encode request parameters.".into()))?;
+        table["request"] = Item::Table(document.as_table().clone());
     }
     Ok(())
 }

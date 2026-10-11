@@ -139,6 +139,18 @@ fn format_repairs_use_one_frozen_input_and_state_without_accepting_rejected_cand
         ]);
         let (root, core, id) = isolated();
         configure(root.path(), &server.url, "mock", api, "");
+        let mut settings = core.settings(None).unwrap();
+        settings.chat.request_json =
+            r#"{"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}"#.into();
+        core.save_settings(
+            None,
+            &pebble_core::SettingsUpdate {
+                chat: settings.chat,
+                credential: pebble_core::CredentialChange::Keep,
+                persona: None,
+            },
+        )
+        .unwrap();
         let (task, rx) = start(&core, &id, "one user");
         let events = terminal(&rx);
         assert_eq!(
@@ -161,6 +173,8 @@ fn format_repairs_use_one_frozen_input_and_state_without_accepting_rejected_cand
             "messages"
         };
         for (index, http) in requests.iter().enumerate() {
+            assert_eq!(http["temperature"], 0);
+            assert_eq!(http["chat_template_kwargs"]["enable_thinking"], false);
             assert_eq!(
                 &http[field].as_array().unwrap()[..2],
                 requests[0][field].as_array().unwrap()
