@@ -4,6 +4,7 @@ struct ContentView: View {
     @Bindable var model: ChatModel
     @State private var composerFocused = true
     @State private var composerHeight = ComposerScrollView.minimumHeight
+    @State private var hoveredRoomID: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -92,10 +93,13 @@ struct ContentView: View {
                                 }
                             }
                             .padding(11)
-                            .background(persona.conversationId == model.selectedID ? .white.opacity(0.72) : .clear,
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .background(sidebarRowBackground(persona.conversationId),
                                         in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(.plain)
+                        .onHover { hovering in hoveredRoomID = hovering ? persona.conversationId : nil }
                         .accessibilityIdentifier("persona-\(persona.displayName)")
                     }
                     if let groups = model.workspace?.rooms.filter({ $0.kind == "group" }), !groups.isEmpty {
@@ -111,8 +115,15 @@ struct ContentView: View {
                                     }
                                     Spacer(minLength: 0)
                                     if group.id == model.selectedID { Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5) }
-                                }.padding(11).background(group.id == model.selectedID ? .white.opacity(0.72) : .clear, in: RoundedRectangle(cornerRadius: 14))
-                            }.buttonStyle(.plain).accessibilityIdentifier("group-\(group.title)")
+                                }
+                                .padding(11)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .background(sidebarRowBackground(group.id), in: RoundedRectangle(cornerRadius: 14))
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { hovering in hoveredRoomID = hovering ? group.id : nil }
+                            .accessibilityIdentifier("group-\(group.title)")
                         }
                     }
                 }
@@ -148,6 +159,11 @@ struct ContentView: View {
         .frame(width: 236)
         .frame(maxHeight: .infinity)
         .background(PebbleTheme.sidebar)
+    }
+
+    private func sidebarRowBackground(_ roomID: String) -> Color {
+        if roomID == model.selectedID { return .white.opacity(0.72) }
+        return roomID == hoveredRoomID ? .gray.opacity(0.12) : .clear
     }
 
     private func groupHeader(_ group: RoomRecord) -> some View {
