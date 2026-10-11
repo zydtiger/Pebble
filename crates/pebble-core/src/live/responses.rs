@@ -17,6 +17,7 @@ pub(super) struct Stream {
     next_parts: BTreeMap<Item, usize>,
     done_items: BTreeMap<String, Value>,
     output: Option<Vec<Value>>,
+    pub(super) allow_tools: bool,
 }
 fn index(value: &Value) -> Result<usize, Error> {
     value
@@ -144,11 +145,11 @@ impl Stream {
                 }
             }
             "response.output_item.added" => {
-                supported(&event["item"])?;
+                supported(&event["item"], self.allow_tools)?;
                 self.item(&event)?;
             }
             "response.output_item.done" => {
-                supported(&event["item"])?;
+                supported(&event["item"], self.allow_tools)?;
                 let Item::Id(id) = self.item(&event)? else {
                     return Err(failure("The completed Responses item has no ID."));
                 };
@@ -187,7 +188,7 @@ impl Stream {
         let mut final_parts = BTreeMap::new();
         let mut refusal_only = true;
         for (item_index, item) in items.iter().enumerate() {
-            supported(item)?;
+            supported(item, self.allow_tools)?;
             let id = item["id"]
                 .as_str()
                 .filter(|id| !id.is_empty())
@@ -251,7 +252,9 @@ impl Stream {
                 "The completed Responses items differ from their final item events.",
             ));
         }
-        if visible.trim().is_empty() {
+        if visible.trim().is_empty()
+            && !(self.allow_tools && items.iter().any(|item| item["type"] == "function_call"))
+        {
             return Err(failure(
                 "The Responses model completed without visible reply content.",
             ));
@@ -278,8 +281,10 @@ impl Stream {
             .ok_or_else(|| failure("The Responses stream ended before completion."))
     }
 }
-fn supported(item: &Value) -> Result<(), Error> {
-    if matches!(item["type"].as_str(), Some("reasoning" | "message")) {
+fn supported(item: &Value, allow_tools: bool) -> Result<(), Error> {
+    if matches!(item["type"].as_str(), Some("reasoning" | "message"))
+        || (allow_tools && item["type"] == "function_call")
+    {
         Ok(())
     } else {
         Err(failure(

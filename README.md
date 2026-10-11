@@ -6,7 +6,7 @@ Pebble is a native Mac app for persistent characters, conversation, and
 roleplay. Its name connects an everyday object with *pebbling*: sharing small
 things as gestures of care.
 
-**v0.2.0 combines private and group conversations.** Create
+**v0.3.0 adds durable memory and explicit context consolidation to private and group conversations.** Create
 characters, choose group members, and let each character decide when to join,
 or mention who should reply. Each character
 keeps one native model history, state, and execution queue across all its rooms;
@@ -67,7 +67,7 @@ See [the icon design notes](docs/app-icon.md) for artwork and material settings.
    **Character state and response schema** braces button opens separate controls
    for accepted state, initial defaults, and response schema.
 5. After editing SOUL/MEMORY, choose **Start fresh context** when you want the
-   model to use the new files. Earlier messages remain visible. Advanced file
+   model to use the new files. The same chat model remembers important outgoing knowledge in MEMORY before the new context starts; accepted state and visible messages stay saved. Advanced file
    editing and **Reload Character Files** remain available; character and room
    IDs stay stable.
 6. Send a thought, then quit and reopen the app. The messages and their IDs
@@ -135,14 +135,15 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── config.toml
 │   ├── SOUL.md
 │   ├── MEMORY.md
+│   ├── .MEMORY-<operation-id>.displaced # retained displaced inode after memory publication
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # fourteen chat/history/state/membership/decision/round tables
+    ├── app.sqlite        # eighteen chat/history/state/memory/context tables
     └── app.lock          # exclusive app ownership; released automatically on exit
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 9 are upgraded transactionally to 10, preserving character, room, message,
+through 10 are upgraded transactionally to 11, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -184,8 +185,7 @@ are failed replies; unvalidated candidate text is not shown or saved. Provider r
 in native model history and is never rendered as a message. Responses sends
 `store = false` and requests encrypted reasoning state. Completed native output
 items, including IDs and opaque fields, are stored and replayed in order with
-the full input history; no `previous_response_id` is sent. Tool output is
-unsupported and fails explicitly. In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
+the full input history; no `previous_response_id` is sent. New contexts support only the persona-scoped `update_memory` native tool. Tool calls/results and reasoning remain hidden from bubbles and replay in native order. Existing contexts keep their frozen prefix and an explicit capability notice until a successful fresh-context transition. See [memory and consolidation](docs/memory.md). In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
 
 Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events
@@ -220,8 +220,7 @@ Keys are never displayed. **Keep existing** retains credentials during unrelated
 saves; **Replace inline key**, **Clear authentication**, and **Environment
 variable** are explicit alternatives. Replacement uses a secure text field.
 Settings stay in local TOML/Markdown files; advanced folder access remains
-available. SOUL/MEMORY edits leave an existing frozen prefix intact until you
-start a fresh context. Invalid manual TOML can require opening the files to repair.
+available. SOUL/MEMORY edits leave an existing frozen prefix intact. New memory-capable turns also receive the current MEMORY snapshot at the input tail so an automatic update cannot overwrite unseen earlier manual edits. Start fresh context to consolidate knowledge and snapshot the current files. Invalid manual TOML can require opening the files to repair.
 
 A failed structured reply retains its error after restart; legacy attempts retain any earlier partial text. **Retry**
 appears only on that character's latest failed, stopped, or interrupted reply,
@@ -268,12 +267,26 @@ Participation has an independent budget and can trim optional older excerpts;
 mandatory trigger, rules and phase inputs must fit or the decision fails visibly
 before HTTP without consuming chat observations or changing state.
 
-Choose the **Start fresh context** sparkle button in the chat header and confirm
-its explanation. Earlier messages and native items remain saved, but subsequent
-requests exclude everything before that boundary and snapshot the current
-character files. The notice survives restart. Finish or cancel this character's
-active and queued replies first; other characters can continue replying.
-This does not summarize history or clear the transcript.
+Choose **Start fresh context** in the private-chat header. Rust reserves that
+persona's queue, freezes its observation cutoff, and asks the same chat model
+to consolidate outgoing native knowledge and eligible private/group observations
+with current MEMORY. A successful review (including unchanged memory) publishes
+a new SOUL/MEMORY prefix with the accepted state unchanged. Messages and native
+archives remain saved. Other personas can keep chatting; later observations
+remain available in the new context. A thin gray line and diamond mark the
+successful transition in the private room and eligible current groups, where
+the label identifies the affected character.
+
+The UI shows progress, Cancel, and persisted recovery details. A cancelled or
+failed transition keeps the old context active and adds no marker. A memory
+write already committed survives a failed final reply or context publication;
+explicit retry uses its recorded result without repeating the write. Corrupt,
+unreadable or oversized outgoing knowledge fails actionably rather than being
+discarded. Empty contexts need no consolidation; the local demo keeps MEMORY
+unchanged and explains that no chat model is connected. New live contexts reserve
+conservative maintenance headroom below the ordinary chat ceiling; configured
+`context_len` itself is unchanged. See [memory and recovery](docs/memory.md) and
+[exact budget arithmetic](docs/context.md#maintenance-headroom).
 
 History items use raw JSON or zstd individually. Compression changes storage
 bytes only; decoded native bytes and IDs remain stable. Existing raw items are

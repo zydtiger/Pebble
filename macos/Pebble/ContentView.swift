@@ -15,7 +15,7 @@ struct ContentView: View {
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
                     if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
-                    if model.bubbles.isEmpty {
+                    if model.bubbles.isEmpty && model.markers.isEmpty {
                         GeometryReader { geometry in
                             ScrollView {
                                 Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
@@ -56,7 +56,7 @@ struct ContentView: View {
             Button("Start fresh context") { Task { await model.startFreshContext() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Earlier messages stay saved and visible, but the model will no longer receive them. The new context uses the current character and memory files.")
+            Text("Remember important details, then start a fresh context. Messages and accepted character state stay saved. You can cancel; an unfinished attempt keeps the old context active, while memory already saved is preserved.")
         }
         .task { await model.load() }
         .onDisappear { model.closeChat() }
@@ -130,7 +130,7 @@ struct ContentView: View {
                     .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
-                    Text("v0.2.0").font(.system(size: 10, design: .monospaced))
+                    Text("v0.3.0").font(.system(size: 10, design: .monospaced))
                     Spacer()
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -192,8 +192,8 @@ struct ContentView: View {
                 .disabled(model.isReplying || model.loading)
             Button { model.showFreshContext = true } label: { Image(systemName: "sparkles") }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
-                .disabled(model.isReplying || model.loading)
-                .help("Start a fresh model context; keep saved messages")
+                .disabled(model.isReplying || model.loading || model.isMaintaining)
+                .help("Review memory and start a fresh model context; keep saved messages")
                 .accessibilityLabel("Start fresh context")
             Button { model.stateTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "curlybraces") }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
@@ -245,6 +245,7 @@ struct ContentView: View {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     Text("SAVED ON THIS MAC").font(.system(size: 9, weight: .medium)).tracking(1.4)
                         .foregroundStyle(PebbleTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 8)
+                    contextDividers(after: 0)
                     ForEach(model.bubbles) { bubble in
                         HStack(alignment: .top, spacing: 10) {
                             if bubble.isUser { Spacer(minLength: 60) }
@@ -284,6 +285,7 @@ struct ContentView: View {
                             }
                             if !bubble.isUser { Spacer(minLength: 28) }
                         }
+                        contextDividers(after: bubble.sequence)
                     }
                     Color.clear.frame(height: 1).id("latest")
                 }
@@ -291,12 +293,35 @@ struct ContentView: View {
             }
             .onAppear { reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
+            .onChange(of: model.markers.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
         }
     }
 
+    private func contextDividers(after sequence: Int64) -> some View {
+        ForEach(model.markers.filter { $0.afterSequence == sequence }, id: \.id) { marker in
+            VStack(spacing: 5) {
+                HStack(spacing: 9) {
+                    Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
+                    Image(systemName: "diamond.fill").font(.system(size: 5)).foregroundStyle(.gray)
+                    Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
+                }
+                Text(marker.label).font(.system(size: 9)).foregroundStyle(.gray)
+            }.padding(.vertical, 5)
+                .id("\(model.selectedID ?? ""):\(marker.id)")
+                .help("Only this character started fresh. Other characters may still finish earlier replies.")
+                .accessibilityLabel(marker.label)
+        }
+    }
     private var composer: some View {
         VStack(alignment: .leading, spacing: 11) {
+            if let detail = model.maintenanceDetail {
+                HStack(spacing: 8) {
+                    if model.isMaintaining { ProgressView().controlSize(.small) }
+                    Text(detail).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    if model.isMaintaining { Button("Cancel") { model.cancelMaintenance() }.font(.system(size: 11)) }
+                }.accessibilityIdentifier("memory-maintenance")
+            }
             if let group = model.selectedConversation, group.kind == "group" {
                 HStack(spacing: 8) {
                     Menu {
@@ -411,7 +436,7 @@ private struct CharacterSheet: View {
             }
             .frame(height: 230)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
-            Text("Edit SOUL.md and MEMORY.md in the character folder, then reload. Memory is maintained by hand in this version.")
+            Text("With a chat model connected, useful details can be saved during chats and reviewed when you start fresh. You can also edit SOUL.md and MEMORY.md in the character folder, then reload.")
                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             HStack {
                 Text(persona.connectionLabel)

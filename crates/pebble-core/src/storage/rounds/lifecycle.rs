@@ -3,6 +3,7 @@ use super::*;
 pub(in crate::storage) fn cancel_call(db: &Connection, id: &str) -> Result<(), Error> {
     db.execute("UPDATE messages SET status='cancelled' WHERE id=(SELECT reply_message_id FROM model_calls WHERE id=?1) AND status='streaming'",[id])?;
     db.execute("UPDATE model_calls SET status='cancelled',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status IN ('queued','streaming')",[id])?;
+    super::super::memory::annotate_stopped_memory(db, id, None)?;
     Ok(())
 }
 pub(in crate::storage) fn cancel_membership(

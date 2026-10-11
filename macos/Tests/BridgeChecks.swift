@@ -5,6 +5,64 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw CheckFailure(description: message) }
 }
 
+// Synthetic delayed maintenance endpoint for the native Retry cache regression.
+final class MemoryMaintenanceFixture {
+    let process = Process()
+    let url: String
+    init(finalMarker: URL? = nil) throws {
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-u", "-c", #"""
+import json, time, sys
+from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        data = json.loads(body['messages'][-1]['content'])
+        if 'maintenance' in data:
+            time.sleep(1.2)
+            call = {'id':'maintenance-call','type':'function','function':{'name':'update_memory','arguments':json.dumps({'content':data['current_memory']})}}
+            events = [{'choices':[{'index':0,'delta':{'tool_calls':[dict(call,index=0)]},'finish_reason':None}]}, {'choices':[{'index':0,'delta':{},'finish_reason':'tool_calls'}]}]
+            encoded = (''.join('data: '+json.dumps(event)+'\n\n' for event in events)+'data: [DONE]\n\n').encode()
+            status, kind = 200, 'text/event-stream'
+        elif sys.argv[1] and body.get('tool_choice') != 'none':
+            call = {'id':'saved-before-stop','type':'function','function':{'name':'update_memory','arguments':json.dumps({'content':'Saved before native room Stop.'})}}
+            events = [{'choices':[{'index':0,'delta':{'tool_calls':[dict(call,index=0)]},'finish_reason':None}]}, {'choices':[{'index':0,'delta':{},'finish_reason':'tool_calls'}]}]
+            encoded = (''.join('data: '+json.dumps(event)+'\n\n' for event in events)+'data: [DONE]\n\n').encode()
+            status, kind = 200, 'text/event-stream'
+        elif sys.argv[1]:
+            Path(sys.argv[1]).touch()
+            time.sleep(1.2)
+            text = json.dumps({'reply':'late native final','state':{'affinity_user':99,'mood':'calm'}})
+            events = [{'choices':[{'index':0,'delta':{'content':text},'finish_reason':None}]}, {'choices':[{'index':0,'delta':{},'finish_reason':'stop'}]}]
+            encoded = (''.join('data: '+json.dumps(event)+'\n\n' for event in events)+'data: [DONE]\n\n').encode()
+            status, kind = 200, 'text/event-stream'
+        else:
+            encoded, status, kind = b'{"error":"synthetic chat failure"}', 500, 'application/json'
+        try:
+            self.send_response(status); self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError): pass
+server = ThreadingHTTPServer(('127.0.0.1',0), Handler)
+print(server.server_port, flush=True)
+server.serve_forever()
+"""#, finalMarker?.path ?? ""]
+        process.standardOutput = output
+        try process.run()
+        var line = Data()
+        while let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty {
+            if byte[0] == 10 { break }; line.append(byte)
+        }
+        guard let port = String(data: line, encoding: .utf8), Int(port) != nil else {
+            process.terminate(); process.waitUntilExit(); throw CheckFailure(description: "Maintenance fixture did not start")
+        }
+        url = "http://127.0.0.1:\(port)/v1"
+    }
+    deinit { if process.isRunning { process.terminate() }; process.waitUntilExit() }
+}
+
 @main
 struct BridgeChecks {
     @MainActor
@@ -30,8 +88,35 @@ struct BridgeChecks {
         try require(reopened.bubbles.map(\.id) == savedIDs, "UI did not restore the durable transcript")
         try require(reopened.bubbles.last?.status == .complete, "UI lost the completed reply")
         reopened.closeChat()
-        try await exerciseConcurrentRooms(root.appendingPathComponent("concurrent"))
+        let concurrentRoot = root.appendingPathComponent("concurrent")
+        let maintainedPersona = try await exerciseConcurrentRooms(concurrentRoot)
+        try await Task.sleep(for: .milliseconds(100))
+        do {
+            let restored = ChatModel(dataRoot: concurrentRoot)
+            await restored.load()
+            restored.select(maintainedPersona)
+            for _ in 0..<100 where restored.loading { try await Task.sleep(for: .milliseconds(10)) }
+            try require(restored.markers.count == 1, "Durable memory marker was not restored through FFI")
+            try require(restored.maintenanceDetail?.contains("no chat model") == true, "Persisted maintenance status was not restored through FFI")
+            restored.closeChat()
+        }
         try await exerciseDailySettingsAndRetry(root.appendingPathComponent("daily"))
+        try await exerciseMaintenanceRetry(root.appendingPathComponent("maintenance-retry"))
+        try await Task.sleep(for: .milliseconds(100))
+        do {
+            let restored = try PebbleBackend(dataRoot: root.appendingPathComponent("maintenance-retry").path)
+            let status = try restored.maintenanceStatus(personaId: restored.workspace().personas[0].id)
+            try require(status?.memoryReviewed == true && status?.memorySaved == false, "FFI restart lost completed unchanged review status")
+        }
+        let stoppedRoot = root.appendingPathComponent("saved-memory-stop")
+        let stoppedPersona = try await exerciseSavedMemoryStop(stoppedRoot)
+        try await Task.sleep(for: .milliseconds(100))
+        do {
+            let restored = try PebbleBackend(dataRoot: stoppedRoot.path)
+            let reply = try restored.messages(personaId: stoppedPersona).last
+            try require(reply?.status == .cancelled && reply?.failureDetail.contains("Memory was saved") == true,
+                        "Restart lost the cancelled reply's committed-memory explanation")
+        }
         try await exerciseGroups(root.appendingPathComponent("groups"))
         let retryModel = ChatModel(dataRoot: root.appendingPathComponent("group-retry"))
         await retryModel.load()
@@ -94,6 +179,84 @@ struct BridgeChecks {
     }
 
     @MainActor
+    static func exerciseMaintenanceRetry(_ root: URL) async throws {
+        let fixture = try MemoryMaintenanceFixture()
+        let model = ChatModel(dataRoot: root)
+        await model.load()
+        let a = model.selected!.id
+        let created = await model.createCharacter("Other")
+        try require(created, "Could not create unrelated maintenance persona")
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        let b = model.selected!.id
+        model.sendMessage("Cancelled unrelated reply")
+        model.stopReply()
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+        let other = model.bubbles.last!
+        try require(model.canRetry(other), "Unrelated cancelled reply was not retryable")
+        model.select(a)
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        let settings = try await model.readSettings(a)
+        var chat = settings.chat
+        chat.enabled = true; chat.contextLen = 65536; chat.maxOutputTokens = 4096
+        chat.model = "synthetic-maintenance"; chat.baseUrl = fixture.url; chat.api = "chat_completions"
+        try await model.saveSettings(a, update: SettingsUpdateRecord(chat: chat, credential: .clear, persona: settings.persona))
+        model.sendMessage("Retryable failed input")
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+        let stale = model.bubbles.last!
+        try require(stale.canRetry && model.canRetry(stale), "Failed reply was not initially retryable")
+        let operation = Task { await model.startFreshContext() }
+        try await ClassifierChecks.wait(model, until: { model.isMaintaining })
+        try require(stale.canRetry && !model.canRetry(stale), "Running maintenance did not hide stale cached Retry")
+        model.select(b)
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        try require(model.canRetry(other), "Another persona's maintenance hid unrelated Retry")
+        model.select(a)
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        model.cancelMaintenance()
+        let completed = await operation.value
+        try require(!completed && !model.isMaintaining && model.canRetry(model.bubbles.last!), "Retry did not return after maintenance terminated")
+        let fresh = await model.startFreshContext()
+        try require(fresh, "Unchanged native maintenance did not complete")
+        let personaConfig = URL(fileURLWithPath: model.selected!.directory).appendingPathComponent("config.toml")
+        let authored = try String(contentsOf: personaConfig, encoding: .utf8)
+        try authored.replacingOccurrences(of: "synthetic-maintenance", with: "changed-maintenance")
+            .write(to: personaConfig, atomically: true, encoding: .utf8)
+        await model.load()
+        let changed = await model.startFreshContext()
+        try require(!changed && model.error?.hasPrefix("Couldn't start a fresh context.") == true && model.error?.contains("Couldn't start the reply") == false,
+                    "Fresh-context start error used reply wording")
+        model.closeChat()
+        print("Native maintenance passed: cached Retry isolation, completed unchanged review, and accurate fresh-context start error.")
+    }
+
+    @MainActor
+    static func exerciseSavedMemoryStop(_ root: URL) async throws -> String {
+        let marker = root.appendingPathComponent("final-request-ready")
+        let fixture = try MemoryMaintenanceFixture(finalMarker: marker)
+        let model = ChatModel(dataRoot: root)
+        await model.load()
+        let id = model.selected!.id
+        let settings = try await model.readSettings(id)
+        var chat = settings.chat
+        chat.enabled = true; chat.contextLen = 65536; chat.maxOutputTokens = 4096
+        chat.model = "synthetic-memory-stop"; chat.baseUrl = fixture.url; chat.api = "chat_completions"
+        try await model.saveSettings(id, update: SettingsUpdateRecord(chat: chat, credential: .clear, persona: settings.persona))
+        model.sendMessage("Remember before Stop")
+        try await ClassifierChecks.wait(model, until: { FileManager.default.fileExists(atPath: marker.path) })
+        model.stopReply()
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+        let reply = model.bubbles.last!
+        try require(reply.status == .cancelled && reply.text.isEmpty && reply.failureDetail.contains("Memory was saved"),
+                    "Cancelled bubble omitted its durable committed-memory explanation")
+        await model.load()
+        try require(model.bubbles.last?.failureDetail == reply.failureDetail,
+                    "Reload lost the cancelled bubble's committed-memory explanation")
+        model.closeChat()
+        print("Native room Stop passed: cancelled bubble retains committed-memory detail through FFI and reload.")
+        return id
+    }
+
+    @MainActor
     static func exerciseDailySettingsAndRetry(_ root: URL) async throws {
         let model = ChatModel(dataRoot: root)
         await model.load()
@@ -142,7 +305,7 @@ struct BridgeChecks {
     }
 
     @MainActor
-    static func exerciseConcurrentRooms(_ root: URL) async throws {
+    static func exerciseConcurrentRooms(_ root: URL) async throws -> String {
         let model = ChatModel(dataRoot: root)
         await model.load()
         let mira = model.selected!.id
@@ -183,6 +346,8 @@ struct BridgeChecks {
         let saved = model.bubbles.map(\.id)
         let reset = await model.startFreshContext()
         try require(reset && model.error == nil, "Fresh context failed after terminal replies")
+        try require(model.markers.count == 1 && model.markers[0].personaId == mira, "Persona memory marker projection was missing")
+        try require(model.maintenanceDetail?.contains("no chat model") == true, "Demo maintenance pretended a model memory save")
         try require(model.bubbles.map(\.id) == saved, "Fresh context deleted visible messages")
         try require(model.selected?.contextNotice.contains("Fresh model context") == true, "Fresh context notice was missing")
         try require(model.draft == "Mira's unsent draft", "Fresh context cleared the unsent draft")
@@ -190,6 +355,7 @@ struct BridgeChecks {
         for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.last?.status == .complete && !model.bubbles.last!.text.contains("Mira first private input"), "Fresh context reused earlier model context: loading=\(model.loading), replying=\(model.isReplying), error=\(model.error ?? "none"), last=\(model.bubbles.last?.text ?? "none")")
         model.closeChat()
+        return mira
     }
 
     static func exerciseBridge(_ root: URL) async throws -> (String, String, [String]) {

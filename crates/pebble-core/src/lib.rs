@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate self as pebble_core;
+
 mod chat;
 mod classifier_settings;
 mod config;
@@ -6,6 +9,8 @@ mod context;
 mod demo;
 mod history;
 mod live;
+mod maintenance;
+mod memory;
 mod participation;
 mod personas;
 mod response_settings;
@@ -19,6 +24,7 @@ pub use classifier_settings::ClassifierSettings;
 pub use config::{ChatConnection, ClassifierConnection, Persona, Workspace};
 pub use context::ContextBudget;
 pub use history::{Message, MessageStatus, ModelItem, ModelRequest};
+pub use maintenance::{ContextMarker, MaintenanceStatus, MaintenanceTask};
 pub use participation::{GroupTask, Participation};
 pub use response_settings::{ResponseAction, ResponseSettings, ResponseUpdate};
 pub use rooms::{Room, RoomMember};
@@ -239,14 +245,30 @@ impl Core {
         )
     }
 
-    pub fn fresh_context(&self, persona_id: &str) -> Result<Persona, Error> {
+    pub fn start_fresh_context(&self, persona_id: &str) -> Result<Arc<MaintenanceTask>, Error> {
         self.chats
-            .fresh_context(&self.database, || self.persona(persona_id))?;
-        self.workspace()?
-            .personas
-            .into_iter()
-            .find(|p| p.id == persona_id)
-            .ok_or(Error::UnknownPersona)
+            .start_maintenance(self.database.clone(), self.data_root.clone(), || {
+                self.persona(persona_id)
+            })
+    }
+    pub fn maintenance_status(&self, persona_id: &str) -> Result<Option<MaintenanceStatus>, Error> {
+        self.database.maintenance_status(persona_id)
+    }
+    pub fn context_markers(&self, room: &str) -> Result<Vec<ContextMarker>, Error> {
+        self.database.context_markers(room)
+    }
+    pub fn fresh_context(&self, persona_id: &str) -> Result<Persona, Error> {
+        let task = self.start_fresh_context(persona_id)?;
+        loop {
+            let status = task.status();
+            if status.status != "running" {
+                if status.status != "completed" {
+                    return Err(Error::Generation(status.detail));
+                }
+                return self.persona(persona_id);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     pub fn send_message(

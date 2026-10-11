@@ -54,6 +54,18 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.retryMessage(personaId: persona, replyId: reply, observer: observer)
     }
+    func startFreshContext(persona: String) throws -> MaintenanceHandle {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.startFreshContext(personaId: persona)
+    }
+    func maintenanceStatus(persona: String) throws -> MaintenanceStatusRecord? {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.maintenanceStatus(personaId: persona)
+    }
+    func markers(room: String) throws -> [ContextMarkerRecord] {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
+        return try backend.contextMarkers(roomId: room)
+    }
     func freshContext(persona: String) throws -> PersonaRecord {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.freshContext(personaId: persona)
@@ -161,6 +173,12 @@ final class ChatModel {
     var stateTarget: SettingsTarget?
     var classifierTarget: SettingsTarget?
     var replyRevision = 0
+    private var maintenanceHandles: [String: MaintenanceHandle] = [:]
+    var maintenanceDetails: [String: String] = [:]
+    var isMaintaining: Bool { selected.map { maintenanceHandles[$0.id] != nil } ?? false }
+    var maintenanceDetail: String? { selected.flatMap { maintenanceDetails[$0.id] } }
+    var markers: [ContextMarkerRecord] { selectedRoom?.markers ?? [] }
+    func cancelMaintenance() { if let id = selected?.id { maintenanceHandles[id]?.cancel() } }
     private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
 
@@ -208,7 +226,7 @@ final class ChatModel {
     var isReplying: Bool { !(selectedRoom?.runs.isEmpty ?? true) }
     var hasActiveReplies: Bool { rooms.values.contains { !$0.runs.isEmpty } }
     func canRetry(_ bubble: ChatBubble) -> Bool {
-        guard bubble.canRetry, !loading else { return false }
+        guard bubble.canRetry, !loading, maintenanceHandles[bubble.senderID] == nil else { return false }
         return !rooms.values.contains { state in
             if state.participation.contains(where: { $0.personaId == bubble.senderID && ["pending", "admitted"].contains($0.slotStatus) }) { return true }
             return state.runs.contains { run in
@@ -240,6 +258,14 @@ final class ChatModel {
             let loaded = try await client.load()
             guard selectionRevision == revision else { return }
             workspace = loaded
+            for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
+                if let status = try await client.maintenanceStatus(persona: persona.id) {
+                    maintenanceDetails[persona.id] = status.detail
+                    if ["failed", "cancelled", "interrupted"].contains(status.status) {
+                        room(persona.conversationId).error = status.detail
+                    }
+                }
+            }
             if !loaded.rooms.contains(where: { $0.id == selectedID }) { selectedID = loaded.personas.first?.conversationId ?? loaded.rooms.first?.id }
             if let id = selectedID {
                 let state = room(id)
@@ -247,7 +273,7 @@ final class ChatModel {
                     let messages = try await client.history(room: id)
                     let decisions = try await client.participation(room: id)
                     guard selectionRevision == revision else { return }
-                    if state.runs.isEmpty { state.bubbles = messages.map(ChatBubble.init); state.participation = decisions }
+                    if state.runs.isEmpty { state.bubbles = messages.map(ChatBubble.init); state.participation = decisions; state.markers = try await client.markers(room: id) }
                 }
                 state.loaded = true
             }
@@ -270,6 +296,7 @@ final class ChatModel {
                     guard selectionRevision == revision, state.runs.isEmpty else { return }
                     state.bubbles = messages.map(ChatBubble.init)
                     state.participation = decisions
+                    state.markers = try await client.markers(room: id)
                 } catch { if selectionRevision == revision { state.error = describe(error) } }
             }
         }
@@ -306,14 +333,33 @@ final class ChatModel {
     }
 
     func startFreshContext() async -> Bool {
-        guard let persona = selected, let id = selectedID else { return false }
+        guard let persona = selected, let id = selectedID, maintenanceHandles[persona.id] == nil else { return false }
         let state = room(id)
         do {
-            _ = try await client.freshContext(persona: persona.id)
-            workspace = try await client.load()
+            let handle = try await client.startFreshContext(persona: persona.id)
+            maintenanceHandles[persona.id] = handle
             state.error = nil
-            return true
-        } catch { state.error = describe(error); return false }
+            while true {
+                let status = handle.status()
+                maintenanceDetails[persona.id] = status.detail
+                if status.status != "running" {
+                    maintenanceHandles[persona.id] = nil
+                    workspace = try await client.load()
+                    await refreshRoomsAfterReply()
+                    if status.status != "completed" { state.error = status.detail; return false }
+                    state.error = nil
+                    return true
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        } catch {
+            maintenanceHandles[persona.id]?.cancel()
+            maintenanceHandles[persona.id] = nil
+            if case let BackendError.Generation(detail) = error {
+                state.error = "Couldn't start a fresh context. \(detail)"
+            } else { state.error = describe(error) }
+            return false
+        }
     }
 
     func readSettings(_ persona: String?) async throws -> SettingsRecord { try await client.settings(persona: persona) }
@@ -430,6 +476,7 @@ final class ChatModel {
             do {
                 let messages = try await client.history(room: id)
                 let decisions = try await client.participation(room: id)
+                state.markers = try await client.markers(room: id)
                 state.applyParticipation(decisions, conversation: id)
                 if state.runs.isEmpty { state.bubbles = messages.map(ChatBubble.init) }
                 else {
@@ -459,6 +506,7 @@ final class ChatModel {
     }
     func closeChat() {
         selectionRevision = UUID()
+        maintenanceHandles.values.forEach { $0.cancel() }
         for state in rooms.values {
             for run in state.runs { run.cancel(); run.task?.cancel(); run.sink?.finish() }
             state.runs.removeAll()

@@ -67,17 +67,46 @@ opaque Unicode text, not a user corpus): a Chat Completions native item used
 13702 / 169. These highly repetitive samples demonstrate the mechanism, not an
 expected production compression ratio. Tests also keep noncompressible bytes raw.
 
+## Maintenance headroom
+
+New live memory-capable sessions reserve `min(98304, context_len / 3)` bytes
+(integer division) below the ordinary chat input ceiling. An initial chat request
+must satisfy `wire_json_bytes + 128 <= context_len - max_output_tokens - reserve`.
+For 262144/4096, reserve is 87381 and the initial ceiling is 170667 bytes.
+Tool continuation and final repair use the full `context_len - max_output_tokens`
+ceiling. Existing frozen contexts retain their earlier accounting until an
+explicit supported transition. Classifier and demo accounting is unchanged.
+
+This is conservative operational room, not an assertion of provider capacity.
+The bounded replacement is 8192 UTF-8 bytes; complete arguments allow 49166 bytes
+for worst-case JSON escaping (`8192 * 6 + 14`), with one tool call and a small result envelope.
+The reserve also leaves room for current MEMORY, maintenance instructions and
+observation envelopes in ordinary cases. It is not a proof that every outgoing
+request fits: current authored memory, opaque history and new observations can
+be larger. Maintenance checks the exact complete serialized request against the
+full ceiling before HTTP. Failure preserves source context and reports the
+required estimate; it never truncates observations or starts an empty reset.
+Unit tests exercise equality and one-byte-over for both ceilings.
+
 ## Explicit boundaries
 
-Start fresh context keeps all saved bubbles and native items. Rust serializes
-the operation against queue acceptance, refuses queued/active work for that
-persona (including pending decisions and still-admittable group slots), and atomically retires its current session and saves a new frozen prefix
-with current files and the unchanged accepted persona state. An incompatible response schema fails without replacing the active session or resetting state. The current event frontier becomes the boundary. Subsequent
-requests contain only events after it; earlier native output never becomes user
-input. A manual reason persists the notice even before the first received event.
-Other personas may continue generating.
+**Start fresh context** is asynchronous, persona-wide memory maintenance. It
+refuses outstanding work at acceptance, freezes a persona event cutoff and
+loads all active native knowledge plus eligible unconsumed observations through
+that cutoff. Silent group observations count even when the persona never had a
+model session. The same configured chat model must complete `update_memory`,
+including an explicit no-change review, before Rust atomically publishes the
+new current SOUL/MEMORY prefix, unchanged accepted state and one durable marker.
+No conversational reply is generated and no character state is accepted.
+Later observations remain consumable. Other personas can run concurrently.
 
-The UI explains and confirms this nondestructive operation. It does not clear
-the transcript, compact/summarize model history, or archive data. Old frozen calls
-remain replayable within the same decoding bound. A fresh context can recover
-from a full or unreadable old context without loading its payloads.
+A failed/cancelled attempt preserves the active source and adds no marker.
+Saved memory is durable independently of boundary publication; retry publishes
+that saved result with its original cutoff, without another model/write effect.
+Unreadable, corrupt or oversized sources fail explicitly. Old calls/items stay
+saved and replayable within the loader bound. Empty outgoing knowledge requires
+no HTTP; demo transitions preserve MEMORY with an explicit no-model explanation.
+Provider changes and schema/state resets retain their distinct existing
+boundaries. Maintenance refuses a changed provider binding before sending any
+old native history; a normal chat first establishes that connection's context.
+See [memory semantics and durability](memory.md).

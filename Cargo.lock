@@ -1069,9 +1069,10 @@ dependencies = [
 
 [[package]]
 name = "pebble-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "jsonschema",
+ "libc",
  "reqwest",
  "rusqlite",
  "serde",
@@ -1088,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "pebble-ffi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pebble-core",
  "thiserror",

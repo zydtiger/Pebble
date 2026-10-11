@@ -47,6 +47,11 @@ fn mixed_codec_native_history_restarts_and_replays_exact_bytes_for_both_protocol
             sizes.0, sizes.1
         );
         assert!(sizes.1 < sizes.0);
+        drop(first);
+        drop(core);
+        let core = reopen(root.path());
+        let (second, rx) = start(&core, &id, "second input");
+        assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
         assert!(
             db.query_row(
                 "SELECT COUNT(*) FROM model_items WHERE codec='json'",
@@ -56,11 +61,6 @@ fn mixed_codec_native_history_restarts_and_replays_exact_bytes_for_both_protocol
             .unwrap()
                 > 0
         );
-        drop(first);
-        drop(core);
-        let core = reopen(root.path());
-        let (second, rx) = start(&core, &id, "second input");
-        assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
         let next = core.model_request(&second.id).unwrap();
         for (a, b) in frozen.items.iter().zip(&next.items) {
             assert_eq!(a.id, b.id);
@@ -126,7 +126,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        10
+        11
     );
     assert_eq!(
         db.query_row(
@@ -204,8 +204,8 @@ fn request_loader_preflights_total_size_and_rejects_corrupt_or_lying_codec_metad
             assert!(matches!(failure, Error::History(_)));
         }
         assert!(failure.to_string().contains("fresh context"));
-        // Explicit fresh context recovers without decoding or deleting old corrupt items.
-        core.fresh_context(&id).unwrap();
+        // Consolidation must not discard corrupt outgoing history.
+        assert!(core.fresh_context(&id).is_err());
         assert_eq!(core.messages(&id).unwrap().len(), 2);
     }
 }

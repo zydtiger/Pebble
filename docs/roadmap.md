@@ -1,6 +1,6 @@
 # Roadmap
 
-The full local private + group milestone, **v0.2.0**, is implemented. Earlier
+The local private + group + memory/context milestone, **v0.3.0**, is implemented. Earlier
 increments remain recorded below so the architecture can be inspected in stages.
 
 | Stage | Outcome |
@@ -46,7 +46,7 @@ Composer checks cover growth, scrolling, marked text, Enter to send, and the
 Command/Shift–Enter newline shortcuts. See README for the runnable checks and
 local data paths; provider, history, context, and settings docs own their details.
 
-No automatic retry, transcript clearing, or history summarization occurs. Drafts
+No automatic retry, transcript clearing, or threshold-triggered summarization occurs. Explicit memory consolidation is described below. Drafts
 do not survive app restart. Retry is limited to the latest unsuccessful reply,
 settings saves are atomic per file, and context estimates are not exact provider
 token usage. These limits are explicit parts of the first local milestone.
@@ -100,9 +100,28 @@ member controls, typed/chosen mentions, speaker attribution, participation,
 private navigation, recovery and per-room drafts. Composer checks retain native
 marked text, Enter send and Command/Shift–Enter newline behavior.
 
-After v0.2.0: automatic memory extraction/retrieval/writing, session compaction,
+After v0.3.0: memory retrieval, automatic threshold compaction,
 Codex delegation, attachments, proactive conversations outside a user-started
 group round, separate roleplay worlds, richer relationships, search/cold
 archives/exports/deletion, sync, notarization, and broader platform validation
 remain separately scoped. The local app remains ad-hoc signed for Apple Silicon;
 no remote release, distribution signing or notarization is provided.
+
+## v0.2.1–v0.3.0 memory/context delivery
+
+| Stage | Completed outcome |
+| --- | --- |
+| v0.2.1 | Persona-scoped native update_memory, current-memory input snapshots, durable effect journal/reconciliation, native replay and explicit partial-outcome recovery for both protocols |
+| v0.2.2 | Same-chat-model asynchronous explicit consolidation, frozen cutoff, unchanged state, silent-group observation support, bounded headroom and saved-effect publication retry |
+| v0.2.3 | Durable private/group persona boundary line/diamond, native progress/Cancel and persisted restart recovery |
+| v0.3.0 | Schema 11 upgrade, core/FFI/Swift integration, synthetic durability/provider fixtures, live selected-service tool and maintenance integration, docs and local build version |
+
+The targeted [memory/context fixtures](../crates/pebble-core/tests/memory_context.rs)
+cover tool effect survival, frozen retry, manual conflicts, unknown/malformed
+arguments, silent group knowledge, newer observations, membership removal,
+publication failure/restart recovery and cancellation. Core journal tests cover
+prepared/write/result restart stages, duplicate call IDs and unchanged-memory
+no-op. Budget tests verify exact initial/maintenance boundaries. The local demo
+explicitly preserves memory without claiming model-backed consolidation.
+No Codex adapter, delegated task tables, work tools, retrieval or automatic
+rollover is included.

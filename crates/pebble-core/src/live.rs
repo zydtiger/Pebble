@@ -65,7 +65,10 @@ pub(crate) async fn generate(
     }
     let mut framing = sse::Framing::default();
     let mut completion = chat_completions::Stream::default();
+    completion.allow_tools = request.memory_tools;
     let mut responses = responses::Stream::default();
+    responses.allow_tools = request.memory_tools;
+    let mut received = 0usize;
     loop {
         let chunk = tokio::time::timeout(Duration::from_secs(45), response.chunk())
             .await
@@ -76,6 +79,12 @@ pub(crate) async fn generate(
                 "The model stream ended before its completion marker.",
             ));
         };
+        received = received.saturating_add(chunk.len());
+        if request.memory_capable && received > crate::memory::NATIVE_CAP {
+            return Err(failure(
+                "Memory-capable response exceeded the 128 KiB stream bound.",
+            ));
+        }
         if control.is_cancelled() {
             return Err(failure("Cancelled"));
         }
@@ -147,7 +156,28 @@ pub(crate) fn request_body(
         ),
         _ => return Err(failure("The configured model protocol is unsupported.")),
     };
-    if let Some(schema) = &request.response_schema {
+    let replay_tools = messages.iter().any(|item| {
+        item.get("tool_calls").is_some()
+            || item["type"] == "function_call"
+            || item["role"] == "tool"
+            || item["type"] == "function_call_output"
+    });
+    if request.memory_tools || replay_tools {
+        body["tools"] = json!([crate::memory::declaration(&request.protocol)]);
+        body["parallel_tool_calls"] = json!(false);
+        body["tool_choice"] = json!(if request.memory_tools {
+            if request.response_schema.is_none() {
+                "required"
+            } else {
+                "auto"
+            }
+        } else {
+            "none"
+        });
+    }
+    if !request.memory_tools
+        && let Some(schema) = &request.response_schema
+    {
         if chat.api == "chat_completions"
             || chat.responses_schema_format.as_deref() == Some("response_format")
         {

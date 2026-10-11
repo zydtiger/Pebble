@@ -33,11 +33,16 @@ pub trait ChatListener: Send + Sync {
     fn on_event(&self, event: ChatEvent) -> Result<(), String>;
 }
 
+#[cfg(test)]
+type MemoryPublicationHook = Box<dyn FnOnce(&std::path::Path) -> Result<(), Error> + Send>;
+
 #[derive(Default)]
 pub(crate) struct Control {
     cancelled: Mutex<bool>,
     wake: Condvar,
     signal: tokio::sync::Notify,
+    #[cfg(test)]
+    pub(crate) memory_publication: Mutex<Option<MemoryPublicationHook>>,
 }
 
 impl Control {
@@ -112,16 +117,57 @@ impl Chats {
         operation()
     }
 
-    pub(crate) fn fresh_context(
-        &self,
-        db: &Database,
+    pub(crate) fn start_maintenance(
+        self: &Arc<Self>,
+        db: Arc<Database>,
+        root: std::path::PathBuf,
         load: impl FnOnce() -> Result<Persona, Error>,
-    ) -> Result<(), Error> {
-        self.serialized(|| {
-            let persona = load()?;
-            db.ensure_decisions_idle(Some(&persona.id))?;
-            db.fresh_context(&persona)
-        })
+    ) -> Result<Arc<crate::MaintenanceTask>, Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        let persona = load()?;
+        let job = db.begin_maintenance(&persona)?;
+        let control = Arc::new(Control::default());
+        let latest = Arc::new(Mutex::new(crate::MaintenanceStatus {
+            id: job.id.clone(),
+            persona_id: persona.id.clone(),
+            status: "running".into(),
+            detail: "Reviewing memory before starting a fresh context…".into(),
+            memory_saved: false,
+            memory_reviewed: db.memory_reviewed(&job.id)?,
+        }));
+        let task = Arc::new(crate::MaintenanceTask {
+            id: job.id.clone(),
+            control: control.clone(),
+            latest: latest.clone(),
+        });
+        let reservation = queues
+            .entry(persona.id.clone())
+            .or_default()
+            .clone()
+            .reserve(&job.id, &control);
+        let wake = Arc::downgrade(self);
+        let recovery_db = db.clone();
+        let id = job.id.clone();
+        if std::thread::Builder::new()
+            .name("pebble-memory".into())
+            .spawn(move || {
+                if !reservation.wait(&control) {
+                    control.cancel();
+                }
+                crate::maintenance::worker(db, root, persona, job, control, latest);
+                drop(reservation);
+                if let Some(chats) = wake.upgrade() {
+                    chats.wake_groups();
+                }
+            })
+            .is_err()
+        {
+            recovery_db.finish_maintenance(&id, "failed", "Could not start memory maintenance.")?;
+            return Err(Error::Generation(
+                "Could not start memory maintenance.".into(),
+            ));
+        }
+        Ok(task)
     }
 
     pub(crate) fn settings(
@@ -372,14 +418,7 @@ impl Chats {
                             ))
                         }
                     }) {
-                        Ok(turn) => run(
-                            worker_db,
-                            turn,
-                            control,
-                            listener,
-                            persona.chat,
-                            persona.context,
-                        ),
+                        Ok(turn) => run(worker_db, turn, control, listener, persona),
                         Err(error) => finish_pending(
                             &worker_db,
                             &worker_turn,
@@ -457,9 +496,10 @@ fn run(
     turn: Turn,
     control: Arc<Control>,
     listener: Arc<dyn ChatListener>,
-    chat: Option<crate::ChatConnection>,
-    budget: crate::ContextBudget,
+    persona: Persona,
 ) {
+    let chat = persona.chat.clone();
+    let budget = persona.context;
     let emit = |sequence, kind, text, messages| {
         listener.on_event(ChatEvent {
             run_id: turn.call_id.clone(),
@@ -492,7 +532,7 @@ fn run(
     let structured = request.as_ref().is_ok_and(|r| r.response_schema.is_some());
     let generated = request.and_then(|request| {
         if structured {
-            generate_structured(&db, &request, chat.as_ref(), budget, &control)
+            generate_structured(&db, &request, &persona, chat.as_ref(), budget, &control)
                 .map(|(reply, output)| {
                     content = reply;
                     Some(output)
@@ -554,8 +594,11 @@ fn run(
         if *cancelled || !connected {
             status = MessageStatus::Cancelled;
         }
-        if structured && status != MessageStatus::Complete {
-            content.clear();
+        if status != MessageStatus::Complete {
+            failure = memory_failure(&db, &turn.call_id, failure);
+            if structured {
+                content.clear();
+            }
         }
         db.finish_turn(
             &turn,
@@ -576,7 +619,8 @@ fn run(
             failure.unwrap_or_default(),
         ),
         Err(error) => {
-            let detail = error.to_string();
+            let detail = memory_failure(&db, &turn.call_id, Some(error.to_string()))
+                .expect("publication error");
             if structured {
                 content.clear();
             }
@@ -591,6 +635,21 @@ fn run(
     if connected {
         let _ = emit(sequence + 1, kind, error, messages);
     }
+}
+
+fn memory_failure(db: &Database, owner: &str, detail: Option<String>) -> Option<String> {
+    if !db.memory_saved(owner).unwrap_or(false) {
+        return detail;
+    }
+    let recovery = if db.memory_reviewed(owner).unwrap_or(false) {
+        crate::storage::memory::SAVED_BEFORE_STOP
+    } else {
+        "Memory was saved, but its result awaits recovery. Reopen Pebble before retrying; no write will be repeated."
+    };
+    Some(format!(
+        "{} {recovery}",
+        detail.unwrap_or_else(|| "Reply cancelled.".into())
+    ))
 }
 
 fn reassess_queued(
@@ -639,6 +698,7 @@ fn worker_runtime() -> Result<tokio::runtime::Runtime, Error> {
 fn generate_structured(
     db: &Database,
     request: &crate::ModelRequest,
+    persona: &Persona,
     chat: Option<&crate::ChatConnection>,
     budget: crate::ContextBudget,
     control: &Arc<Control>,
@@ -653,14 +713,19 @@ fn generate_structured(
         .as_ref()
         .ok_or_else(|| Error::Generation("Missing frozen persona state.".into()))?;
     let mut feedback: Option<String> = None;
+    let mut base_request = request.clone();
+    base_request.memory_tools = request.memory_tools && chat.is_some() && !db.tool_used(request)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    let mut tool_phase = base_request.memory_tools;
+    let mut candidate_count = 0;
     let runtime = worker_runtime()?;
-    for attempt in 0..3 {
+    for _ in 0..4 {
         if control.is_cancelled() {
             return Err(Error::Generation("Cancelled".into()));
         }
         // Retry input differs only by transient, specific validation feedback.
         // It never includes a rejected candidate or changes persisted frozen items.
-        let mut candidate_request = request.clone();
+        let mut candidate_request = base_request.clone();
         if let Some(detail) = &feedback {
             let text = format!(
                 "Response validation feedback: {detail} Regenerate only the response from the SAME frozen input and current_state. Rejected candidate state was never accepted. Return a complete valid JSON response."
@@ -676,9 +741,13 @@ fn generate_structured(
             });
         }
         if let Some(chat) = chat {
-            budget.check_body(
-                &crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1,
-            )?;
+            let body =
+                crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1;
+            if candidate_request.memory_tools {
+                budget.check_chat_start(&body)?;
+            } else {
+                budget.check_body(&body)?;
+            }
         } else {
             budget.check_demo(&candidate_request)?;
         }
@@ -687,7 +756,7 @@ fn generate_structured(
                 tokio::select! {
                     biased;
                     _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
-                    result = crate::live::generate(chat,&candidate_request,budget.max_output_tokens,control.clone(),|_|Ok(())) => result,
+                    result = tokio::time::timeout(deadline.saturating_duration_since(std::time::Instant::now()),crate::live::generate(chat,&candidate_request,budget.max_output_tokens,control.clone(),|_|Ok(()))) => result.map_err(|_|Error::Generation("The complete reply operation exceeded 180 seconds.".into()))?,
                 }
             })?
         } else {
@@ -702,13 +771,39 @@ fn generate_structured(
                 json!({"role":"assistant","content":serde_json::to_string(&json!({"reply":text,"state":state}))?}),
             ]
         };
+        if tool_phase {
+            db.archive_tool_output(&request.call_id, &output)?;
+            let calls = crate::memory::calls(&output)?;
+            tool_phase = false;
+            base_request.memory_tools = false;
+            if let Some(call) = calls.first() {
+                let expected = db.memory_snapshot(&request.call_id)?;
+                let result = db.execute_memory(
+                    crate::storage::memory::MemoryContext {
+                        owner: &request.call_id,
+                        persona,
+                        session: Some(&request.session_id),
+                        protocol: &request.protocol,
+                        expected: &expected,
+                    },
+                    &output,
+                    call,
+                    control,
+                )?;
+                crate::memory::check_result(&result)?;
+                crate::memory::append(&mut base_request, &output)?;
+                crate::memory::append(&mut base_request, &[result])?;
+                continue;
+            }
+        }
+        candidate_count += 1;
         // Transport, refusal and truncation errors leave here, without format repair.
         let text = crate::live::output_text(&output)?;
         match crate::structured::candidate(schema, &text) {
             Ok((reply, _)) => return Ok((reply, output)),
             Err(detail) => {
                 db.validation_error(&request.call_id, &detail)?;
-                if attempt == 2 {
+                if candidate_count == 3 {
                     return Err(Error::Generation(format!(
                         "Response format/schema validation failed after 3 candidates: {detail}"
                     )));
@@ -718,4 +813,117 @@ fn generate_structured(
         }
     }
     unreachable!("bounded candidate loop")
+}
+
+#[cfg(test)]
+#[path = "../tests/responses_support/mod.rs"]
+mod memory_responses_support;
+#[cfg(test)]
+#[path = "../tests/live_support/mod.rs"]
+mod memory_test_support;
+#[cfg(test)]
+mod memory_failure_tests {
+    use super::{memory_test_support::*, *};
+    use serde_json::{Value, json};
+    #[test]
+    fn failed_publication_is_visible_before_silent_final_and_retry_replays_failure() {
+        for api in ["chat_completions", "responses"] {
+            for failure in ["write", "exchange"] {
+                let args = json!({"content":"proposed memory"}).to_string();
+                let call = if api == "responses" {
+                    format!(
+                        "data: {}\n\n",
+                        json!({"type":"response.completed","response":{"status":"completed","output":[{"id":"failed-memory-item","type":"function_call","status":"completed","call_id":"failed-memory","name":"update_memory","arguments":args}]}})
+                    )
+                } else {
+                    format!(
+                        "{}{}data: [DONE]\n\n",
+                        event(
+                            json!({"tool_calls":[{"index":0,"id":"failed-memory","type":"function","function":{"name":"update_memory","arguments":args}}]}),
+                            Value::Null
+                        ),
+                        event(json!({}), json!("tool_calls"))
+                    )
+                };
+                let mut delayed = stream(call);
+                delayed.delay_headers = true;
+                let silent = if api == "responses" {
+                    super::memory_responses_support::success(
+                        "ordinary final without mentioning memory",
+                    )
+                } else {
+                    success("ordinary final without mentioning memory")
+                };
+                let server = Server::memory(vec![delayed, stream(silent)]);
+                let (root, core, id) = isolated();
+                configure(root.path(), &server.url, "mock", api, "");
+                let (task, rx) = start(&core, &id, "remember a fact");
+                server
+                    .requests
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+                *task.control.memory_publication.lock().unwrap() =
+                    Some(Box::new(move |previous| {
+                        Err(crate::file_error(
+                            previous,
+                            std::io::Error::other(format!("synthetic {failure} publication error")),
+                        ))
+                    }));
+                let event = terminal(&rx).pop().unwrap();
+                assert_eq!(event.kind, ChatEventKind::Failed);
+                assert!(
+                    event.text.contains(&format!("synthetic {failure}")),
+                    "{}: {}",
+                    api,
+                    event.text
+                );
+                let failed = core.messages(&id).unwrap().pop().unwrap();
+                assert!(failed.content.is_empty());
+                assert!(
+                    failed
+                        .failure_detail
+                        .contains(&format!("synthetic {failure}"))
+                );
+                assert!(
+                    server.requests.try_recv().is_err(),
+                    "failure must stop before the otherwise valid final"
+                );
+                assert_eq!(
+                    core.workspace().unwrap().personas[0].memory,
+                    "Synthetic test memory only."
+                );
+                let request = core.model_request(&task.id).unwrap();
+                assert!(
+                    request
+                        .items
+                        .iter()
+                        .any(|i| String::from_utf8_lossy(&i.payload).contains("\\\"ok\\\":false"))
+                );
+                drop(task);
+                drop(core);
+                let core = reopen(root.path());
+                let (_task, rx) = retry(&core, &id, &failed.id);
+                assert_eq!(terminal(&rx).last().unwrap().kind, ChatEventKind::Completed);
+                let replay = server
+                    .requests
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap()
+                    .1;
+                assert_eq!(replay["tool_choice"], "none");
+                let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
+                assert_eq!(
+                    db.query_row("SELECT COUNT(*) FROM memory_operations", [], |r| r
+                        .get::<_, i64>(0))
+                        .unwrap(),
+                    1
+                );
+                assert_eq!(
+                    db.query_row("SELECT status FROM memory_operations", [], |r| r
+                        .get::<_, String>(0))
+                        .unwrap(),
+                    "failed"
+                );
+            }
+        }
+    }
 }

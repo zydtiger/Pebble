@@ -55,15 +55,38 @@ pub(super) struct Server {
     pub url: String,
     pub requests: mpsc::Receiver<(String, Value)>,
     worker: Option<std::thread::JoinHandle<()>>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Server {
     pub fn new(plans: Vec<Plan>) -> Self {
+        Self::with_maintenance(plans, true)
+    }
+    pub fn memory(plans: Vec<Plan>) -> Self {
+        Self::with_maintenance(plans, false)
+    }
+    fn with_maintenance(plans: Vec<Plan>, automatic: bool) -> Self {
         let socket = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", socket.local_addr().unwrap());
         let (tx, requests) = mpsc::channel();
+        socket.set_nonblocking(true).unwrap();
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = shutdown.clone();
         let worker = std::thread::spawn(move || {
-            for plan in plans {
-                let (mut connection, _) = socket.accept().unwrap();
+            let mut plans = plans.into_iter();
+            let mut next = plans.next();
+            loop {
+                if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let (mut connection, _) = match socket.accept() {
+                    Ok(c) => c,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => panic!("{e}"),
+                };
+                connection.set_nonblocking(false).unwrap();
                 connection
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
@@ -96,7 +119,14 @@ impl Server {
                         }
                     }
                 };
-                tx.send((headers, body)).unwrap();
+                let plan = if automatic && let Some(output) = maintenance_reply(&body) {
+                    stream(output)
+                } else {
+                    let plan = next.take().unwrap();
+                    next = plans.next();
+                    tx.send((headers, body)).unwrap();
+                    plan
+                };
                 if plan.delay_headers {
                     std::thread::sleep(Duration::from_millis(700));
                 }
@@ -130,13 +160,42 @@ impl Server {
             url,
             requests,
             worker: Some(worker),
+            shutdown,
         }
     }
 }
 impl Drop for Server {
     fn drop(&mut self) {
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.worker.take().unwrap().join().unwrap();
     }
+}
+// Older behavioral fixtures review unchanged memory without consuming a chat plan.
+pub(super) fn maintenance_reply(body: &Value) -> Option<String> {
+    let inputs = body["messages"].as_array().or(body["input"].as_array())?;
+    let last = inputs.last()?;
+    let text = last["content"]
+        .as_str()
+        .or(last["content"][0]["text"].as_str())?;
+    let maintenance = serde_json::from_str::<Value>(text).ok()?;
+    maintenance.get("maintenance")?;
+    let args = json!({"content":maintenance["current_memory"]}).to_string();
+    Some(if body.get("input").is_some() {
+        format!(
+            "data: {}\n\n",
+            json!({"type":"response.completed","response":{"status":"completed","output":[{"id":"maintenance_item","type":"function_call","status":"completed","call_id":"maintenance_call","name":"update_memory","arguments":args}]}})
+        )
+    } else {
+        format!(
+            "{}{}data: [DONE]\n\n",
+            event(
+                json!({"tool_calls":[{"index":0,"id":"maintenance_call","type":"function","function":{"name":"update_memory","arguments":args}}]}),
+                Value::Null
+            ),
+            event(json!({}), json!("tool_calls"))
+        )
+    })
 }
 pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &str) {
     std::fs::write(

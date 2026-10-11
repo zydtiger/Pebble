@@ -4,7 +4,7 @@ use std::io::{Cursor, Read};
 pub(super) const DECODED_CAP: usize = 8 * 1024 * 1024;
 pub(super) const ITEM_OVERHEAD: usize = 64;
 fn corrupt() -> Error {
-    Error::History("A model history item has an invalid codec, length, or compressed payload. The saved transcript is intact; start a fresh context.".into())
+    Error::History("A model history item has an invalid codec, length, or compressed payload. The saved transcript is intact. Inspect or restore the saved history before memory maintenance; a fresh context cannot silently discard unreadable knowledge.".into())
 }
 pub(super) fn encode(bytes: Vec<u8>) -> Result<(&'static str, Vec<u8>, usize), Error> {
     let length = bytes.len();
@@ -59,7 +59,7 @@ pub(super) fn metadata(codec: &str, length: i64, stored: i64) -> Result<usize, E
     Ok(length as usize)
 }
 pub(super) fn cap_error() -> Error {
-    Error::ContextLimit("Model history exceeds the 8 MiB decoded context limit. Start a fresh context; earlier messages stay saved. Increasing token limits cannot raise this memory bound.".into())
+    Error::ContextLimit("Model history exceeds the 8 MiB decoded context limit. Earlier messages stay saved. Inspect or restore the saved history before memory maintenance; a fresh context cannot silently discard oversized knowledge. Increasing token limits cannot raise this memory bound.".into())
 }
 
 #[cfg(test)]

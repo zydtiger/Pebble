@@ -1,7 +1,6 @@
 # Architecture
 
-v0.2.0 consolidates the reviewed private + group lifecycle without introducing
-a new subsystem. [Group scheduling](group-flow.md), [membership](groups.md),
+v0.3.0 adds bounded persona memory tools and explicit memory consolidation to the reviewed private + group lifecycle. [Group scheduling](group-flow.md), [membership](groups.md),
 [state lifetime](state.md) and [provider contracts](providers.md) define the
 current boundaries; the [roadmap](roadmap.md) maps completion scenarios to tests.
 
@@ -40,7 +39,7 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the fourteen chat/history/state/membership/decision/round tables and schema migration. Visible
+Rust owns the eighteen chat/history/state/membership/decision/round/memory/context tables and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
@@ -112,7 +111,7 @@ accepted output. Final item events and final visible text must agree with the
 stream. Both indexed events and item-ID events with an unambiguous content-part
 lifecycle are supported. See [provider contracts](providers.md).
 
-Reasoning never appears in the UI. Tool requests, errors, incomplete terminal
+Reasoning never appears in the UI. Unsupported tools, errors, incomplete terminal
 states, truncation, text mismatch, refusal, and exhausted budgets fail without
 publishing structured candidate text, state, or native output. Only JSON/schema
 failures permit bounded automatic format repair. Preserved v0.1.0 sessions keep
@@ -123,19 +122,21 @@ Sessions bind protocol, model, and credential-free API root. A changed binding
 retires the previous context and starts after the current event frontier. Old
 transcript and model items remain intact; a persistent notice explains the fresh
 context. SOUL/MEMORY stays frozen inside an unchanged session after file reload.
-Explicit fresh context is a Rust operation serialized against queue acceptance.
-It refuses outstanding work for that persona, retires the active session, and
-atomically saves a new prefix with the current files and event boundary. Earlier
-transcript/native history stays intact and is excluded from new requests. Other
-personas can continue. Swift presents confirmation and the persistent notice.
+Explicit fresh context is a cancellable Rust maintenance worker reserved in the
+same persona queue. It freezes an observation cutoff, validates the complete
+outgoing source, reviews it with current MEMORY using the same chat model, and
+publishes a new prefix/unchanged state/marker only after durable tool completion.
+Old transcript/native history stays intact. Other personas continue. Swift
+presents confirmation, progress, cancellation and durable recovery status; it
+never chooses paths, applies memory effects or reconstructs maintenance inputs.
+See [memory](memory.md) for partial effects and restart reconciliation.
 
 The request loader scans codec/size metadata before reading any payloads. Raw or
 zstd items decode into the exact saved JSON bytes under a fixed 8 MiB context
 bound; zstd window and output reads have independent bounds. A conservative
 byte-based input estimate plus configured output reserve is checked before the
 adapter starts. Budget edits alone leave the session and prefix unchanged.
-See [context and encoding](context.md). There is no background service, automatic
-memory writer, or delegated work.
+See [context and encoding](context.md). There is no background service, threshold-triggered rollover, or delegated work. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
 
 ## Settings and recovery
 

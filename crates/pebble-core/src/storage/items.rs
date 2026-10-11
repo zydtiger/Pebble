@@ -23,6 +23,8 @@ impl Database {
                         items: Vec::new(),
                         response_schema: None,
                         state_before: None,
+                        memory_tools: false,
+                        memory_capable: false,
                     },
                     row.get(6)?,
                 ))
@@ -30,6 +32,12 @@ impl Database {
         )?;
         let (schema, state): (Option<String>, Option<String>) = connection.query_row(
             "SELECT s.response_schema,c.state_before FROM model_calls c JOIN model_sessions s ON s.id=c.session_id WHERE c.id=?1", [call_id], |r| Ok((r.get(0)?,r.get(1)?)))?;
+        request.memory_tools = connection.query_row(
+            "SELECT memory_tools FROM model_sessions WHERE id=?1",
+            [&request.session_id],
+            |r| r.get(0),
+        )?;
+        request.memory_capable = request.memory_tools;
         request.response_schema = schema.map(|s| serde_json::from_str(&s)).transpose()?;
         request.state_before = state.map(|s| serde_json::from_str(&s)).transpose()?;
         // First scan metadata only: never materialize an oversized saved history.

@@ -36,7 +36,7 @@ user to inspect/reopen. Unpublished temporary files are cleaned up. There is no
 hidden rollback that could overwrite a concurrent manual edit.
 
 Saving SOUL/MEMORY or budgets does not rewrite an existing session prefix.
-Explicit fresh context snapshots current files. Model/root/protocol changes use
+Explicit fresh context reviews outgoing knowledge with current MEMORY before publishing current files; its saved-effect recovery is described in [memory](memory.md). Model/root/protocol changes use
 the existing connection-boundary behavior. Broken manually edited configuration
 may require advanced file access; the settings UI does not implement a repair
 parser. Drafts are not persisted across app restart in this release.

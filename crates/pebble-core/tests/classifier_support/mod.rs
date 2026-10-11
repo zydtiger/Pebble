@@ -90,7 +90,11 @@ impl Server {
                                     if bytes.len()>=end+4+len {break(head,serde_json::from_slice(&bytes[end+4..end+4+len]).unwrap());}
                                 }
                             };
-                            let reply=handler(&body);let _=tx.send((head,body));
+                            let reply = if let Some(output) = super::live_support::maintenance_reply(&body) {
+                                Reply::stream(output)
+                            } else {
+                                let reply=handler(&body);let _=tx.send((head,body));reply
+                            };
                             std::thread::sleep(reply.delay);
                             let content_type=if reply.stream_body.is_some() {"text/event-stream"} else {"application/json"};
                             let body=reply.stream_body.unwrap_or_else(||reply.body.to_string());let response=format!("HTTP/1.1 {} Test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",reply.status,body.len(),body);

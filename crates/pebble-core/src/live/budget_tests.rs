@@ -36,6 +36,8 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
                 json!({"type":"object","description":"模式".repeat(200),"properties":{"reply":{"type":"string"}}}),
             ),
             state_before: None,
+            memory_tools: false,
+            memory_capable: false,
         };
         let (_, body) = request_body(&chat, &request, 77).unwrap();
         assert_eq!(

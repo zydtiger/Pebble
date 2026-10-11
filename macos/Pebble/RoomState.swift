@@ -27,6 +27,7 @@ final class RoomState {
     var draftRevision = 0
     var mentionRevision = 0
     var bubbles: [ChatBubble] = []
+    var markers: [ContextMarkerRecord] = []
     var participation: [ParticipationRecord] = []
     var error: String?
     var loaded = false

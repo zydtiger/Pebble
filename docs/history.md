@@ -1,9 +1,9 @@
 # Durable chat history
 
-v0.2.0 uses one SQLite database and live Chat Completions/Responses adapters. An
+v0.3.0 uses one SQLite database and live Chat Completions/Responses adapters. An
 unconfigured character uses a deterministic local demo. Groups share persona histories. Independent participation decisions do not
 create native sessions or consume event coverage. Durable room rounds release
-only ready slots into the persona queues; no memory writer or work-agent integration exists.
+only ready slots into the persona queues. Native persona memory and explicit context maintenance share that execution ownership; no work-agent integration exists.
 
 ## Records and ordering
 
@@ -22,6 +22,10 @@ only ready slots into the persona queues; no memory writer or work-agent integra
 | `participation_decisions` | User-root/persona/member interval, original receipt cutoff and revision, pending/boolean/error/cancel/restart status, optional admitted call ID, phase, generation, accepted-knowledge/predecessor versions and elapsed milliseconds; unique `(message_id,persona_id)`. No copied classifier payload or private/native history. |
 | `group_rounds` | Canonical user root/room/revision, active/superseded/terminal lifecycle, continuation, spent followup budget, last accepted public reply and fallback phase |
 | `group_reply_slots` | Round/decision identity and fixed ordinal, required/optional/followup/fallback kind, pending/admitted/terminal status; no model call before readiness |
+| `memory_operations` | Persona/owner/native-call identity, complete arguments, old/new memory snapshots, prepared/committed/failed status and durable native result link |
+| `context_maintenance` | Frozen source session/cutoff/state/request, native maintenance output/result, lifecycle and persisted recovery detail |
+| `context_markers` | Exactly one ordered successful transition per new session; outside native model inputs |
+| `context_marker_rooms` | Durable private/current-group projections with display anchor; independent from consumed-event cutoff |
 | `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional originating slot and retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
@@ -42,12 +46,13 @@ event. Its requests include later received events in execution order; earlier
 sent events stay in their original native sessions. This fresh context does not import old demo
 or provider output. Old visible messages and frozen items remain preserved. A
 notice is derived from the stored boundary and is visible after restart too.
-An explicit fresh-context command saves a new prefix and boundary immediately,
-using current character files. It refuses queued/active calls, pending classifier
-decisions and still-admittable group slots for that persona;
-other personas are independent. The manual boundary and its notice survive
-restart, including a boundary before any received event. No earlier received
-or native sent event is reimported.
+An explicit fresh-context command starts same-persona asynchronous maintenance.
+It preserves all old native items, freezes the eligible event cutoff and accepted
+state, reviews current MEMORY with outgoing knowledge, then atomically publishes
+the new context and marker. A committed memory effect survives reply/boundary
+failure. Native call/result checkpoints remain in order and advance a failed
+chat's frozen retry boundary, so explicit retry does not execute them again.
+See [memory](memory.md) for journal stages and recovery.
 
 ## One turn
 
@@ -204,6 +209,14 @@ before commit.
 Schema 10 adds `group_rounds`, `group_reply_slots`, optional `model_calls.slot_id`
 and decision generation/phase/knowledge versions. Populated schema 9 upgrades
 without rewriting calls, native bytes/links, decisions, state or character files.
-There are fourteen application tables; the inventory above is authoritative.
+Schema 11 adds the four memory/maintenance/marker tables and session capability, frozen call memory snapshot and native-tool archive fields. Existing IDs, native bytes, state and links stay unchanged; existing sessions default to no memory-tool capability. There are eighteen application tables; the inventory above is authoritative.
 Unfinished rounds/slots become interrupted on startup; no observer resumes them.
 See [room flow](group-flow.md) for admission/publication linearization.
+
+Native memory publication retains one operation-owned
+`personas/<persona-id>/.MEMORY-<operation-id>.displaced` sibling for each changed
+operation, alongside the SQLite snapshots/result. This preserves the actual
+replaced inode, including late writes through an external editor's older file
+descriptor; it is not automatically removed or rolled back. A failed staging
+attempt can also leave its evidence there. See [memory publication and recovery](memory.md#durable-effects-and-native-replay)
+for conflict guarantees and manual resolution.

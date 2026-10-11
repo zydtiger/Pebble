@@ -26,10 +26,14 @@ fn restart_keeps_identity_and_state_table() {
     assert_eq!(
         tables,
         [
+            "context_maintenance",
+            "context_marker_rooms",
+            "context_markers",
             "conversation_memberships",
             "conversations",
             "group_reply_slots",
             "group_rounds",
+            "memory_operations",
             "message_mentions",
             "messages",
             "model_calls",

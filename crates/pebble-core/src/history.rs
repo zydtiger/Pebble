@@ -37,7 +37,7 @@ pub struct Message {
     pub can_retry: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelItem {
     pub id: String,
     pub sequence: i64,
@@ -45,7 +45,7 @@ pub struct ModelItem {
     pub payload: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRequest {
     pub call_id: String,
     pub session_id: String,
@@ -58,6 +58,8 @@ pub struct ModelRequest {
     /// None identifies a preserved v0.1.0 session, never reinterpreted as structured.
     pub response_schema: Option<serde_json::Value>,
     pub state_before: Option<serde_json::Value>,
+    pub memory_tools: bool,
+    pub memory_capable: bool,
 }
 
 #[derive(Debug, Clone)]

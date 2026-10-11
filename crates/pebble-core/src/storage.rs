@@ -2,7 +2,9 @@ mod codec;
 mod contexts;
 mod items;
 mod jobs;
+pub(crate) mod maintenance;
 mod membership;
+pub(crate) mod memory;
 mod participation;
 mod response_settings;
 mod retry;
@@ -21,6 +23,7 @@ use uuid::Uuid;
 
 pub(crate) struct Database {
     connection: Mutex<Connection>,
+    root: std::path::PathBuf,
     // Exclusive process lifetime ownership makes startup interruption recovery safe.
     _lock: File,
 }
@@ -49,7 +52,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 10 {
+        if version > 11 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -104,6 +107,9 @@ impl Database {
         if version < 10 {
             tx.execute_batch(include_str!("storage/rounds-migration.sql"))?;
         }
+        if version < 11 {
+            tx.execute_batch(include_str!("storage/memory-migration.sql"))?;
+        }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
@@ -117,10 +123,14 @@ impl Database {
         }
         tx.commit()?;
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-        Ok(Self {
+        let database = Self {
             connection: Mutex::new(connection),
+            root: root.to_path_buf(),
             _lock: lock,
-        })
+        };
+        database.recover_memory(root)?;
+        database.recover_maintenance()?;
+        Ok(database)
     }
 
     pub(crate) fn resolve_conversations(&self, personas: &mut [Persona]) -> Result<(), Error> {
@@ -161,6 +171,15 @@ impl Database {
                     "Connection changed: earlier messages stay visible; this model uses a fresh context.".into(),
                 _ => String::new(),
             };
+            let capability:Option<bool>=tx.query_row("SELECT memory_tools FROM model_sessions WHERE persona_id=?1 AND status='active'",[&persona.id],|r|r.get(0)).optional()?;
+            if capability == Some(false) {
+                persona.context_notice.push_str(" This preserved context has no memory tool capability. Start fresh context to review memory and enable it; the existing prefix is unchanged.");
+            }
+            let reason:Option<String>=tx.query_row("SELECT context_reason FROM model_sessions WHERE persona_id=?1 AND status='active'",[&persona.id],|r|r.get(0)).optional()?;
+            if reason.as_deref() == Some("memory") {
+                persona.context_notice="Fresh model context started; earlier messages and native history remain saved.".into();
+            }
+            if let Some(detail)=tx.query_row("SELECT detail FROM context_maintenance WHERE persona_id=?1 AND status IN ('failed','cancelled','interrupted') AND rowid=(SELECT MAX(rowid) FROM context_maintenance WHERE persona_id=?1)",[&persona.id],|r|r.get::<_,String>(0)).optional()? {persona.context_notice.push_str(&format!(" {detail}"));}
             persona.conversation_id = tx.query_row(
                 "SELECT id FROM conversations WHERE persona_id = ?1",
                 [&persona.id],
@@ -180,7 +199,7 @@ impl Database {
                 (j.status IN ('failed','cancelled','interrupted')
                   AND (j.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=j.membership_id AND member.left_publication IS NULL))
                   AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
-                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
+                  AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=j.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"
         )?;

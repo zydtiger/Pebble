@@ -5,7 +5,7 @@ credentials, bounded cancellable HTTP, and byte-framed SSE. An absent connection
 selects the deterministic demo; a configured connection never falls back to it.
 
 Chat Completions sends the saved native message list to `/chat/completions`.
-Content deltas are buffered privately until structured validation and acceptance. A stop finish and `[DONE]` are required; the
+Content deltas are buffered privately until structured validation and acceptance. A conversational stop finish and `[DONE]` are required; native memory calls use `tool_calls` finish plus `[DONE]`. The
 accepted assistant message retains supported reasoning fields. Legacy plaintext
 contexts also retain refusal fields when nonempty content is present; structured
 contexts reject provider refusal before acceptance.
@@ -15,13 +15,13 @@ Responses sends the saved native input list to `/responses`, with `stream: true`
 the configured `max_output_tokens` (4096 by default). It does not send `previous_response_id`. Each accepted
 reasoning/message output item becomes one immutable history item. Replay retains
 the complete native object, including IDs, status, encrypted content, and
-unknown fields. No tool calls are executed or accepted in this milestone.
+unknown fields. New memory-capable contexts also accept completed `function_call` items for `update_memory` and replay `function_call_output` with the exact `call_id`. Unknown tools fail explicitly.
 
 The [Responses streaming reference](https://developers.openai.com/api/reference/resources/responses/streaming-events)
 distinguishes added items from completed items. Added reasoning may be
 incomplete; final item events and the completed response output are authoritative.
 A successful terminal response must have completed status, nonempty visible
-text (or a separately classified refusal), and agreement with streamed text and final item events. Failed or
+text (or a separately classified refusal or supported native function call), and agreement with streamed text and final item events. Failed or
 incomplete responses and truncated streams publish no native output. Reasoning
 is neither rendered nor copied into diagnostics.
 
@@ -38,7 +38,7 @@ two turns and restart. They never read the app's existing files or conversation.
 
 ## Structured-output constraints
 
-New structured contexts send Chat Completions `response_format` with
+Final-only structured requests send Chat Completions `response_format` with
 `type: "json_schema"` and a strict named `json_schema`. Standard Responses sends
 `text.format` with `type: "json_schema"`, name, strict, and the schema. The frozen
 prefix also includes the schema and response semantics; provider constraints do
@@ -79,3 +79,30 @@ Gemma live checks cover Chat Completions and its explicitly selected Responses
 `response_format` extension; standard `text.format` support must not be inferred
 from successful unconstrained output. Provider/model judgment, context estimates
 and schema-keyword support remain limited as documented above.
+
+## Native memory tools
+
+New sessions expose only `update_memory({content: complete revised MEMORY.md})`.
+Ordinary chat starts with `tool_choice=auto`, `parallel_tool_calls=false` and no
+provider response-format constraint; Rust still validates a direct final
+`{reply,state}` locally. The selected compatible service suppresses native tools
+when Chat Completions auto tools and response_format are combined. A tool result
+is followed by a final-only request with tools disabled and the configured strict
+schema dialect; schema repair also disables tools. Maintenance requires one
+native call (`tool_choice=required`) and has no conversational final request.
+
+Chat Completions assembles indexed fragmented IDs/names/argument strings and
+retains assistant reasoning with the native call. Responses uses authoritative
+completed reasoning/function-call items in their array order and preserves opaque
+fields/IDs; final item events must agree. Pebble retains completed native tool
+batches, arguments and results even when a final reply fails. Tool output and
+reasoning never become visible bubbles or public group observations. See
+[memory durability](memory.md) for exactly-once effect/retry boundaries.
+
+Both streaming adapters passed the opt-in isolated synthetic memory flow against
+the selected Gemma service: native save, validated final reply, explicit
+maintenance and continued chat from the new prefix. Run it explicitly with
+`PEBBLE_LIVE_API_ROOT` and `PEBBLE_LIVE_MODEL` using the ignored
+`opt_in_live_memory_and_maintenance_both_native_protocols` test in
+`tests/memory_context.rs`. The Responses branch selects the documented compatible
+`response_format` dialect; this does not claim standard text.format enforcement.

@@ -276,7 +276,7 @@ fn v1_migration_keeps_persona_and_room_ids() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        10
+        11
     );
     assert!(core.messages(&persona.id).unwrap().is_empty());
 }

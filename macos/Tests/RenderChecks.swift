@@ -26,6 +26,12 @@ struct RenderChecks {
                 classifier.connection.enabled = false
                 try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
                 try capture(window, name: "home")
+                model.showCharacter = true
+                try await Task.sleep(for: .milliseconds(300))
+                guard let sheet = window.attachedSheet else { throw RenderError.failed("Character sheet did not open") }
+                try capture(sheet, name: "character-memory-info")
+                model.showCharacter = false
+                try await Task.sleep(for: .milliseconds(200))
                 guard let editor = findEditor(window.contentView!) else {
                     throw RenderError.failed("Missing native text editor")
                 }
@@ -115,6 +121,7 @@ struct RenderChecks {
                 guard model.bubbles.count == 3, Set(model.bubbles.filter { !$0.isUser }.map(\.senderID)).count == 2 else { throw RenderError.failed("Group attribution failed") }
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "group-conversation")
+                let memoryGroupID = model.selectedID!
                 window.setContentSize(NSSize(width: 820, height: 610))
                 try await Task.sleep(for: .milliseconds(200))
                 try capture(window, name: "group-compact")
@@ -127,6 +134,20 @@ struct RenderChecks {
                 window.setContentSize(NSSize(width: 1000, height: 730))
                 window.contentView = NSHostingView(rootView: ContentView(model: model))
                 try await Task.sleep(for: .milliseconds(300))
+                let priorMemoryMessages = model.bubbles.map(\.id)
+                guard await model.startFreshContext(), model.bubbles.map(\.id) == priorMemoryMessages,
+                      model.markers.count == 1, model.maintenanceDetail?.contains("no chat model") == true else {
+                    throw RenderError.failed("Memory boundary did not preserve the transcript or honest demo status")
+                }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "memory-private-boundary")
+                model.select(memoryGroupID)
+                await model.load()
+                guard model.markers.count == 1, model.markers[0].personaId == miraID else { throw RenderError.failed("Group persona boundary projection missing") }
+                try await Task.sleep(for: .milliseconds(200))
+                try capture(window, name: "memory-group-boundary")
+                model.select(miraID)
+                await model.load()
                 try "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='synthetic-live-model'\nbase_url='http://127.0.0.1:9/v1'\napi='chat_completions'\napi_key=''\n"
                     .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
                 await model.load()
@@ -146,12 +167,14 @@ struct RenderChecks {
                 try capture(window, name: "responses-context")
                 let saved = model.bubbles.map(\.id)
                 let reset = await model.startFreshContext()
-                guard reset, model.bubbles.map(\.id) == saved,
-                      model.selected?.contextNotice.contains("Fresh model context") == true else {
-                    throw RenderError.failed("Fresh context presentation changed saved history")
+                guard !reset, model.bubbles.map(\.id) == saved,
+                      model.error?.contains("Connection changed") == true,
+                      model.error?.hasPrefix("Couldn't start a fresh context.") == true,
+                      model.error?.contains("Couldn't start the reply") == false, model.markers.count == 1 else {
+                    throw RenderError.failed("Changed-provider maintenance did not preserve its source and show recovery")
                 }
                 try await Task.sleep(for: .milliseconds(200))
-                try capture(window, name: "fresh-context")
+                try capture(window, name: "memory-provider-boundary-error")
                 model.sendMessage("Synthetic configured connection failure")
                 for _ in 0..<300 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
                 guard !model.isReplying, model.bubbles.last?.canRetry == true else {

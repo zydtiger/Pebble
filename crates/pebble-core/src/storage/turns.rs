@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 impl Database {
     pub(crate) fn activate_turn(&self, persona: &Persona, pending: &Turn) -> Result<Turn, Error> {
+        self.ensure_memory_resolved(&persona.id)?;
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         if !tx.query_row(
@@ -140,8 +141,24 @@ impl Database {
                 state.as_ref().map(serde_json::to_string).transpose()?
             ],
         )?;
+        let memory_tools: bool = tx.query_row(
+            "SELECT memory_tools FROM model_sessions WHERE id=?1",
+            [&session_id],
+            |r| r.get(0),
+        )?;
         let mut envelope = json!({"events":events, "reply_request":{
             "conversation_id":pending.conversation_id, "trigger_message_id":user_id}});
+        if memory_tools {
+            let memory =
+                std::fs::read_to_string(std::path::Path::new(&persona.directory).join("MEMORY.md"))
+                    .map_err(|e| crate::file_error(std::path::Path::new(&persona.directory), e))?;
+            tx.execute(
+                "UPDATE model_calls SET memory_snapshot=?2 WHERE id=?1",
+                params![call_id, memory],
+            )?;
+            envelope["current_memory"] = json!(memory);
+            envelope["memory_instructions"] = json!(crate::memory::INSTRUCTIONS);
+        }
         let destination = super::rooms::room(&tx, &pending.conversation_id)?;
         envelope["reply_request"]["room"] = json!({"kind":destination.kind,"name":destination.title,"members":destination.members.iter().map(|m|json!({"id":m.persona_id,"name":m.display_name})).collect::<Vec<_>>()});
         let acknowledgment: bool = tx.query_row(
@@ -206,11 +223,15 @@ impl Database {
         let tx = connection.transaction()?;
         let saved = message(&tx, &turn.reply.id)?;
         if saved.status != MessageStatus::Streaming {
+            super::memory::annotate_stopped_memory(&tx, &turn.call_id, error)?;
+            let saved = message(&tx, &turn.reply.id)?;
+            tx.commit()?;
             return Ok(saved);
         }
         let allowed:bool=tx.query_row("SELECT (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships m WHERE m.id=c.membership_id AND m.left_publication IS NULL)) AND (c.slot_id IS NULL OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN group_rounds r ON r.id=s.round_id WHERE s.id=c.slot_id AND s.status='admitted' AND (r.status='active' OR (r.status='superseded' AND s.kind='required')))) FROM model_calls c WHERE c.id=?1",[&turn.call_id],|r|r.get(0))?;
         if !allowed {
             super::rounds::cancel_publication(&tx, &turn.call_id, &turn.reply.id)?;
+            super::memory::annotate_stopped_memory(&tx, &turn.call_id, error)?;
             let saved = message(&tx, &turn.reply.id)?;
             tx.commit()?;
             return Ok(saved);
@@ -325,7 +346,7 @@ pub(super) fn new_id() -> String {
 
 pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
     let mut message=db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1", [id],read_message)?;
-    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=c.membership_id AND member.left_publication IS NULL)) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=c.persona_id AND s.status IN ('pending','admitted'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=c.membership_id AND member.left_publication IS NULL)) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=c.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=c.persona_id AND s.status IN ('pending','admitted'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((detail, retry)) = metadata {
         message.failure_detail = detail;
         message.can_retry = retry;
@@ -408,5 +429,41 @@ pub(crate) fn input_message(protocol: &str, role: &str, content: &str) -> Value 
         json!({"type":"message", "role":role, "content":[{"type":"input_text", "text":content}]})
     } else {
         json!({"role":role, "content":content})
+    }
+}
+
+#[cfg(test)]
+mod maintenance_retry_tests {
+    #[test]
+    fn individual_message_retry_metadata_obeys_persona_maintenance() {
+        let root = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(root.path()).unwrap();
+        let persona = core.workspace().unwrap().personas.remove(0);
+        let pending = core
+            .database
+            .enqueue_turn(&persona, "synthetic retry input")
+            .unwrap();
+        let turn = core.database.activate_turn(&persona, &pending).unwrap();
+        core.database
+            .finish_turn(
+                &turn,
+                "",
+                crate::MessageStatus::Failed,
+                Some("synthetic failure"),
+                None,
+            )
+            .unwrap();
+        let read = || {
+            super::message(&core.database.connection.lock().unwrap(), &turn.reply.id)
+                .unwrap()
+                .can_retry
+        };
+        assert!(read());
+        let job = core.database.begin_maintenance(&persona).unwrap();
+        assert!(!read());
+        core.database
+            .finish_maintenance(&job.id, "cancelled", "synthetic cancellation")
+            .unwrap();
+        assert!(read());
     }
 }

@@ -48,7 +48,7 @@ fn non_success_or_inconsistent_streams_publish_no_candidate_text_or_native_outpu
         ),
         ("without visible", completed(&items("")[..1])),
         (
-            "unsupported output item",
+            "Unknown tool",
             completed(&[
                 json!({"id":"call_test","type":"function_call","name":"unsafe_tool","arguments":"{}"}),
             ]),

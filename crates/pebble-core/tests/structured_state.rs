@@ -94,14 +94,10 @@ fn accepted_state_sequences_queued_calls_and_survives_restart_model_and_fresh_co
             "messages"
         };
         assert_eq!(first_http[field][0], second_http[field][0]);
-        if api == "responses" {
-            assert_eq!(first_http["text"]["format"]["type"], "json_schema");
-        } else {
-            assert_eq!(
-                first_http["response_format"]["json_schema"]["schema"],
-                request.response_schema.clone().unwrap()
-            );
-        }
+        assert!(first_http.get("response_format").is_none());
+        assert!(first_http.get("text").is_none());
+        assert_eq!(first_http["tool_choice"], "auto");
+
         assert_eq!(core.messages(&id).unwrap()[3].content, "second visible");
         assert_eq!(
             state(root.path(), &id),
@@ -370,6 +366,7 @@ fn v6_upgrade_preserves_plain_native_context_until_explicit_fresh_boundary() {
         )
         .unwrap();
     }
+    raw_history(root.path());
     let old_items: Vec<(String, Vec<u8>)> = db
         .prepare("SELECT id,payload FROM model_items ORDER BY sequence")
         .unwrap()

@@ -8,6 +8,8 @@ pub(super) struct Stream {
     reasoning: String,
     refusal: String,
     finish: Option<String>,
+    tools: std::collections::BTreeMap<u64, Value>,
+    pub(super) allow_tools: bool,
 }
 impl Stream {
     pub(super) fn event(
@@ -60,6 +62,54 @@ impl Stream {
                         _ => self.refusal.push_str(text),
                     }
                 }
+                "tool_calls" if self.allow_tools => {
+                    for part in value
+                        .as_array()
+                        .ok_or_else(|| failure("Invalid native tool delta."))?
+                    {
+                        let index = part["index"]
+                            .as_u64()
+                            .filter(|i| *i == 0)
+                            .ok_or_else(|| failure("Only one native tool call is supported."))?;
+                        let call = self.tools.entry(index).or_insert_with(||json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
+                        for field in ["id", "type"] {
+                            if let Some(value) = part.get(field) {
+                                if field == "type" && value != "function" {
+                                    return Err(failure("Unsupported native tool type."));
+                                }
+                                if field == "id" {
+                                    let text = value
+                                        .as_str()
+                                        .ok_or_else(|| failure("Invalid tool ID delta."))?;
+                                    call[field] = format!(
+                                        "{}{}",
+                                        call[field].as_str().unwrap_or_default(),
+                                        text
+                                    )
+                                    .into();
+                                }
+                            }
+                        }
+                        for field in ["name", "arguments"] {
+                            if let Some(value) = part["function"].get(field) {
+                                let text = value
+                                    .as_str()
+                                    .ok_or_else(|| failure("Invalid function delta."))?;
+                                let text = format!(
+                                    "{}{}",
+                                    call["function"][field].as_str().unwrap_or_default(),
+                                    text
+                                );
+                                if text.len() > crate::memory::ARGUMENT_CAP {
+                                    return Err(failure(
+                                        "Native tool arguments exceeded their bound.",
+                                    ));
+                                }
+                                call["function"][field] = text.into();
+                            }
+                        }
+                    }
+                }
                 "tool_calls" | "function_call" => {
                     return Err(failure("The model requested unsupported tool execution."));
                 }
@@ -72,7 +122,7 @@ impl Stream {
                 return Err(failure("The model sent multiple finish reasons."));
             }
             self.finish = Some(reason.into());
-            if reason != "stop" {
+            if reason != "stop" && !(self.allow_tools && reason == "tool_calls") {
                 return Err(failure(match reason {
                     "length" => "The model exhausted its output budget before completing a reply.",
                     "content_filter" => "The model filtered the reply.",
@@ -83,6 +133,21 @@ impl Stream {
         Ok(false)
     }
     pub(super) fn output(self) -> Result<Value, Error> {
+        if self.finish.as_deref() == Some("tool_calls")
+            && self.allow_tools
+            && !self.tools.is_empty()
+        {
+            let mut output = json!({"role":"assistant","content":if self.content.is_empty(){Value::Null}else{Value::String(self.content)},"tool_calls":self.tools.into_values().collect::<Vec<_>>()});
+            if !self.reasoning.is_empty() {
+                output["reasoning_content"] = self.reasoning.into();
+            }
+            return Ok(output);
+        }
+        if !self.tools.is_empty() {
+            return Err(failure(
+                "Tool calls require the native tool_calls finish reason.",
+            ));
+        }
         if self.finish.as_deref() != Some("stop") {
             return Err(failure("The model stream has no successful finish reason."));
         }

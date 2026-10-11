@@ -40,10 +40,7 @@ pub(crate) fn create(root: &Path, name: &str) -> Result<String, Error> {
                     "# {name}\n\nYou are {name}, a thoughtful conversation partner. Be warm, curious, and honest.\n"
                 ),
             ),
-            (
-                "MEMORY.md",
-                "# Memory\n\nAdd facts and preferences here by hand.\n".into(),
-            ),
+            ("MEMORY.md", include_str!("../assets/MEMORY.md").into()),
         ] {
             let path = staging.join(file);
             std::fs::write(&path, text).map_err(|e| file_error(&path, e))?;

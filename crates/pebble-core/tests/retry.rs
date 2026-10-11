@@ -186,10 +186,10 @@ fn explicit_fresh_or_changed_protocol_retry_selects_only_original_user_and_follo
             stream(responses_support::success("retried")),
             stream(responses_support::success("followup")),
         ]);
-        configure(root.path(), &server.url, "mock", "responses", "");
         if manual {
             core.fresh_context(&id).unwrap();
         }
+        configure(root.path(), &server.url, "mock", "responses", "");
         let (attempt, arx) = retry(&core, &id, &reply);
         assert_eq!(
             terminal(&arx).last().unwrap().kind,

@@ -1,5 +1,6 @@
 //! Restore the actual v0.1.2 schema before exercising older-version upgrades.
 pub fn v7(root: &std::path::Path) {
+    v10(root);
     let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
     db.execute_batch("PRAGMA foreign_keys=OFF;
         DROP TABLE group_reply_slots; DROP TABLE group_rounds;
@@ -20,6 +21,7 @@ pub fn v7(root: &std::path::Path) {
 /// Remove only v0.1.5 additions, preserving the populated v0.1.4 decisions.
 #[allow(dead_code)]
 pub fn v9(root: &std::path::Path) {
+    v10(root);
     let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
     db.execute_batch(
         "PRAGMA foreign_keys=OFF;
@@ -32,4 +34,10 @@ pub fn v9(root: &std::path::Path) {
       PRAGMA user_version=9;",
     )
     .unwrap();
+}
+
+#[allow(dead_code)]
+pub fn v10(root: &std::path::Path) {
+    let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
+    db.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE context_marker_rooms; DROP TABLE context_markers; DROP TABLE memory_operations; DROP TABLE context_maintenance; ALTER TABLE model_sessions DROP COLUMN memory_tools; ALTER TABLE model_calls DROP COLUMN memory_snapshot; ALTER TABLE model_calls DROP COLUMN native_tool_output; PRAGMA user_version=10;").unwrap();
 }

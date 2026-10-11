@@ -342,3 +342,80 @@ impl PebbleBackend {
         Ok(Arc::new(ChatHandle { task }))
     }
 }
+
+#[derive(uniffi::Record)]
+pub struct MaintenanceStatusRecord {
+    pub id: String,
+    pub persona_id: String,
+    pub status: String,
+    pub detail: String,
+    pub memory_saved: bool,
+    pub memory_reviewed: bool,
+}
+impl From<pebble_core::MaintenanceStatus> for MaintenanceStatusRecord {
+    fn from(s: pebble_core::MaintenanceStatus) -> Self {
+        Self {
+            id: s.id,
+            persona_id: s.persona_id,
+            status: s.status,
+            detail: s.detail,
+            memory_saved: s.memory_saved,
+            memory_reviewed: s.memory_reviewed,
+        }
+    }
+}
+#[derive(uniffi::Object)]
+pub struct MaintenanceHandle {
+    task: Arc<pebble_core::MaintenanceTask>,
+}
+#[uniffi::export]
+impl MaintenanceHandle {
+    pub fn cancel(&self) {
+        self.task.cancel();
+    }
+    pub fn status(&self) -> MaintenanceStatusRecord {
+        self.task.status().into()
+    }
+}
+#[derive(Clone, uniffi::Record)]
+pub struct ContextMarkerRecord {
+    pub id: String,
+    pub persona_id: String,
+    pub label: String,
+    pub after_sequence: i64,
+    pub created_at: String,
+}
+#[uniffi::export]
+impl PebbleBackend {
+    pub fn maintenance_status(
+        &self,
+        persona_id: String,
+    ) -> Result<Option<MaintenanceStatusRecord>, BackendError> {
+        Ok(self.core.maintenance_status(&persona_id)?.map(Into::into))
+    }
+    pub fn start_fresh_context(
+        &self,
+        persona_id: String,
+    ) -> Result<Arc<MaintenanceHandle>, BackendError> {
+        Ok(Arc::new(MaintenanceHandle {
+            task: self.core.start_fresh_context(&persona_id)?,
+        }))
+    }
+    pub fn context_markers(
+        &self,
+        room_id: String,
+    ) -> Result<Vec<ContextMarkerRecord>, BackendError> {
+        Ok(self
+            .core
+            .context_markers(&room_id)?
+            .into_iter()
+            .map(|m| ContextMarkerRecord {
+                id: m.id,
+                persona_id: m.persona_id,
+                label: m.label,
+                after_sequence: m.after_sequence,
+                created_at: m.created_at,
+            })
+            .collect())
+    }
+}

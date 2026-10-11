@@ -280,7 +280,6 @@ fn removal_cancels_old_interval_work_only_and_rejoin_never_revives_it_both_apis(
             );
             let state = core.response_settings(&a).unwrap().current_state_json;
             drop(classifier);
-            drop(generation);
             assert_eq!(core.participation(&room.id).unwrap().remove(0), cancelled);
             assert_eq!(
                 core.response_settings(&a).unwrap().current_state_json,
@@ -323,6 +322,7 @@ fn removal_cancels_old_interval_work_only_and_rejoin_never_revives_it_both_apis(
                 "Cancellation must retain observations"
             );
             core.fresh_context(&a).unwrap();
+            drop(generation);
         }
     }
 }
