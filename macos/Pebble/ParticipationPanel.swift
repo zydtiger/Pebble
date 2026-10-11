@@ -11,10 +11,7 @@ struct ParticipationPanel: View {
                 Button("Participation settings") { model.classifierTarget = SettingsTarget(personaID: nil) }
                     .font(.system(size: 10)).buttonStyle(.plain)
             }
-            if model.participation.isEmpty {
-                Text("Characters can choose to join. Mention someone to request a reply directly.")
-                    .font(.system(size: 11))
-            } else {
+            if !model.participation.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 7) {
                         ForEach(model.participation, id: \.id) { record in

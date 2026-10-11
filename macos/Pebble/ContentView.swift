@@ -70,10 +70,7 @@ struct ContentView: View {
                 PebbleMark(size: 30)
                 Text("Pebble").font(.system(size: 24, weight: .semibold, design: .rounded)).tracking(-0.8)
             }
-            .padding(.top, 45).padding(.bottom, 8)
-            Text("Small moments. Familiar voices.")
-                .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
-                .padding(.bottom, 40)
+            .padding(.top, 45).padding(.bottom, 28)
             Text("YOUR PEOPLE")
                 .font(.system(size: 10, weight: .semibold)).tracking(1.6)
                 .foregroundStyle(PebbleTheme.muted).padding(.bottom, 13)
@@ -136,9 +133,6 @@ struct ContentView: View {
             }.buttonStyle(.plain).foregroundStyle(PebbleTheme.muted).padding(.top, 12)
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
-                Text("Every friendship starts\nwith a small hello.")
-                    .font(.system(size: 13, design: .serif)).italic()
-                    .lineSpacing(4).foregroundStyle(PebbleTheme.muted)
                 Rectangle().fill(PebbleTheme.line).frame(height: 1).padding(.vertical, 12)
                 HStack {
                     Text("v0.3.0").font(.system(size: 10, design: .monospaced))
@@ -186,21 +180,14 @@ struct ContentView: View {
         }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 20)
     }
     private var groupIntroduction: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "person.2").font(.system(size: 48, weight: .light)).foregroundStyle(PebbleTheme.sage)
-            Text("A shared conversation.").font(.system(size: 30, design: .serif))
-            Text("Everyone in this group can listen. Mention a character when you'd like them to reply.")
-                .font(.system(size: 13)).foregroundStyle(PebbleTheme.muted).multilineTextAlignment(.center).frame(maxWidth: 330)
-        }.frame(maxWidth: .infinity, minHeight: 300).padding(30)
+        Image(systemName: "person.2").font(.system(size: 48, weight: .light)).foregroundStyle(PebbleTheme.sage)
+            .frame(maxWidth: .infinity, minHeight: 300).padding(30)
     }
 
     private func chatHeader(_ persona: PersonaRecord) -> some View {
         HStack(spacing: 12) {
             CharacterAvatar(size: 35)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(persona.displayName).font(.system(size: 14, weight: .semibold))
-                Text("Just the two of you").font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
-            }
+            Text(persona.displayName).font(.system(size: 14, weight: .semibold))
             Spacer()
             Button { model.settingsTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "slider.horizontal.3") }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
@@ -237,10 +224,7 @@ struct ContentView: View {
                 PebbleMark(size: 96)
             }
             .frame(height: 190).padding(.bottom, 24)
-            Text("A small hello.")
-                .font(.system(size: 34, weight: .regular, design: .serif)).tracking(-0.8)
-                .padding(.bottom, 12)
-            Text("Meet \(persona.displayName). \(persona.subtitle)")
+            Text(persona.subtitle)
                 .font(.system(size: 13)).foregroundStyle(PebbleTheme.muted)
                 .multilineTextAlignment(.center).lineSpacing(5)
                 .frame(maxWidth: 320).padding(.bottom, 28)
@@ -259,8 +243,6 @@ struct ContentView: View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
-                    Text("SAVED ON THIS MAC").font(.system(size: 9, weight: .medium)).tracking(1.4)
-                        .foregroundStyle(PebbleTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 8)
                     contextDividers(after: 0)
                     ForEach(model.bubbles) { bubble in
                         HStack(alignment: .top, spacing: 10) {
@@ -384,8 +366,9 @@ struct ContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(PebbleTheme.line.opacity(0.7), lineWidth: 1))
-            Text(model.selected.map { $0.contextNotice.isEmpty ? "\($0.connectionLabel) · Messages saved on this Mac" : $0.contextNotice } ?? "Messages saved on this Mac")
-                .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+            if let notice = model.selected?.contextNotice, !notice.isEmpty {
+                Text(notice).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+            }
         }
         .padding(.horizontal, 30).padding(.bottom, 22).padding(.top, 12)
     }
