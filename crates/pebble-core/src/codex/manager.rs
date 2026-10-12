@@ -16,6 +16,7 @@ mod requests;
 #[cfg(test)]
 mod tests;
 const CANCELLATION_CONFIRMATION: std::time::Duration = std::time::Duration::from_secs(5);
+const FAILED_TURN_FINALIZATION: std::time::Duration = std::time::Duration::from_secs(5);
 
 enum Command {
     Cancel,
@@ -366,7 +367,14 @@ impl Manager {
         })?;
         self.notify();
         let mut cancellation_deadline = None;
+        let mut failed_turn_deadline = None;
+        let mut failure_origin = None;
         loop {
+            // Failure is already confirmed. Allow its trailing evidence/terminal frame
+            // to arrive without leaving the card active or waiting indefinitely.
+            if failed_turn_deadline.is_some_and(|until| std::time::Instant::now() >= until) {
+                return Ok(());
+            }
             if cancellation_deadline.is_some_and(|until| std::time::Instant::now() >= until) {
                 return Err(failure(
                     "Codex acknowledged cancellation but did not confirm its outcome within 5 seconds. Reconcile the saved task; earlier effects may remain.",
@@ -384,7 +392,7 @@ impl Manager {
                         return Err(failure("Pebble closed before a confirmed outcome."));
                     }
                     Command::Cancel => {
-                        if cancellation_deadline.is_none() {
+                        if cancellation_deadline.is_none() && failed_turn_deadline.is_none() {
                             adapter
                                 .rpc("turn/interrupt", json!({"threadId":thread,"turnId":turn}))?;
                             cancellation_deadline =
@@ -397,7 +405,12 @@ impl Manager {
                     }
                 }
             }
-            let Some(event) = adapter.event()? else {
+            let event = match adapter.event() {
+                Ok(event) => event,
+                Err(_) if failed_turn_deadline.is_some() => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let Some(event) = event else {
                 continue;
             };
             if event.get("id").is_none()
@@ -405,6 +418,7 @@ impl Manager {
                     "item/started",
                     "item/completed",
                     "turn/completed",
+                    "error",
                     "serverRequest/resolved",
                 ]
                 .contains(&event["method"].as_str().unwrap_or_default())
@@ -417,8 +431,12 @@ impl Manager {
                 if task.generation != generation {
                     return Ok(());
                 }
-                let changed = events::apply(task, &event)?;
+                let prior_state = task.state;
+                let changed = events::apply(task, &event, failure_origin)?;
                 terminal = changed.terminal;
+                if terminal && event["method"] == "error" {
+                    failure_origin = Some(prior_state);
+                }
                 unsupported = changed.unsupported;
                 Ok(())
             })?;
@@ -427,7 +445,13 @@ impl Manager {
             }
             self.notify();
             if terminal {
-                return Ok(());
+                if event["method"] == "error" {
+                    cancellation_deadline = None;
+                    failed_turn_deadline =
+                        Some(std::time::Instant::now() + FAILED_TURN_FINALIZATION);
+                } else {
+                    return Ok(());
+                }
             }
         }
     }

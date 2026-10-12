@@ -22,6 +22,12 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_DELEGATION_ONLY"] == "1" {
+                    try await checkDelegationCards(window: window, model: model)
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 var classifier = try await model.readClassifierSettings(nil)
                 classifier.connection.enabled = false
                 try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)

@@ -5,12 +5,14 @@ import SwiftUI
 func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
     guard let persona = model.workspace?.personas.first else { throw RenderError.failed("No delegation renderer persona") }
     model.select(persona.id)
+    window.setContentSize(NSSize(width: 1000, height: 730))
+    window.contentView = NSHostingView(rootView: ContentView(model: model))
+    // Let the replaced view close its subscriptions before freezing this view.
+    try await Task.sleep(for: .milliseconds(150))
     await model.load()
     // Freeze the synthetic presentation snapshot after real subscription checks.
     model.delegationStream?.cancel(); model.delegationStream = Task {}
     model.delegationSink?.finish(); model.delegationSink = nil
-    window.setContentSize(NSSize(width: 1000, height: 730))
-    window.contentView = NSHostingView(rootView: ContentView(model: model))
     func fixture(_ state: DelegationState, title: String, request: TaskRequestRecord? = nil, result: String = "", detail: String = "") -> DelegatedTaskRecord {
         DelegatedTaskRecord(id: "synthetic-delegation", title: title, personaId: persona.id, conversationId: persona.conversationId,
                             state: state, activity: state == .running ? "Searching the web…" : "", detail: detail, result: result,
@@ -19,6 +21,11 @@ func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
     }
     model.delegatedTasks = [fixture(.running, title: "Verify the latest release")]
     try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-running")
+    func hasExecutionProgress(_ view: NSView) -> Bool {
+        if let progress = view as? NSProgressIndicator, !progress.isHidden { return true }
+        return view.subviews.contains { hasExecutionProgress($0) }
+    }
+    guard hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Running task hid its native execution progress") }
     guard model.taskActivity(persona.conversationId) else { throw RenderError.failed("Missing native room task activity") }
     if let other = model.workspace?.rooms.first(where: { $0.id != persona.conversationId }) {
         model.select(other.id); try await Task.sleep(for: .milliseconds(150))
@@ -26,6 +33,43 @@ func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
         model.select(persona.conversationId); try await Task.sleep(for: .milliseconds(150))
         guard model.roomTasks.count == 1 else { throw RenderError.failed("Task card did not survive navigation") }
         try RenderChecks.capture(window, name: "codex-navigation-return")
+    }
+
+    func checkTerminalStatuses() async throws {
+        for state: DelegationState in [.failed, .interrupted, .cancelled, .uncertain, .completed] {
+            var terminalTask = fixture(state, title: "Task execution: \(state.label)", detail: "The saved status is \(state.label.lowercased()). Check actual effects before following up.")
+            terminalTask.activity = "Codex is working…" // A stale cached activity must not look live.
+            terminalTask.reportState = "failed"
+            model.delegatedTasks = [terminalTask]
+            try await Task.sleep(for: .milliseconds(150))
+            guard !model.taskActivity(persona.conversationId),
+                  !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Terminal task showed native execution progress: \(state)") }
+            try RenderChecks.capture(window, name: "codex-\(state.label.lowercased().replacingOccurrences(of: " ", with: "-"))-empty-report-failed")
+            if state == .interrupted {
+                window.setContentSize(NSSize(width: 820, height: 610))
+                try await Task.sleep(for: .milliseconds(150)); model.replyRevision += 1
+                try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-interrupted-empty-report-failed-compact")
+                window.setContentSize(NSSize(width: 1000, height: 730))
+            }
+            terminalTask.reportState = "queued"
+            model.delegatedTasks = [terminalTask]
+            try await Task.sleep(for: .milliseconds(150))
+            guard !model.taskActivity(persona.conversationId),
+                  !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Retrying the explanation revived terminal execution activity") }
+            try RenderChecks.capture(window, name: "codex-\(state.label.lowercased().replacingOccurrences(of: " ", with: "-"))-empty-report-queued")
+        }
+        var saved = fixture(.completed, title: "Completed task with saved evidence", result: "Verified stored evidence.")
+        saved.reportState = "failed"
+        model.delegatedTasks = [saved]
+        try await Task.sleep(for: .milliseconds(150))
+        guard !model.taskActivity(persona.conversationId), !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Saved explanation failure revived completed execution") }
+        try RenderChecks.capture(window, name: "codex-completed-saved-report-failed")
+    }
+    if ProcessInfo.processInfo.environment["PEBBLE_RENDER_DELEGATION_ONLY"] == "1" {
+        try await checkTerminalStatuses()
+        model.delegatedTasks = []; model.delegationStream = nil
+        print("Native task-status checks passed: running progress, five static terminal states, stale activity suppression, failed/queued explanations and compact interrupted recovery.")
+        return
     }
 
     let question = TaskRequestRecord(id: "synthetic-question", approval: false, summary: "Codex needs your answer", questions: [TaskQuestionRecord(required: true, id: "scope", text: "Which part of the synthetic project should I inspect?", header: "Scope and consequences", description: "", guidance: [], secret: false, options: ["A", "B"], optionDescriptions: ["Read documentation only; no files change.", "Write selected code files after approval."], choices: [], multiple: false)], authorizationUrl: nil)
@@ -168,6 +212,8 @@ func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
         try await Task.sleep(for: .milliseconds(150))
         let hasFollowup = RenderChecks.findAccessible(window.contentView!, identifier: "task-followup-synthetic-delegation") != nil
         guard hasFollowup == (reportState == "completed") else { throw RenderError.failed("Followup control disagrees with report eligibility: \(reportState)") }
+        guard !model.taskActivity(persona.conversationId),
+              !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Explanation status presented completed execution as active") }
         if reportState == "queued" { try RenderChecks.capture(window, name: "codex-report-waiting") }
     }
     var unavailable = fixture(.completed, title: "Original membership no longer eligible", result: "Stored evidence remains available.")
@@ -182,6 +228,7 @@ func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
     try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-failed")
     model.delegatedTasks = [fixture(.uncertain, title: "Saved task needs reconciliation", detail: "Codex disconnected before a confirmed outcome. Reconcile the saved thread; this work will not be resent.")]
     try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-uncertain")
+    try await checkTerminalStatuses()
     model.showCodexSettings = true
     try await Task.sleep(for: .milliseconds(250))
     guard let sheet = window.attachedSheet else { throw RenderError.failed("Codex settings did not open") }

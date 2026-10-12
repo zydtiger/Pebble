@@ -45,7 +45,7 @@ def finish(status='completed', text=None):
     waiting = False
 
 while True:
-    if waiting and mode in ('gated', 'url', 'url-loss', 'followup-gated') and (root / 'release').exists():
+    if waiting and mode in ('gated', 'url', 'url-loss', 'followup-gated', 'error-retry') and (root / 'release').exists():
         if mode == 'followup-gated':
             artifact = root / ('followup-' + turn + '.txt')
             artifact.write_text('current synthetic continuation artifact')
@@ -125,6 +125,24 @@ while True:
         reply({'turn': {'id': turn, 'status': 'inProgress'}})
         if mode == 'disconnect':
             os._exit(0)
+        if mode in ('error-fatal', 'error-delayed', 'error-retry'):
+            error = {'message': 'Synthetic turn error; check the local configuration.', 'additionalDetails': 'PRIVATE_RAW_STACK_MUST_NOT_DISPLAY'}
+            if mode == 'error-retry':
+                write({'method': 'error', 'params': {'threadId': 'wrong-thread', 'turnId': turn, 'willRetry': False, 'error': error}})
+                write({'method': 'error', 'params': {'threadId': thread, 'turnId': 'wrong-turn', 'willRetry': False, 'error': error}})
+                write({'method': 'error', 'params': {'threadId': thread, 'willRetry': False, 'error': error}})
+                event('error', {'error': error})  # Missing retry disposition is not a definitive failure.
+                event('item/completed', {'item': {'type': 'commandExecution', 'id': 'ordinary-failed-tool', 'status': 'failed', 'exitCode': 1}})
+                event('hook/started', {'status': 'inProgress'})
+            event('error', {'willRetry': mode == 'error-retry', 'error': error})
+            if mode == 'error-delayed':
+                while not (root / 'release').exists():
+                    time.sleep(0.01)
+                time.sleep(0.35)  # Persistence/final frames can follow explicit failure later.
+                finish('failed', 'Saved partial evidence after the explicit error. https://example.org/partial \ue200cite\ue202synthetic\ue201')
+            elif mode == 'error-retry':
+                waiting = True
+            continue  # Fatal mode intentionally never sends turn/completed.
         event('item/started', {'item': {'id': 'web', 'type': 'webSearch'}})
         if mode.startswith('oversized-'):
             params = {'threadId': thread, 'turnId': turn, 'itemId': 'oversized-operation', 'startedAtMs': 1, 'reason': 'Review the complete synthetic scope.'}

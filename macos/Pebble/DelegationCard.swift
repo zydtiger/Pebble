@@ -10,12 +10,15 @@ struct DelegationCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                if task.state.active && task.request == nil { ProgressView().controlSize(.small) }
-                else { Image(systemName: task.state == .completed ? "checkmark.circle" : task.request == nil ? "circle.dashed" : "hand.raised").foregroundStyle(PebbleTheme.sage) }
+                if executionProgress {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: statusSymbol).foregroundStyle(statusTone).accessibilityLabel(task.state.label)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
-                    Text("Codex · \(model.speakerName(task.personaId)) · \(task.state.label)").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
-                    if !task.activity.isEmpty { Text(task.activity).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted) }
+                    Text("Codex · \(model.speakerName(task.personaId)) · \(task.state.label)").font(.system(size: 10)).foregroundStyle(statusTone)
+                    if executionProgress && !task.activity.isEmpty { Text(task.activity).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted) }
                 }
                 Spacer(minLength: 8)
                 if task.state.active && task.state != .cancellationRequested {
@@ -31,10 +34,10 @@ struct DelegationCard: View {
                     Button { model.openTaskLink(link) } label: { Label(link.label, systemImage: link.target.hasPrefix("/") ? "doc" : "link") }
                         .buttonStyle(.link).font(.system(size: 11))
                 }
-                if task.reportState == "queued" { Text("\(model.speakerName(task.personaId)) will explain this saved outcome after earlier conversation work.").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted) }
+                if task.reportState == "queued" { Text("\(model.speakerName(task.personaId))’s explanation is queued.").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted) }
                 if task.reportState == "failed" || task.reportState == "destination_unavailable" {
-                    Text(task.reportState == "failed" ? "The task outcome is saved; its explanation needs recovery." : "The original membership is no longer current. The outcome stays here.").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
-                    if task.reportState == "failed" { Button("Retry explanation") { model.retryTaskReport(task) }.font(.system(size: 10)).accessibilityIdentifier("task-retry-report-\(task.id)") }
+                    Text(reportRecovery).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                    if task.reportState == "failed" { Button("Retry explanation") { model.retryTaskReport(task) }.font(.system(size: 10)).help("Retry only the explanation; this does not run the task again.").accessibilityIdentifier("task-retry-report-\(task.id)") }
                 }
                 if [.interrupted, .uncertain].contains(task.state), task.threadId != nil {
                     Button("Reconcile saved task") { model.reconcileTask(task) }.font(.system(size: 10))
@@ -56,6 +59,39 @@ struct DelegationCard: View {
         .onChange(of: task.state) { _, _ in expandRecovery() }
         .onChange(of: task.reportState) { _, _ in expandRecovery() }
         .onChange(of: task.request?.id) { _, _ in answers = [:]; selections = [:] }
+    }
+    private var executionProgress: Bool {
+        [.running, .cancellationRequested].contains(task.state) && task.request == nil
+    }
+    private var statusSymbol: String {
+        switch task.state {
+        case .queued: return "clock"
+        case .running: return "bolt.circle"
+        case .needsInput: return "questionmark.bubble"
+        case .needsApproval: return "hand.raised"
+        case .cancellationRequested: return "stop.circle"
+        case .completed: return "checkmark.circle.fill"
+        case .failed: return "xmark.octagon.fill"
+        case .cancelled: return "stop.circle.fill"
+        case .interrupted: return "pause.circle.fill"
+        case .uncertain: return "exclamationmark.triangle.fill"
+        }
+    }
+    private var statusTone: Color {
+        switch task.state {
+        case .failed: return .red
+        case .interrupted, .uncertain: return .orange
+        case .queued, .cancelled, .cancellationRequested: return PebbleTheme.muted
+        default: return PebbleTheme.sage
+        }
+    }
+    private var reportRecovery: String {
+        if task.reportState == "destination_unavailable" {
+            return "The original membership is no longer current. The saved task status and any evidence remain here."
+        }
+        return task.result.isEmpty
+            ? "No final reply was returned. The task-status explanation failed."
+            : "Explanation failed. Saved results are available."
     }
     private func expandRecovery() {
         if [.failed, .interrupted, .uncertain].contains(task.state) || ["failed", "destination_unavailable"].contains(task.reportState) { expanded = true }

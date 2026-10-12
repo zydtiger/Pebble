@@ -41,7 +41,7 @@ extension DelegationState {
 extension ChatModel {
     var roomTasks: [DelegatedTaskRecord] { delegatedTasks.filter { $0.conversationId == selectedID } }
     func taskActivity(_ room: String) -> Bool {
-        delegatedTasks.contains { $0.conversationId == room && ($0.state.active || $0.reportState == "queued") }
+        delegatedTasks.contains { $0.conversationId == room && $0.state.active }
     }
     func startTaskObservation() async throws {
         guard delegationStream == nil else { return }

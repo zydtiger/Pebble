@@ -151,6 +151,50 @@ fn admitted_task() -> (tempfile::TempDir, crate::Core, String) {
 }
 
 #[test]
+fn turn_errors_redact_authorization_and_final_frames_preserve_cancel_confirmation() {
+    let (_root, core, id) = admitted_task();
+    let mut task = core.database.task(&id).unwrap();
+    task.state = DelegationState::Running;
+    task.thread_id = Some("synthetic-thread".into());
+    task.turn_id = Some("synthetic-turn".into());
+    let auth = "https://example.org/authorize?state=SECRET";
+    let request = json!({"id":"authorization", "method":"mcpServer/elicitation/request", "params":{
+        "threadId":"synthetic-thread", "turnId":"synthetic-turn", "mode":"url", "url":auth
+    }});
+    events::apply(&mut task, &request, None).unwrap();
+    assert!(task.request.is_some());
+    let error = json!({"method":"error", "params":{
+        "threadId":"synthetic-thread", "turnId":"synthetic-turn", "willRetry":true,
+        "error":{"message":format!("Failed at {auth}"), "additionalDetails":"PRIVATE_STACK"}
+    }});
+    assert!(!events::apply(&mut task, &error, None).unwrap().terminal);
+    assert_eq!(task.state, DelegationState::NeedsApproval);
+    assert!(task.request.is_some());
+    assert!(task.detail.contains("authorization link removed"));
+    assert!(!task.detail.contains("SECRET") && !task.detail.contains("PRIVATE_STACK"));
+    task.state = DelegationState::CancellationRequested;
+    task.activity = "Requesting cancellation…".into();
+    events::apply(&mut task, &error, None).unwrap();
+    assert_eq!(task.state, DelegationState::CancellationRequested);
+    assert_eq!(task.activity, "Requesting cancellation…");
+    let mut fatal = error.clone();
+    fatal["params"]["willRetry"] = json!(false);
+    assert!(events::apply(&mut task, &fatal, None).unwrap().terminal);
+    assert_eq!(task.state, DelegationState::Failed);
+    assert!(task.activity.is_empty() && task.request.is_none() && task.pending_requests.is_empty());
+    let final_event = json!({"method":"turn/completed", "params":{
+        "threadId":"synthetic-thread", "turn":{"id":"synthetic-turn", "status":"interrupted"}
+    }});
+    events::apply(
+        &mut task,
+        &final_event,
+        Some(DelegationState::CancellationRequested),
+    )
+    .unwrap();
+    assert_eq!(task.state, DelegationState::Cancelled);
+}
+
+#[test]
 fn followup_admission_clears_current_evidence_before_any_dispatch_and_archives_prior_run() {
     let (root, core, id) = admitted_task();
     core.database

@@ -75,10 +75,18 @@ approval, cancellation requested, completed, failed, cancelled, interrupted and
 uncertain. Only actual item events produce specific activity labels; otherwise
 the card says Codex is working. There are no invented percentages, reasoning,
 raw tool logs or repeated persona polling. The Rust manager owns subscriptions
-and explicit reconciliation.
+and explicit reconciliation. A matching turn-level `error` with `willRetry=true`
+keeps execution active with retry detail; `willRetry=false` immediately saves a
+failed status. After explicit failure, the manager allows up to five seconds for
+trailing final evidence and `turn/completed`, preserving the failure if they do
+not arrive. This grace does not infer failure from inactivity. Stale errors,
+ordinary failed tools and hook activity cannot end the current turn.
 
 Cards show a title, **Codex**, reporting character, spinner/current state and
-Cancel. Details are collapsed unless a question, approval or actionable recovery
+Cancel. Only running/cancelling execution shows progress; terminal states use
+distinct static symbols and status colors. Explanation retries retain the task's
+execution state, and empty results do not imply saved completed work.
+Details are collapsed unless a question, approval or actionable recovery
 needs attention. Completed evidence, actual source URLs and scoped artifact
 links remain saved across navigation and restart. Citation control markers are
 removed from display; unresolved markers receive an explicit source limitation,

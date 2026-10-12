@@ -5,7 +5,11 @@ pub(super) struct Change {
     pub unsupported: Option<Value>,
 }
 /// Ignore every stale thread/turn callback; never display reasoning or raw tool logs.
-pub(super) fn apply(task: &mut DelegatedTask, event: &Value) -> Result<Change, Error> {
+pub(super) fn apply(
+    task: &mut DelegatedTask,
+    event: &Value,
+    failure_origin: Option<DelegationState>,
+) -> Result<Change, Error> {
     let mut change = Change {
         terminal: false,
         unsupported: None,
@@ -19,7 +23,12 @@ pub(super) fn apply(task: &mut DelegatedTask, event: &Value) -> Result<Change, E
     if turn.is_some() && turn != task.turn_id.as_deref() {
         return Ok(change);
     }
-    if !task.state.active() {
+    let failed_final = failure_origin.is_some()
+        && task.state == DelegationState::Failed
+        && ["item/completed", "turn/completed"].contains(&method)
+        && turn.is_some()
+        && event.get("id").is_none();
+    if !task.state.active() && !failed_final {
         return Ok(change);
     }
     if let Some(id) = event.get("id") {
@@ -210,6 +219,29 @@ pub(super) fn apply(task: &mut DelegatedTask, event: &Value) -> Result<Change, E
         return Ok(change);
     }
     match method {
+        "error" if task.turn_id.is_some() && p["turnId"].as_str() == task.turn_id.as_deref() => {
+            match p["willRetry"].as_bool() {
+                Some(false) => {
+                    task.state = DelegationState::Failed;
+                    task.activity.clear();
+                    task.request = None;
+                    task.pending_requests.clear();
+                    terminal_detail(
+                        task,
+                        "Codex reported a failed turn. Any completed effects remain in place.",
+                        p,
+                    );
+                    change.terminal = true;
+                }
+                Some(true) => {
+                    if task.state == DelegationState::Running {
+                        task.activity = "Codex hit an error and is retrying…".into();
+                    }
+                    terminal_detail(task, "Codex reported an error and will retry this turn.", p);
+                }
+                None => {}
+            }
+        }
         "serverRequest/resolved" => {
             if let Some(id) = p.get("requestId") {
                 resolve_request(task, &id.to_string());
@@ -247,12 +279,20 @@ pub(super) fn apply(task: &mut DelegatedTask, event: &Value) -> Result<Change, E
         }
         "item/completed" => capture_item(task, &p["item"]),
         "turn/completed" => {
+            if failed_final {
+                for item in p["turn"]["items"].as_array().into_iter().flatten() {
+                    capture_item(task, item);
+                }
+            }
             task.request = None;
             task.pending_requests.clear();
             task.activity.clear();
             task.state = match p["turn"]["status"].as_str() {
                 Some("completed") => DelegationState::Completed,
-                Some("interrupted") if task.state == DelegationState::CancellationRequested => {
+                Some("interrupted")
+                    if task.state == DelegationState::CancellationRequested
+                        || failure_origin == Some(DelegationState::CancellationRequested) =>
+                {
                     DelegationState::Cancelled
                 }
                 Some("interrupted") => DelegationState::Interrupted,
@@ -267,14 +307,23 @@ pub(super) fn apply(task: &mut DelegatedTask, event: &Value) -> Result<Change, E
                     "Codex interrupted this turn. Any completed effects remain in place."
                 }
                 DelegationState::Failed => {
-                    "Codex reported a failed turn. Saved partial results and artifacts remain available."
+                    "Codex reported a failed turn. Any completed effects remain in place."
                 }
                 DelegationState::Uncertain => {
                     "Codex returned an unrecognized outcome; no work will be resent."
                 }
                 _ => "",
             };
-            terminal_detail(task, outcome, &p["turn"]);
+            // Some final frames omit the error already supplied by `error`.
+            if !(failed_final
+                && task.state == DelegationState::Failed
+                && p["turn"]["error"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty())
+            {
+                terminal_detail(task, outcome, &p["turn"]);
+            }
             change.terminal = true;
         }
         _ => {}
@@ -295,10 +344,19 @@ fn capture_item(task: &mut DelegatedTask, item: &Value) {
         links(task, &safe_text);
         task.result = clean_citations(&safe_text).chars().take(65536).collect();
         if task.result != text && text.contains('\u{e200}') {
+            let failure_detail =
+                (task.state == DelegationState::Failed).then(|| task.detail.clone());
             limitation(
                 task,
                 "Some Codex citation markers could not be resolved to URLs. Only actual returned source links are available; no sources were invented.",
             );
+            if let Some(detail) = failure_detail {
+                task.detail = if detail.contains(&task.local_limitation) {
+                    detail
+                } else {
+                    format!("{detail}\n{}", task.local_limitation)
+                };
+            }
         }
     }
     if item["type"] == "fileChange" && item["status"] == "completed" {
