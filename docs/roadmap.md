@@ -168,7 +168,7 @@ Neither requires exposing work tools to personas or launching Codex tasks.
 | v0.3.1 — Local connection | Rust adapter for a local Codex app-server child process, capability checks and separate app settings | Verify installed protocol, authentication, available tools and one bounded read-only turn; missing CLI/login and disconnects are actionable. Desktop capabilities are not assumed. |
 | v0.3.2 — Task manager | Durable task cards, progress, cancellation and startup reconciliation, initially launched explicitly for read-only work | Persist identity before dispatch; distinguish uncertain execution from failure, retain actual results, and never silently resubmit on restart. Chat remains usable. |
 | v0.3.3 — Private delegation | Persona `delegate_task` returns promptly; Rust delivers a stored completion through the persona queue to the original private chat | Native tool/reply contracts remain valid. Chat and fresh contexts can continue during work; retries cannot repeat execution or completion delivery. |
-| v0.3.4 — Interactive work | Task questions, required approvals and follow-ups resume the same task; add authorized file/code work in the selected workspace | Preserve execution scope and actual effects on cancellation; validate a scoped code task and its artifact, including interrupted question/approval flows. |
+| v0.3.4 — Interactive work | Task questions, required approvals and follow-ups resume the same task; add authorized file/code work in each managed task workspace | Preserve execution scope and actual effects on cancellation; validate a scoped code task and its artifact, including interrupted question/approval flows. |
 | v0.3.5 — Group delegation | One reporting owner for each assigned shared task, with original-room delivery and current-membership checks | Avoid duplicate execution without collapsing deliberately distinct tasks; keep private source material private and late completion reports bounded. |
 | v0.4.0 — Delegation milestone | Consolidate the private/group task experience and documentation | Exercise research and scoped code work, continued chat, artifacts, cancellation, restart and context changes; add no new subsystem here. |
 
@@ -179,9 +179,10 @@ reply uses the current persona context and its original destination. If that
 destination is no longer eligible, retain the result in its card for explicit
 routing. Retrying the explanation must not repeat completed work.
 
-The implementation uses managed per-task directories for ordinary read-only
-work, explicitly selected external workspaces for writes, native queued
-questions/approvals and app-managed children while Pebble is open. Restart
+The implementation uses per-task directories in application data with writes
+enabled by default and Approve for me automatic permission review. It supports
+explicit read-only execution, defers native questions and declines any manual
+approval requests reaching Pebble. It manages children while Pebble is open. Restart
 reconciles actual outcomes without resending uncertain work. Shared ownership
 is frozen per canonical user message; the Mention menu can explicitly partition
 separate assignments among selected characters. See [delegation](delegation.md)

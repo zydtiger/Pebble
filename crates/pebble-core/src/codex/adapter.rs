@@ -1,5 +1,5 @@
 //! A task owns one stdio app-server child. No provider credentials or desktop RPCs.
-use super::{CodexSettings, failure};
+use super::{failure, settings::TaskSettings};
 use crate::Error;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -37,7 +37,7 @@ pub(crate) struct Adapter {
     next: u64,
 }
 impl Adapter {
-    pub(crate) fn start(settings: &CodexSettings) -> Result<Self, Error> {
+    pub(crate) fn start(settings: &TaskSettings) -> Result<Self, Error> {
         let mut child = Command::new(super::settings::executable(&settings.executable)?)
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(settings.cwd()?)
@@ -143,7 +143,7 @@ pub struct CodexCapabilities {
     pub mcp_servers: Vec<String>,
     pub detail: String,
 }
-pub(crate) fn inspect(settings: &CodexSettings) -> Result<CodexCapabilities, Error> {
+pub(crate) fn inspect(settings: &TaskSettings) -> Result<CodexCapabilities, Error> {
     let mut adapter = Adapter::start(settings)?;
     let account = adapter.rpc("account/read", json!({"refreshToken":false}))?;
     let models = adapter.rpc("model/list", json!({"limit":100}))?;

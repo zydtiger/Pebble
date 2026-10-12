@@ -8,13 +8,13 @@ fn exercise(writable: bool, prompt: &str) -> (String, Vec<String>) {
     std::fs::write(root.path().join("fixture.txt"), "PEBBLE_SYNTHETIC_42\n").unwrap();
     let settings = CodexSettings {
         enabled: true,
-        workspace: root.path().display().to_string(),
         writable,
         ..Default::default()
     };
+    let settings = settings::TaskSettings::new(&settings, root.path());
     let mut adapter = Adapter::start(&settings).unwrap();
     let start = Instant::now();
-    let thread=adapter.rpc("thread/start",json!({"cwd":settings.cwd().unwrap(),"sandbox":if writable{"workspace-write"}else{"read-only"},"approvalPolicy":"on-request","approvalsReviewer":"user","developerInstructions":"This is a bounded synthetic integration probe. Do not access personal calendar events, personal notes, unrelated files or send external messages. Do not delegate to subagents. Report actual sources, artifacts and limitations."})).unwrap();
+    let thread=adapter.rpc("thread/start",json!({"cwd":settings.cwd().unwrap(),"sandbox":if writable{"workspace-write"}else{"read-only"},"approvalPolicy":"on-request","approvalsReviewer":"auto_review","developerInstructions":"This is a bounded synthetic integration probe. Do not access personal calendar events, personal notes, unrelated files or send external messages. Do not delegate to subagents. Report actual sources, artifacts and limitations."})).unwrap();
     println!("effective_model={}", thread["model"]);
     let id = thread["thread"]["id"].as_str().unwrap();
     let turn = adapter
@@ -81,10 +81,7 @@ fn exercise(writable: bool, prompt: &str) -> (String, Vec<String>) {
 #[ignore = "requires installed authenticated local Codex; read-only metadata"]
 fn real_local_capabilities() {
     let root = tempfile::tempdir().unwrap();
-    let settings = CodexSettings {
-        workspace: root.path().display().to_string(),
-        ..Default::default()
-    };
+    let settings = settings::TaskSettings::new(&CodexSettings::default(), root.path());
     let capabilities = super::adapter::inspect(&settings).unwrap();
     println!("{capabilities:?}");
     assert!(capabilities.authenticated);

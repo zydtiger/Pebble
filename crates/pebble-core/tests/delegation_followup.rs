@@ -68,8 +68,6 @@ fn native_and_card_followups_preserve_original_actual_continuation_and_objective
         let mut changed_settings = core.codex_settings().unwrap();
         configure(root.path(), &later.url, "mock", api, "");
         // A later app selection must not change this task's frozen execution scope.
-        let other_workspace = tempfile::tempdir().unwrap();
-        changed_settings.workspace = other_workspace.path().display().to_string();
         changed_settings.writable = true;
         changed_settings.model = Some("later-app-selection".into());
         changed_settings.effort = Some("low".into());
@@ -166,10 +164,10 @@ fn native_and_card_followups_preserve_original_actual_continuation_and_objective
             .filter(|v| v["method"] == "turn/start")
             .collect::<Vec<_>>();
         assert_eq!(starts.len(), 3);
-        let canonical_workspace = workspace
+        let task_workspace = root
             .path()
-            .canonicalize()
-            .unwrap()
+            .join("data/codex-workspaces")
+            .join(&task.id)
             .display()
             .to_string();
         for (index, call) in starts.iter().enumerate() {
@@ -186,7 +184,7 @@ fn native_and_card_followups_preserve_original_actual_continuation_and_objective
                 input["delegated_objective"],
                 [objective, objective, card_user.trim()][index]
             );
-            assert_eq!(input["workspace"], canonical_workspace);
+            assert_eq!(input["workspace"], task_workspace);
             assert_eq!(input["workspace_writable"], false);
             assert!(
                 input["runtime_time"]["local_date_time_and_offset"]
@@ -197,6 +195,8 @@ fn native_and_card_followups_preserve_original_actual_continuation_and_objective
         for resume in calls.iter().filter(|v| v["method"] == "thread/resume") {
             assert_eq!(resume["params"]["threadId"], thread);
             assert_eq!(resume["params"]["sandbox"], "read-only");
+            assert_eq!(resume["params"]["approvalPolicy"], "on-request");
+            assert_eq!(resume["params"]["approvalsReviewer"], "auto_review");
             assert!(resume["params"].get("model").is_none());
         }
         assert_eq!(method_count(workspace.path(), "thread/start"), 1);

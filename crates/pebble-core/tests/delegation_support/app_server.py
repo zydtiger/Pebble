@@ -7,7 +7,8 @@ import select
 import sys
 import time
 
-root = pathlib.Path.cwd()
+root = pathlib.Path(__file__).resolve().parent
+workspace = pathlib.Path.cwd()
 options = json.loads((root / 'fake-options.json').read_text()) if (root / 'fake-options.json').exists() else {'mode': 'complete', 'artifact': True}
 mode = options.get('mode', 'complete')
 thread = 'synthetic-thread-' + str(os.getpid())
@@ -15,6 +16,7 @@ turn = None
 waiting = False
 input_buffer = ""
 cancel_waiting = False
+review_pending = False
 
 def write(value):
     print(json.dumps(value), flush=True)
@@ -45,9 +47,17 @@ def finish(status='completed', text=None):
     waiting = False
 
 while True:
+    if review_pending and (root / 'release-review').exists():
+        if options['review_status'] == 'approved':
+            event('guardianWarning', {'message': 'Automatic approval review approved (risk: low, authorization: high): Synthetic action is authorized.'})
+        event('item/autoApprovalReview/completed', {'action': {'type': 'command', 'command': 'echo synthetic', 'cwd': str(workspace), 'source': 'shell'}, 'reviewId': 'review-1', 'targetItemId': 'reviewed-command', 'startedAtMs': 1, 'completedAtMs': 2, 'decisionSource': 'agent', 'review': {'status': options['review_status'], 'rationale': 'Synthetic review rationale: requested action exceeds authorization.'}})
+        review_pending = False
+        waiting = True
+    if waiting and mode == 'auto-review' and (root / 'release').exists():
+        finish()
     if waiting and mode in ('gated', 'url', 'url-loss', 'followup-gated', 'error-retry') and (root / 'release').exists():
         if mode == 'followup-gated':
-            artifact = root / ('followup-' + turn + '.txt')
+            artifact = workspace / ('followup-' + turn + '.txt')
             artifact.write_text('current synthetic continuation artifact')
             event('item/completed', {'item': {'id': 'current-file', 'type': 'fileChange', 'status': 'completed', 'changes': [{'path': str(artifact)}]}})
         finish()
@@ -92,7 +102,9 @@ while True:
             (root / 'at-barrier').write_text(method)
             while not (root / 'release').exists():
                 time.sleep(0.01)
-        if mode == 'unauthenticated':
+        if mode == 'policy-rejected':
+            write({'id': value['id'], 'error': {'code': -32602, 'message': 'Synthetic auto_review policy is unavailable under local requirements.'}})
+        elif mode == 'unauthenticated':
             write({'id': value['id'], 'error': {'code': -32000, 'message': 'Login required'}})
         else:
             reply({'thread': {'id': thread}})
@@ -128,6 +140,13 @@ while True:
             event('item/completed', {'item': {'type': 'agentMessage', 'phase': 'commentary', 'text': 'Later progress must not replace the task description.'}})
         if mode == 'disconnect':
             os._exit(0)
+        if mode == 'auto-review':
+            review = {'action': {'type': 'command', 'command': 'echo synthetic', 'cwd': str(workspace), 'source': 'shell'}, 'reviewId': 'review-1', 'targetItemId': 'reviewed-command', 'startedAtMs': 1, 'review': {'status': 'inProgress'}}
+            stale = dict(review, review={'status': 'denied', 'rationale': 'STALE_REVIEW_MUST_NOT_DISPLAY'})
+            write({'method': 'item/autoApprovalReview/completed', 'params': dict(threadId=thread, turnId='wrong-turn', **stale)})
+            event('item/autoApprovalReview/started', review)
+            review_pending = True
+            continue
         if mode in ('error-fatal', 'error-delayed', 'error-retry'):
             error = {'message': 'Synthetic turn error; check the local configuration.', 'additionalDetails': 'PRIVATE_RAW_STACK_MUST_NOT_DISPLAY'}
             if mode == 'error-retry':
@@ -150,13 +169,13 @@ while True:
         if mode.startswith('oversized-'):
             params = {'threadId': thread, 'turnId': turn, 'itemId': 'oversized-operation', 'startedAtMs': 1, 'reason': 'Review the complete synthetic scope.'}
             if mode == 'oversized-permissions':
-                params.update(cwd=str(root), permissions={'fileSystem': {'write': ['/synthetic/' + 'x' * 100 + str(i) for i in range(100)] + ['/synthetic/last-authorized-root']}})
+                params.update(cwd=str(workspace), permissions={'fileSystem': {'write': ['/synthetic/' + 'x' * 100 + str(i) for i in range(100)] + ['/synthetic/last-authorized-root']}})
                 native_method = 'item/permissions/requestApproval'
             elif mode == 'oversized-file':
                 event('item/started', {'item': {'id': params['itemId'], 'type': 'fileChange', 'status': 'inProgress', 'changes': [{'path': 'synthetic.txt', 'kind': {'type': 'update'}, 'diff': '+' + 'x' * 18000 + '\n+last actual change'}]}})
                 native_method = 'item/fileChange/requestApproval'
             else:
-                params.update(command='echo synthetic ' + 'x' * 9000 if mode == 'oversized-command' else 'write /synthetic/actual-scope.txt', cwd=str(root), commandActions=None)
+                params.update(command='echo synthetic ' + 'x' * 9000 if mode == 'oversized-command' else 'write /synthetic/actual-scope.txt', cwd=str(workspace), commandActions=None)
                 if mode == 'oversized-reason':
                     params['reason'] = 'x' * 9000
                 if mode == 'oversized-network':
@@ -208,7 +227,7 @@ while True:
                 params.update(isBlocking=True, questions=[{'id': 'choice', 'header': 'Scope and cost', 'question': 'Which synthetic artifact?', 'isSecret': options.get('secret_question', False), 'options': [{'label': 'Small', 'description': 'Read one synthetic file; no modifications.'}, {'label': 'Large', 'description': 'Inspect all synthetic files; higher latency.'}]}])
                 native_method = 'item/tool/requestUserInput'
             else:
-                params.update(command='write synthetic output.txt', cwd=str(root), reason='Synthetic fixture requests one scoped write.', startedAtMs=1)
+                params.update(command='write synthetic output.txt', cwd=str(workspace), reason='Synthetic fixture requests one scoped write.', startedAtMs=1)
                 if mode == 'approval-actions':
                     params.update(command=None, commandActions=[{'type': 'read', 'command': 'cat README.md', 'name': 'README.md', 'path': 'README.md'}, {'type': 'search', 'command': 'rg TODO src', 'path': 'src', 'query': 'TODO'}, {'type': 'listFiles', 'command': 'ls docs', 'path': 'docs'}])
                 if mode == 'approval-network':
@@ -227,7 +246,7 @@ while True:
             waiting = True
         else:
             if options.get('artifact'):
-                artifact = root / 'output.txt'
+                artifact = workspace / 'output.txt'
                 artifact.write_text('synthetic artifact')
                 event('item/completed', {'item': {'id': 'file', 'type': 'fileChange', 'status': 'completed', 'changes': [{'path': str(artifact)}]}})
             finish()

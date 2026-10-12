@@ -251,9 +251,9 @@ fn queued_answer_rechecks_cancelled_ownership_before_writing_to_stdio() {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = CodexSettings {
         executable: script.display().to_string(),
-        workspace: root.path().display().to_string(),
         ..Default::default()
     };
+    let settings = settings::TaskSettings::new(&settings, root.path());
     let mut adapter = Adapter::start(&settings).unwrap();
     let request = TaskRequest {
         id: "\"interaction-1\"".into(),
@@ -362,4 +362,53 @@ fn deferred_clarification_remains_blocked_through_completed_frames_and_saved_thr
     assert_eq!(task.state, DelegationState::Failed);
     assert!(task.detail.contains("Which file?"));
     assert!(!task.detail.contains("Recovered the completed result"));
+}
+
+#[test]
+fn typed_review_limits_survive_later_limits_and_cancellation_without_success_warning() {
+    let (_root, core, id) = admitted_task();
+    let mut task = core.database.task(&id).unwrap();
+    task.state = DelegationState::Running;
+    task.thread_id = Some("synthetic-thread".into());
+    task.turn_id = Some("synthetic-turn".into());
+    let warning = json!({"method":"guardianWarning", "params":{
+        "threadId":"wrong-thread", "message":"STALE_WARNING"
+    }});
+    events::apply(&mut task, &warning, None).unwrap();
+    assert!(task.detail.is_empty());
+    let mut warning = warning;
+    warning["params"]["threadId"] = json!("synthetic-thread");
+    warning["params"]["message"] = json!(
+        "Automatic approval review approved (risk: low, authorization: high): Synthetic action is authorized."
+    );
+    events::apply(&mut task, &warning, None).unwrap();
+    assert!(task.detail.is_empty() && task.local_limitation.is_empty());
+    let review = json!({"method":"item/autoApprovalReview/completed", "params":{
+        "threadId":"synthetic-thread", "turnId":"synthetic-turn", "review":{
+            "status":"denied", "rationale":"Synthetic denial reason"
+        }
+    }});
+    assert!(!events::apply(&mut task, &review, None).unwrap().terminal);
+    assert!(task.detail.contains("denial reason"));
+    assert!(!task.detail.contains("approved"));
+    assert!(!task.interaction_deferred && task.request.is_none());
+    task.state = DelegationState::CancellationRequested;
+    task.activity = "Requesting cancellation…".into();
+    events::apply(&mut task, &review, None).unwrap();
+    assert_eq!(task.state, DelegationState::CancellationRequested);
+    assert_eq!(task.activity, "Requesting cancellation…");
+    let manual = json!({"id":"manual", "method":"item/commandExecution/requestApproval", "params":{
+        "threadId":"synthetic-thread", "turnId":"synthetic-turn", "reason":"Synthetic manual approval"
+    }});
+    task.state = DelegationState::Running;
+    events::apply(&mut task, &manual, None).unwrap();
+    assert!(events::defer_interaction(&mut task).is_some());
+    assert!(task.detail.contains("denial reason"));
+    assert!(task.detail.contains("no approval remains pending"));
+    let completed = json!({"method":"turn/completed", "params":{
+        "threadId":"synthetic-thread", "turn":{"id":"synthetic-turn", "status":"completed"}
+    }});
+    events::apply(&mut task, &completed, None).unwrap();
+    assert_eq!(task.state, DelegationState::Failed);
+    assert!(task.detail.contains("denial reason"));
 }

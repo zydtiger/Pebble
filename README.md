@@ -29,8 +29,10 @@ A small circular task monitor stays at the transcript’s top-right corner. Open
 to see app-wide running work; the button disappears when no task is executing.
 Characters relay failures, questions, limitations,
 evidence and artifacts through ordinary chat.
-Open **Codex tasks** for local CLI/login checks and separate settings; ordinary
-read-only lookups need no project selection. See [delegation and limits](docs/delegation.md).
+Open **Codex tasks** for local CLI/login checks and separate settings; tasks
+use their own folders in Pebble application data with workspace writes and **Approve for me**
+automatic permission review; read-only execution remains an explicit option.
+See [delegation and limits](docs/delegation.md).
 
 See [completion evidence and current limits](docs/roadmap.md#group-boundaries-and-completion-scenarios)
 for the verified end-to-end scenarios. Participation remains a model judgment;
@@ -157,7 +159,7 @@ files. Existing files are never overwritten by the seed operation.
     ├── app.sqlite        # chat/history/state/memory/context/image/task records (schema v13)
     ├── app.lock          # exclusive app ownership; released automatically on exit
     ├── assets/<image-uuid>/ # original, fixed model rendition and thumbnail
-    └── codex-workspaces/<task-uuid>/ # managed read-only task working directory
+    └── codex-workspaces/<task-uuid>/ # managed task working directory
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1

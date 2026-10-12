@@ -112,6 +112,36 @@ impl Database {
     pub(crate) fn delegation_used(&self, request: &ModelRequest) -> Result<bool, Error> {
         Ok(self.connection.lock().expect("database lock").query_row("WITH RECURSIVE attempts(id,retry_of) AS (SELECT id,retry_of FROM model_calls WHERE id=?1 UNION ALL SELECT c.id,c.retry_of FROM model_calls c JOIN attempts a ON c.id=a.retry_of) SELECT EXISTS(SELECT 1 FROM delegation_submissions o JOIN attempts a ON a.id=o.owner_id)",[&request.call_id],|r|r.get(0))?)
     }
+    /// Save a balanced native error exchange without claiming or executing work.
+    pub(crate) fn reject_delegation_arguments(
+        &self,
+        request: &ModelRequest,
+        output: &[Value],
+        result: &Value,
+    ) -> Result<(), Error> {
+        let mut db = self.connection.lock().expect("database lock");
+        let tx = db.transaction()?;
+        let active: bool = tx.query_row(
+            "SELECT status='streaming' AND (membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships WHERE id=model_calls.membership_id AND left_publication IS NULL)) FROM model_calls WHERE id=?1",
+            [&request.call_id], |r| r.get(0),
+        )?;
+        if !active {
+            return Err(codex::failure("The originating reply is no longer active."));
+        }
+        for item in output.iter().chain(std::iter::once(result)) {
+            insert_item(
+                &tx,
+                &request.session_id,
+                Some(&request.call_id),
+                "output",
+                item,
+            )?;
+        }
+        tx.execute("UPDATE model_calls SET input_last_sequence=(SELECT MAX(sequence) FROM model_items WHERE session_id=?2) WHERE id=?1",params![request.call_id,request.session_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Task identity, deduplication, and native call/result replay commit BEFORE dispatch.
     pub(crate) fn prepare_delegation(
         &self,
@@ -154,7 +184,7 @@ impl Database {
         let outcome = if separate && !assigned {
             json!({"ok":false,"detail":"This message assigns separate tasks only to its selected mentions. You have no execution assignment; do not delegate or claim its work."})
         } else if !settings.enabled {
-            json!({"ok":false,"detail":"Codex is disabled. Configure its executable and workspace in native Codex settings. Do not claim a lookup or invent results."})
+            json!({"ok":false,"detail":"Codex is disabled. Enable tasks and configure its executable in native Codex settings. Do not claim a lookup or invent results."})
         } else if let Some(id) = existing.as_ref() {
             let owner: String = tx.query_row(
                 "SELECT persona_id FROM delegated_tasks WHERE id=?1",
@@ -217,7 +247,7 @@ impl Database {
                 tx.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |r| {
                     r.get(0)
                 })?;
-            let mut task = DelegatedTask {
+            let task = DelegatedTask {
                 id: id.clone(),
                 title: call.arguments.title.trim().into(),
                 summary_captured: false,
@@ -238,7 +268,10 @@ impl Database {
                 thread_id: None,
                 turn_id: None,
                 created_at: created,
-                settings: settings.clone(),
+                settings: crate::codex::TaskSettings::new(
+                    settings,
+                    &self.root.join("data/codex-workspaces").join(&id),
+                ),
                 trigger: request.trigger_message_id.clone(),
                 membership,
                 instructions: call.arguments.instructions.clone(),
@@ -253,17 +286,6 @@ impl Database {
                 dispatch_started: false,
                 approval_previews: Default::default(),
             };
-            if !task.settings.workspace.is_empty() {
-                task.settings.workspace = task.settings.cwd()?.display().to_string();
-            }
-            if task.settings.workspace.is_empty() {
-                task.settings.workspace = self
-                    .root
-                    .join("data/codex-workspaces")
-                    .join(&id)
-                    .display()
-                    .to_string();
-            }
             tx.execute("INSERT INTO delegated_tasks(id,conversation_id,persona_id,trigger_id,request_key,record) VALUES (?1,?2,?3,?4,?5,?6)",params![id,task.conversation_id,task.persona_id,task.trigger,key,serde_json::to_string(&task)?])?;
             dispatch = Some(id.clone());
             json!({"ok":true,"task_id":id,"reporting_persona_id":persona,"state":"accepted","detail":"Task accepted. Do not poll, repeat the task, claim completion, or invent evidence. Its saved outcome will arrive separately through its reporting owner."})
