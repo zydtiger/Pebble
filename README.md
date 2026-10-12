@@ -175,8 +175,11 @@ or reopen Pebble. Replacing or removing the file takes effect on the same reload
 The sidebar, chat header, character details and private/group replies use that
 character's picture, cropped to a circle. Missing or unreadable images use the
 default pebble avatar. Avatars are display-only and do not enter model requests.
-Click a custom avatar in the private-chat header to view the full picture in the
-same preview used for image attachments. **Done** or **Escape** closes the preview.
+Click a custom avatar in the private-chat header or an image attachment to open
+the full picture in a separate, resizable window. Use the magnifier buttons or
+pinch the trackpad to zoom, and scroll to explore a magnified image. The pin button
+keeps that preview above normal windows until toggled off. **Escape**, **Command–W**
+or the window's close button closes the preview; chat remains available throughout.
 
 The app config optionally supplies `[defaults.chat]`. A persona can provide its
 own `[chat]` table, replacing the whole connection. Connections require `model`,

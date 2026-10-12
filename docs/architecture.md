@@ -91,6 +91,10 @@ on workspace load/reload and keeps one presentation image per stable persona ID.
 The native view crops it to a circle; missing/unreadable files use the existing
 placeholder. Replacing/removing a picture is reflected by explicit file reload,
 without altering TOML, SQLite, persona state or frozen model context.
+Header avatars and image attachments share an independent AppKit preview window.
+Swift owns its lifetime, fit/zoom/pan presentation and temporary floating-window
+pin state. NSScrollView handles trackpad magnification; opening a preview never
+reserves a persona queue or blocks the chat window.
 
 The demo protocol is distinct from Chat Completions and Responses. Configured
 connections always run their real HTTP adapter.

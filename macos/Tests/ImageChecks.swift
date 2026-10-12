@@ -134,8 +134,13 @@ struct ImageChecks {
                     let selector = NSSelectorFromString("accessibilityPerformPress")
                     typealias Press = @convention(c) (AnyObject, Selector) -> Bool
                     try require(unsafeBitCast(button.method(for: selector), to: Press.self)(button, selector), "Image open accessibility action failed")
-                    try await wait { window.attachedSheet != nil }; try capture(window.attachedSheet!, "image-enlarged")
-                    window.attachedSheet?.performClose(nil)
+                    try await wait { NSApp.windows.contains { $0.identifier?.rawValue == "image-preview" && $0.isVisible } }
+                    guard let preview = NSApp.windows.first(where: { $0.identifier?.rawValue == "image-preview" && $0.isVisible }) else {
+                        throw Failure.check("Image preview window unavailable")
+                    }
+                    try require(window.attachedSheet == nil, "Image preview blocked the conversation")
+                    try capture(preview, "image-enlarged")
+                    preview.performClose(nil)
                 } else { throw Failure.check("Image attachment open control unavailable") }
                 try await Task.sleep(for: .milliseconds(150))
                 let grouped = await model.createGroup("Image group", members: [firstPersona])
