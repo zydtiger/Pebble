@@ -30,10 +30,16 @@ struct PebbleMark: View {
 
 struct CharacterAvatar: View {
     var size: CGFloat = 40
+    var image: NSImage?
     var body: some View {
         ZStack {
             Circle().fill(Color(red: 0.85, green: 0.88, blue: 0.79))
-            PebbleMark(size: size * 0.64)
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+                    .frame(width: size, height: size).clipShape(Circle())
+            } else {
+                PebbleMark(size: size * 0.64)
+            }
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)

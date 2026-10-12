@@ -85,6 +85,13 @@ config.toml, SOUL.md, MEMORY.md, and response_schema.json. It inherits the app's
 creates a stable private room, and exposes a minimal name form in Swift. Native settings edits authoritative TOML/Markdown through Rust; deletion remains
 outside this milestone.
 
+An optional `avatar.png` beside those character files supplies the profile picture.
+Swift decodes a thumbnail off MainActor from each Rust-provided persona directory
+on workspace load/reload and keeps one presentation image per stable persona ID.
+The native view crops it to a circle; missing/unreadable files use the existing
+placeholder. Replacing/removing a picture is reflected by explicit file reload,
+without altering TOML, SQLite, persona state or frozen model context.
+
 The demo protocol is distinct from Chat Completions and Responses. Configured
 connections always run their real HTTP adapter.
 An absent connection runs the local demo. Rust supplies mode/model labels and

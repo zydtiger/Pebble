@@ -147,6 +147,7 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── config.toml
 │   ├── SOUL.md
 │   ├── MEMORY.md
+│   ├── avatar.png        # optional character profile picture
 │   ├── .MEMORY-<operation-id>.displaced # retained displaced inode after memory publication
 │   └── response_schema.json
 └── data/
@@ -164,6 +165,13 @@ error without changing active calls. Keep this data
 outside the source checkout. `PEBBLE_DATA_DIR` selects an isolated root for
 development and tests; an existing, incomplete root reports an error instead
 of silently reseeding it.
+
+To customize a character's profile picture, place `avatar.png` beside their
+`config.toml` in `personas/<persona-uuid>/`, then click **Reload character files**
+or reopen Pebble. Replacing or removing the file takes effect on the same reload.
+The sidebar, chat header, character details and private/group replies use that
+character's picture, cropped to a circle. Missing or unreadable images use the
+default pebble avatar. Avatars are display-only and do not enter model requests.
 
 The app config optionally supplies `[defaults.chat]`. A persona can provide its
 own `[chat]` table, replacing the whole connection. Connections require `model`,
@@ -339,6 +347,7 @@ Read [the architecture](docs/architecture.md) for the boundary and lifecycle.
 just check          # file checks, Rust lint/tests, Swift 6 FFI integration
 just build          # native application compile and local signing
 just preview        # render actual SwiftUI views into build/previews/
+bash scripts/check-avatars.sh # targeted avatar reload and native rendering checks
 ```
 
 `just check-rust` and `just check-bridge` run narrower gates. The hook definitions
@@ -356,6 +365,8 @@ and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
 concurrency checking. The renderer captures this app's own content without
 capturing the desktop or other applications.
+Avatar checks retain screenshots under `build/validation/persona-avatars/` and
+remove their isolated temporary persona files when finished.
 
 Live endpoint validation is opt-in; ordinary tests only use local deterministic
 servers. The following test seeds synthetic character files in an isolated

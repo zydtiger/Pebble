@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 import Observation
 import UniformTypeIdentifiers
 
@@ -176,6 +177,7 @@ final class ChatModel {
     let dataRoot: URL
     let client: CoreClient
     var workspace: WorkspaceRecord? { didSet { reconcileMentionChoices() } }
+    var avatars: [String: NSImage] = [:]
     var selectedID: String?
     var loading = true
     var showCharacter = false
@@ -306,6 +308,11 @@ final class ChatModel {
         do {
             let loaded = try await client.load()
             guard selectionRevision == revision else { return }
+            let previews = await Task.detached(priority: .utility) {
+                Self.loadAvatars(loaded.personas)
+            }.value
+            guard selectionRevision == revision else { return }
+            avatars = previews.mapValues { NSImage(cgImage: $0, size: .zero) }
             workspace = loaded
             try await startTaskObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
@@ -329,6 +336,25 @@ final class ChatModel {
             }
         } catch { if selectionRevision == revision { self.error = describe(error) } }
         if selectionRevision == revision { loading = false }
+    }
+
+    // Presentation-only previews, refreshed by the same explicit file reload as the persona.
+    private nonisolated static func loadAvatars(_ personas: [PersonaRecord]) -> [String: CGImage] {
+        var images: [String: CGImage] = [:]
+        for persona in personas {
+            let url = URL(fileURLWithPath: persona.directory, isDirectory: true)
+                .appendingPathComponent("avatar.png")
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let source = CGImageSourceCreateWithURL(url as CFURL,
+                      [kCGImageSourceShouldCache: false] as CFDictionary),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 256,
+                  ] as CFDictionary) else { continue }
+            images[persona.id] = image
+        }
+        return images
     }
 
     func select(_ target: String) {

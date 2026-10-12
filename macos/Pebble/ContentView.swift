@@ -80,7 +80,7 @@ struct ContentView: View {
                     ForEach(model.workspace?.personas ?? [], id: \.id) { persona in
                         Button { model.select(persona.id) } label: {
                             HStack(spacing: 11) {
-                                CharacterAvatar(size: 38)
+                                CharacterAvatar(size: 38, image: model.avatars[persona.id])
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(persona.displayName).font(.system(size: 13, weight: .semibold))
                                     Text(model.pendingCount(persona.id) > 0 ? "\(model.pendingCount(persona.id)) pending" : "Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
@@ -190,7 +190,7 @@ struct ContentView: View {
 
     private func chatHeader(_ persona: PersonaRecord) -> some View {
         HStack(spacing: 12) {
-            CharacterAvatar(size: 35)
+            CharacterAvatar(size: 35, image: model.avatars[persona.id])
             Text(persona.displayName).font(.system(size: 14, weight: .semibold))
             Spacer()
             Button { model.settingsTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "slider.horizontal.3") }
@@ -225,7 +225,11 @@ struct ContentView: View {
             ZStack {
                 Circle().fill(PebbleTheme.sage.opacity(0.045)).frame(width: 154, height: 154)
                 Circle().stroke(PebbleTheme.sage.opacity(0.075), lineWidth: 1).frame(width: 186, height: 186)
-                PebbleMark(size: 96)
+                if let image = model.avatars[persona.id] {
+                    CharacterAvatar(size: 128, image: image)
+                } else {
+                    PebbleMark(size: 96)
+                }
             }
             .frame(height: 190).padding(.bottom, 24)
             Text(persona.subtitle)
@@ -251,7 +255,7 @@ struct ContentView: View {
                     ForEach(model.bubbles) { bubble in
                         HStack(alignment: .top, spacing: 10) {
                             if bubble.isUser { Spacer(minLength: 60) }
-                            else { CharacterAvatar(size: 28).padding(.top, 20) }
+                            else { CharacterAvatar(size: 28, image: model.avatars[bubble.senderID]).padding(.top, 20) }
                             VStack(alignment: bubble.isUser ? .trailing : .leading, spacing: 7) {
                                 Text(bubble.isUser ? "YOU" : model.speakerName(bubble.senderID).uppercased())
                                     .font(.system(size: 9, weight: .semibold)).tracking(1)
@@ -430,7 +434,7 @@ private struct CharacterSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 14) {
-                CharacterAvatar(size: 50)
+                CharacterAvatar(size: 50, image: model.avatars[persona.id])
                 VStack(alignment: .leading, spacing: 5) {
                     Text(persona.displayName).font(.system(size: 25, design: .serif))
                     Text(persona.subtitle).font(.system(size: 12)).foregroundStyle(PebbleTheme.muted)
