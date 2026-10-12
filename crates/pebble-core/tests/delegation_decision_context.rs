@@ -1,196 +1,150 @@
 mod delegation_support;
 mod live_support;
 mod responses_support;
-use delegation_support::{assert_fake, configure as codex_configure, settled, tool, wait};
+use delegation_support::{assert_fake, configure as codex_configure, method_count, settled, tool};
 use live_support::*;
-use pebble_core::{DelegationState, TaskAnswer};
+use pebble_core::DelegationState;
 use serde_json::{Value, json};
 
-fn answer(id: &str, values: &[&str]) -> TaskAnswer {
-    TaskAnswer {
-        question_id: id.into(),
-        answers: values.iter().map(|v| (*v).into()).collect(),
+#[test]
+fn native_interactions_are_deferred_without_answers_or_permission_and_report_through_persona() {
+    for mode in [
+        "question",
+        "secret-question",
+        "approval",
+        "approval-network",
+        "approval-stdin",
+        "approval-actions",
+        "file-overlap",
+        "overlap",
+        "form-mixed",
+        "form-optional",
+        "form-choices",
+        "form-constrained",
+        "url",
+    ] {
+        let server = Server::memory(vec![
+            stream(tool("chat_completions", mode)),
+            stream(success("Started.")),
+            stream(success(
+                "I need clarification or configuration before continuing.",
+            )),
+        ]);
+        let (root, core, persona) = isolated();
+        configure(root.path(), &server.url, "mock", "chat_completions", "");
+        let workspace = tempfile::tempdir().unwrap();
+        codex_configure(&core, workspace.path(), mode);
+        if mode == "secret-question" {
+            std::fs::write(
+                workspace.path().join("fake-options.json"),
+                json!({"mode":"question","secret_question":true}).to_string(),
+            )
+            .unwrap();
+        }
+        assert_fake(&core, workspace.path());
+        let (_handle, events) = start(
+            &core,
+            &persona,
+            "Inspect only synthetic evidence; ask before changing scope.",
+        );
+        terminal(&events);
+        let task = settled(&core);
+        assert_eq!(
+            task.state,
+            DelegationState::Interrupted,
+            "{mode}: {}",
+            task.detail
+        );
+        assert!(task.request.is_none());
+        assert!(task.detail.contains("Codex paused"));
+        if ["question", "overlap"].contains(&mode) {
+            for text in [
+                "Which synthetic artifact?",
+                "Scope and cost",
+                "Read one synthetic file; no modifications.",
+                "higher latency",
+            ] {
+                assert!(task.detail.contains(text), "{text}");
+            }
+        } else {
+            assert!(
+                task.detail
+                    .contains("No permission or form answer was granted")
+            );
+            assert!(!task.detail.contains("SECRET_DEFAULT"));
+            if mode == "secret-question" {
+                assert!(!task.detail.contains("Which synthetic artifact?"));
+            }
+        }
+        let record: String = rusqlite::Connection::open(root.path().join("data/app.sqlite"))
+            .unwrap()
+            .query_row("SELECT record FROM delegated_tasks", [], |r| r.get(0))
+            .unwrap();
+        let saved: Value = serde_json::from_str(&record).unwrap();
+        assert!(saved["pending_requests"].as_array().unwrap().is_empty());
+        let reports = server
+            .requests
+            .try_iter()
+            .map(|(_, request)| request)
+            .collect::<Vec<_>>();
+        let report = reports.last().unwrap();
+        assert_eq!(report["tool_choice"], "none");
+        assert!(report.to_string().contains("Codex paused"));
+        assert!(!report.to_string().contains("state=secret"));
+        let responses =
+            std::fs::read_to_string(workspace.path().join("fake-responses.jsonl")).unwrap();
+        let responses = responses
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!responses.is_empty());
+        for response in &responses {
+            assert!(
+                response.get("error").is_some()
+                    || response["result"]["decision"] == "decline"
+                    || response["result"]["action"] == "decline"
+                    || response["result"]["permissions"] == json!({})
+            );
+            assert!(response["result"].get("answers").is_none());
+            assert!(response["result"].get("content").is_none());
+        }
+        if mode == "overlap" {
+            assert_eq!(
+                responses
+                    .iter()
+                    .filter(|r| r["id"] == "interaction-2")
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(method_count(workspace.path(), "turn/start"), 1);
+        assert_eq!(method_count(workspace.path(), "turn/interrupt"), 1);
     }
 }
 
 #[test]
-fn native_question_persists_header_and_option_consequences_without_changing_free_text_answers() {
+fn deferred_question_without_interrupt_confirmation_stays_uncertain_and_cannot_be_resent() {
     let server = Server::memory(vec![
-        stream(tool("chat_completions", "question")),
+        stream(tool("chat_completions", "uncertain-question")),
         stream(success("Started.")),
-        stream(success("Saved answer.")),
+        stream(success("The interruption is not confirmed.")),
     ]);
     let (root, core, persona) = isolated();
     configure(root.path(), &server.url, "mock", "chat_completions", "");
     let workspace = tempfile::tempdir().unwrap();
     codex_configure(&core, workspace.path(), "question");
-    assert_fake(&core, workspace.path());
-    let (_handle, events) = start(&core, &persona, "Choose the scope of synthetic work.");
+    std::fs::write(
+        workspace.path().join("fake-options.json"),
+        json!({"mode":"question","interrupt_unconfirmed":true}).to_string(),
+    )
+    .unwrap();
+    let (_handle, events) = start(&core, &persona, "Inspect synthetic data.");
     terminal(&events);
-    let task = wait(&core, |t| t[0].request.is_some()).remove(0);
-    let request = task.request.unwrap();
-    let question = &request.questions[0];
-    assert_eq!(question.header, "Scope and cost");
-    assert_eq!(question.options, ["Small", "Large"]);
-    assert_eq!(
-        question.option_descriptions,
-        [
-            "Read one synthetic file; no modifications.",
-            "Inspect all synthetic files; higher latency."
-        ]
-    );
-    let record: String = rusqlite::Connection::open(root.path().join("data/app.sqlite"))
-        .unwrap()
-        .query_row(
-            "SELECT record FROM delegated_tasks WHERE id=?1",
-            [&task.id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let saved: pebble_core::DelegatedTask = serde_json::from_str(&record).unwrap();
-    let persisted = &saved.request.as_ref().unwrap().questions[0];
-    assert_eq!(persisted.header, question.header);
-    assert_eq!(persisted.option_descriptions, question.option_descriptions);
-    core.answer_delegation(
-        &task.id,
-        &request.id,
-        None,
-        &[answer("choice", &["Only README.md please"])],
-    )
-    .unwrap();
-    assert_eq!(settled(&core).state, DelegationState::Completed);
-    let response: Value = serde_json::from_slice(
-        &std::fs::read(workspace.path().join("fake-response.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        response["result"],
-        json!({"answers":{"choice":{"answers":["Only README.md please"]}}})
-    );
-}
-
-#[test]
-fn managed_network_host_and_protocol_are_reviewable_before_allow_once() {
-    let server = Server::memory(vec![
-        stream(tool("chat_completions", "network")),
-        stream(success("Started.")),
-        stream(success("Saved approved result.")),
-    ]);
-    let (root, core, persona) = isolated();
-    configure(root.path(), &server.url, "mock", "chat_completions", "");
-    let workspace = tempfile::tempdir().unwrap();
-    codex_configure(&core, workspace.path(), "approval-network");
-    assert_fake(&core, workspace.path());
-    let (_handle, events) = start(
-        &core,
-        &persona,
-        "Review a synthetic managed-network request.",
-    );
-    terminal(&events);
-    let task = wait(&core, |t| t[0].request.is_some()).remove(0);
-    let request = task.request.unwrap();
-    assert!(request.approval);
-    assert!(request.summary.contains("Network host: api.example.com"));
-    assert!(request.summary.contains("Network protocol: https"));
-    assert!(request.summary.contains("did not supply operation text"));
-    core.answer_delegation(&task.id, &request.id, Some(true), &[])
-        .unwrap();
-    settled(&core);
-    let response: Value = serde_json::from_slice(
-        &std::fs::read(workspace.path().join("fake-response.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(response["result"], json!({"decision":"accept"}));
-}
-
-#[test]
-fn mcp_constraint_captions_match_original_schema_rejection_and_valid_optional_secret_answers() {
-    let server = Server::memory(vec![
-        stream(tool("chat_completions", "constraints")),
-        stream(success("Started.")),
-        stream(success("Saved valid form.")),
-    ]);
-    let (root, core, persona) = isolated();
-    configure(root.path(), &server.url, "mock", "chat_completions", "");
-    let workspace = tempfile::tempdir().unwrap();
-    codex_configure(&core, workspace.path(), "form-constrained");
-    assert_fake(&core, workspace.path());
-    let (_handle, events) = start(&core, &persona, "Answer the synthetic constrained form.");
-    terminal(&events);
-    let task = wait(&core, |t| t[0].request.is_some()).remove(0);
-    let request = task.request.unwrap();
-    let question = |id: &str| request.questions.iter().find(|q| q.id == id).unwrap();
-    assert_eq!(
-        question("age").description,
-        "Eligible age for this synthetic request."
-    );
-    assert_eq!(
-        question("age").guidance,
-        ["Minimum: 18", "Maximum: 21", "Suggested default: 18"]
-    );
-    assert_eq!(
-        question("amount").guidance,
-        ["Minimum: 0.5", "Maximum: 1.5"]
-    );
-    assert_eq!(
-        question("code").guidance,
-        [
-            "Minimum length (characters): 2",
-            "Maximum length (characters): 4",
-            "Suggested default: \"AB\""
-        ]
-    );
-    assert_eq!(question("email").guidance, ["Format: email"]);
-    assert_eq!(
-        question("areas").guidance,
-        ["Minimum selections: 1", "Maximum selections: 2"]
-    );
-    assert_eq!(question("flag").guidance, ["Suggested default: false"]);
-    assert!(question("secret").secret && !question("secret").required);
-    assert!(
-        !serde_json::to_string(question("secret"))
-            .unwrap()
-            .contains("SECRET_DEFAULT")
-    );
-    let base = vec![
-        answer("age", &["19"]),
-        answer("areas", &["src"]),
-        answer("code", &[""]),
-        answer("secret", &[""]),
-    ];
-    for invalid in [
-        answer("age", &["17"]),
-        answer("age", &["22"]),
-        answer("amount", &["0.1"]),
-        answer("amount", &["2"]),
-        answer("code", &["a"]),
-        answer("code", &["abcde"]),
-        answer("email", &["invalid"]),
-        answer("secret", &["a"]),
-        answer("secret", &["123456789"]),
-        answer("areas", &[]),
-        answer("areas", &["src", "docs", "src"]),
-    ] {
-        let mut answers = base.clone();
-        answers.retain(|a| a.question_id != invalid.question_id);
-        answers.push(invalid);
-        assert!(
-            core.answer_delegation(&task.id, &request.id, None, &answers)
-                .is_err()
-        );
-        assert!(!workspace.path().join("fake-response.json").exists());
-    }
-    core.answer_delegation(&task.id, &request.id, None, &base)
-        .unwrap();
-    assert_eq!(settled(&core).state, DelegationState::Completed);
-    let response: Value = serde_json::from_slice(
-        &std::fs::read(workspace.path().join("fake-response.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        response["result"]["content"],
-        json!({"age":19,"areas":["src"]})
-    );
+    let task = settled(&core);
+    assert_eq!(task.state, DelegationState::Uncertain);
+    assert!(task.detail.contains("Which synthetic artifact?"));
+    assert!(core.followup_delegation(&task.id, "Small").is_err());
+    assert_eq!(method_count(workspace.path(), "turn/start"), 1);
 }
 
 #[test]
@@ -207,13 +161,22 @@ fn arbitrary_pattern_constraint_is_explicitly_unsupported_without_an_answer() {
     assert_fake(&core, workspace.path());
     let (_handle, events) = start(&core, &persona, "Review a synthetic arbitrary form.");
     terminal(&events);
-    let task = wait(&core, |t| t[0].detail.contains("form is unsupported")).remove(0);
+    let task = settled(&core);
     assert!(task.request.is_none());
-    core.cancel_delegation(&task.id).unwrap();
-    settled(&core);
+    assert_eq!(task.state, DelegationState::Interrupted);
+    assert!(task.detail.contains("form is unsupported"));
+    assert_eq!(method_count(workspace.path(), "turn/interrupt"), 1);
     let response: Value = serde_json::from_slice(
         &std::fs::read(workspace.path().join("fake-response.json")).unwrap(),
     )
     .unwrap();
     assert!(response.get("error").is_some() && response.get("result").is_none());
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("fake-responses.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1,
+        "Stale and duplicate native requests must not receive another response"
+    );
 }

@@ -2,238 +2,136 @@ import AppKit
 import SwiftUI
 
 @MainActor
-func checkDelegationCards(window: NSWindow, model: ChatModel) async throws {
-    guard let persona = model.workspace?.personas.first else { throw RenderError.failed("No delegation renderer persona") }
+func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
+    guard let persona = model.workspace?.personas.first else { throw RenderError.failed("No monitor renderer persona") }
     model.select(persona.id)
     window.setContentSize(NSSize(width: 1000, height: 730))
     window.contentView = NSHostingView(rootView: ContentView(model: model))
-    // Let the replaced view close its subscriptions before freezing this view.
     try await Task.sleep(for: .milliseconds(150))
     await model.load()
-    // Freeze the synthetic presentation snapshot after real subscription checks.
     model.delegationStream?.cancel(); model.delegationStream = Task {}
     model.delegationSink?.finish(); model.delegationSink = nil
-    func fixture(_ state: DelegationState, title: String, request: TaskRequestRecord? = nil, result: String = "", detail: String = "") -> DelegatedTaskRecord {
-        DelegatedTaskRecord(id: "synthetic-delegation", title: title, personaId: persona.id, conversationId: persona.conversationId,
-                            state: state, activity: state == .running ? "Searching the web…" : "", detail: detail, result: result,
-                            links: result.isEmpty ? [] : [TaskLinkRecord(label: "Official synthetic source", target: "https://example.org/evidence"), TaskLinkRecord(label: "answer.txt", target: "/synthetic/answer.txt")],
-                            request: request, reportState: state == .completed ? "completed" : "pending", threadId: "synthetic-thread", turnId: "synthetic-turn", createdAt: "2026-10-11T12:00:00Z")
-    }
-    model.delegatedTasks = [fixture(.running, title: "Verify the latest release")]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-running")
-    func hasExecutionProgress(_ view: NSView) -> Bool {
-        if let progress = view as? NSProgressIndicator, !progress.isHidden { return true }
-        return view.subviews.contains { hasExecutionProgress($0) }
-    }
-    guard hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Running task hid its native execution progress") }
-    guard model.taskActivity(persona.conversationId) else { throw RenderError.failed("Missing native room task activity") }
-    if let other = model.workspace?.rooms.first(where: { $0.id != persona.conversationId }) {
-        model.select(other.id); try await Task.sleep(for: .milliseconds(150))
-        guard model.roomTasks.isEmpty, model.taskActivity(persona.conversationId) else { throw RenderError.failed("Task visibility/activity lost during room navigation") }
-        model.select(persona.conversationId); try await Task.sleep(for: .milliseconds(150))
-        guard model.roomTasks.count == 1 else { throw RenderError.failed("Task card did not survive navigation") }
-        try RenderChecks.capture(window, name: "codex-navigation-return")
-    }
+    var classifier = try await model.readClassifierSettings(nil)
+    classifier.connection.enabled = false
+    try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
+    model.sendMessage("Please check the latest release while we talk.")
+    for _ in 0..<200 where model.isReplying { try await Task.sleep(for: .milliseconds(20)) }
+    guard !model.bubbles.isEmpty, !model.isReplying else { throw RenderError.failed("Synthetic private conversation did not finish") }
 
-    func checkTerminalStatuses() async throws {
-        for state: DelegationState in [.failed, .interrupted, .cancelled, .uncertain, .completed] {
-            var terminalTask = fixture(state, title: "Task execution: \(state.label)", detail: "The saved status is \(state.label.lowercased()). Check actual effects before following up.")
-            terminalTask.activity = "Codex is working…" // A stale cached activity must not look live.
-            terminalTask.reportState = "failed"
-            model.delegatedTasks = [terminalTask]
-            try await Task.sleep(for: .milliseconds(150))
-            guard !model.taskActivity(persona.conversationId),
-                  !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Terminal task showed native execution progress: \(state)") }
-            try RenderChecks.capture(window, name: "codex-\(state.label.lowercased().replacingOccurrences(of: " ", with: "-"))-empty-report-failed")
-            if state == .interrupted {
-                window.setContentSize(NSSize(width: 820, height: 610))
-                try await Task.sleep(for: .milliseconds(150)); model.replyRevision += 1
-                try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-interrupted-empty-report-failed-compact")
-                window.setContentSize(NSSize(width: 1000, height: 730))
-            }
-            terminalTask.reportState = "queued"
-            model.delegatedTasks = [terminalTask]
-            try await Task.sleep(for: .milliseconds(150))
-            guard !model.taskActivity(persona.conversationId),
-                  !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Retrying the explanation revived terminal execution activity") }
-            try RenderChecks.capture(window, name: "codex-\(state.label.lowercased().replacingOccurrences(of: " ", with: "-"))-empty-report-queued")
+    func fixture(_ state: DelegationState, id: String = "synthetic-task", report: String = "completed", title: String = "Check the latest release") -> DelegatedTaskRecord {
+        DelegatedTaskRecord(id: id, title: title, personaId: persona.id, conversationId: persona.conversationId,
+                            state: state, activity: "Codex is working…", detail: "Private tool log must remain hidden", result: "Saved evidence must be explained in chat",
+                            links: [], request: nil, reportState: report, threadId: "synthetic-thread", turnId: "synthetic-turn", createdAt: "2026-10-11T12:00:00Z")
+    }
+    func executionProgressCount(_ view: NSView) -> Int {
+        let own = (view as? NSProgressIndicator).map { $0.isHidden ? 0 : 1 } ?? 0
+        return own + view.subviews.reduce(0) { $0 + executionProgressCount($1) }
+    }
+    func hasExecutionProgress(_ view: NSView) -> Bool { executionProgressCount(view) > 0 }
+    func aggregateLabel() -> String? {
+        (RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton)?.accessibilityLabel()
+    }
+    func click(_ point: NSPoint) {
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        NSApplication.shared.postEvent(up, atStart: true)
+        NSApplication.shared.sendEvent(down)
+    }
+    func pressMonitor() async throws {
+        guard let control = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") else { throw RenderError.failed("Missing monitor button") }
+        let selector = NSSelectorFromString("accessibilityFrame")
+        guard control.responds(to: selector) else { throw RenderError.failed("Monitor has no native hit target") }
+        typealias Frame = @convention(c) (AnyObject, Selector) -> CGRect
+        let frame = unsafeBitCast(control.method(for: selector), to: Frame.self)(control, selector)
+        if let button = control as? NSButton { button.performClick(nil) }
+        else { click(window.convertPoint(fromScreen: NSPoint(x: frame.midX + 8, y: frame.midY))) }
+        try await Task.sleep(for: .milliseconds(200))
+    }
+    func dropdownVisible() -> Bool {
+        (RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton)?.toolTip == "Hide background tasks"
+    }
+    func assertNoTaskControls() throws {
+        for identifier in ["delegated-task-synthetic-task", "task-followup-synthetic-task", "task-retry-report-synthetic-task", "task-allow-once", "task-send-answers", "task-request-summary"] {
+            guard RenderChecks.findAccessible(window.contentView!, identifier: identifier) == nil else { throw RenderError.failed("Obsolete task control remains: \(identifier)") }
         }
-        var saved = fixture(.completed, title: "Completed task with saved evidence", result: "Verified stored evidence.")
-        saved.reportState = "failed"
-        model.delegatedTasks = [saved]
-        try await Task.sleep(for: .milliseconds(150))
-        guard !model.taskActivity(persona.conversationId), !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Saved explanation failure revived completed execution") }
-        try RenderChecks.capture(window, name: "codex-completed-saved-report-failed")
     }
-    if ProcessInfo.processInfo.environment["PEBBLE_RENDER_DELEGATION_ONLY"] == "1" {
-        try await checkTerminalStatuses()
-        model.delegatedTasks = []; model.delegationStream = nil
-        print("Native task-status checks passed: running progress, five static terminal states, stale activity suppression, failed/queued explanations and compact interrupted recovery.")
-        return
+    model.delegatedTasks = [fixture(.running)]
+    try await Task.sleep(for: .milliseconds(200))
+    guard hasExecutionProgress(window.contentView!), !dropdownVisible() else { throw RenderError.failed("Running monitor has no progress or opens automatically") }
+    try assertNoTaskControls()
+    try RenderChecks.capture(window, name: "task-monitor-private-closed")
+    if let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton {
+        let point = button.convert(NSPoint(x: button.bounds.midX + 8, y: button.bounds.midY), to: nil)
+        NSApplication.shared.activate()
+        click(point)
+        try await Task.sleep(for: .milliseconds(200))
+        guard dropdownVisible() else { throw RenderError.failed("Actual monitor pointer click did not open") }
     }
 
-    let question = TaskRequestRecord(id: "synthetic-question", approval: false, summary: "Codex needs your answer", questions: [TaskQuestionRecord(required: true, id: "scope", text: "Which part of the synthetic project should I inspect?", header: "Scope and consequences", description: "", guidance: [], secret: false, options: ["A", "B"], optionDescriptions: ["Read documentation only; no files change.", "Write selected code files after approval."], choices: [], multiple: false)], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Review the synthetic project", request: question)]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-question")
-    window.setContentSize(NSSize(width: 820, height: 610))
-    try await Task.sleep(for: .milliseconds(150)); model.replyRevision += 1
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-question-compact")
-    window.setContentSize(NSSize(width: 1000, height: 730))
-    func answerButtonEnabled() throws -> Bool {
-        guard let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-send-answers") else { throw RenderError.failed("Missing task answer button") }
-        let selector = NSSelectorFromString("isAccessibilityEnabled")
-        guard button.responds(to: selector) else { throw RenderError.failed("Task answer button exposes no enabled state") }
-        typealias Enabled = @convention(c) (AnyObject, Selector) -> Bool
-        return unsafeBitCast(button.method(for: selector), to: Enabled.self)(button, selector)
-    }
-    guard try !answerButtonEnabled() else { throw RenderError.failed("Native required question accepted an empty answer") }
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-question-header-scope") != nil,
-          let nativeOption = RenderChecks.findAccessible(window.contentView!, identifier: "task-native-option-scope-0"),
-          nativeOption.perform(NSSelectorFromString("accessibilityLabel"))?.takeUnretainedValue() as? String == "A: Read documentation only; no files change.",
-          RenderChecks.pressAccessible(nativeOption) else { throw RenderError.failed("Native question lost its header, option consequences or choice action") }
-    try await Task.sleep(for: .milliseconds(100))
-    guard try answerButtonEnabled() else { throw RenderError.failed("Choosing a described native option did not answer the question") }
-    let optional = TaskQuestionRecord(required: false, id: "optional", text: "Optional note", header: "", description: "", guidance: [], secret: false, options: [], optionDescriptions: [], choices: [], multiple: false)
-    let allOptional = TaskRequestRecord(id: "form-optional", approval: false, summary: "Connected tool: all fields optional", questions: [optional], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Optional connected-tool form", request: allOptional)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard try answerButtonEnabled() else { throw RenderError.failed("All-optional form prevented an empty submission") }
-    try RenderChecks.capture(window, name: "codex-form-optional")
-    let mixed = TaskRequestRecord(id: "form-mixed", approval: false, summary: "Connected tool: required and optional fields", questions: [TaskQuestionRecord(required: true, id: "name", text: "Required name", header: "", description: "", guidance: [], secret: false, options: [], optionDescriptions: [], choices: [], multiple: false), optional], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Mixed connected-tool form", request: mixed)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard try !answerButtonEnabled() else { throw RenderError.failed("Mixed form did not require its required field") }
-    func answerFields(_ view: NSView) -> [NSTextField] {
-        let own = (view as? NSTextField).map { $0.placeholderString == "Your answer" ? [$0] : [] } ?? []
-        return own + view.subviews.flatMap { answerFields($0) }
-    }
-    guard let field = answerFields(window.contentView!).first, window.makeFirstResponder(field), let editor = field.currentEditor() as? NSTextView else { throw RenderError.failed("Required answer field cannot receive native text input") }
-    editor.insertText("Synthetic name", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
-    try await Task.sleep(for: .milliseconds(150))
-    guard try answerButtonEnabled() else { throw RenderError.failed("Mixed form forced an optional answer after required input") }
-    try RenderChecks.capture(window, name: "codex-form-mixed")
-    guard let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-send-answers"), RenderChecks.pressAccessible(button) else { throw RenderError.failed("Mixed form submission was not interactive") }
-    try await Task.sleep(for: .milliseconds(150))
-    model.error = nil
-    let constrained = TaskRequestRecord(id: "form-constrained", approval: false, summary: "Connected tool: review the field constraints before submitting", questions: [
-        TaskQuestionRecord(required: true, id: "age", text: "Age (integer)", header: "", description: "Eligible age for this synthetic request.", guidance: ["Minimum: 18", "Maximum: 21", "Suggested default: 18"], secret: false, options: [], optionDescriptions: [], choices: [], multiple: false),
-        TaskQuestionRecord(required: false, id: "code", text: "Code (string)", header: "", description: "Optional short public label.", guidance: ["Minimum length (characters): 2", "Maximum length (characters): 4"], secret: false, options: [], optionDescriptions: [], choices: [], multiple: false)
-    ], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Constrained connected-tool form", request: constrained)]
-    try await Task.sleep(for: .milliseconds(150))
-    for identifier in ["task-question-description-age", "task-question-guidance-age-0", "task-question-guidance-age-1", "task-question-guidance-code-0", "task-question-guidance-code-1"] {
-        guard RenderChecks.findAccessible(window.contentView!, identifier: identifier) != nil else { throw RenderError.failed("Constrained form hid its description/bounds: \(identifier)") }
-    }
-    guard let ageField = answerFields(window.contentView!).first, window.makeFirstResponder(ageField), let ageEditor = ageField.currentEditor() as? NSTextView else { throw RenderError.failed("Constrained field cannot receive native input") }
-    ageEditor.insertText("17", replacementRange: NSRange(location: 0, length: ageEditor.string.utf16.count))
-    try await Task.sleep(for: .milliseconds(100))
-    try RenderChecks.capture(window, name: "codex-form-constrained")
-    guard let rejectedSend = RenderChecks.findAccessible(window.contentView!, identifier: "task-send-answers"), RenderChecks.pressAccessible(rejectedSend) else { throw RenderError.failed("Cannot submit constrained draft") }
-    try await Task.sleep(for: .milliseconds(150))
-    // This presentation-only task has no live owner: the actual API rejects it,
-    // exercising the same unchanged-request correction path as schema rejection.
-    guard model.error != nil, ageField.stringValue == "17", try answerButtonEnabled(), window.makeFirstResponder(ageField), let correctingEditor = ageField.currentEditor() as? NSTextView else { throw RenderError.failed("Rejected form cleared its editable answer") }
-    model.error = nil
-    correctingEditor.insertText("19", replacementRange: NSRange(location: 0, length: correctingEditor.string.utf16.count))
-    try await Task.sleep(for: .milliseconds(100))
-    guard try answerButtonEnabled() else { throw RenderError.failed("Constrained form forced an optional answer") }
-    let secretForm = TaskRequestRecord(id: "form-secret", approval: false, summary: "Connected tool: format and secret guidance", questions: [
-        TaskQuestionRecord(required: false, id: "email", text: "Email (string)", header: "", description: "Optional contact for this request.", guidance: ["Format: email"], secret: false, options: [], optionDescriptions: [], choices: [], multiple: false),
-        TaskQuestionRecord(required: false, id: "secret", text: "Secret (string)", header: "", description: "Enter this value locally.", guidance: ["Minimum length (characters): 4", "Maximum length (characters): 8", "A tool default exists; enter an explicit secret answer."], secret: true, options: [], optionDescriptions: [], choices: [], multiple: false)
-    ], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Format and secret constraints", request: secretForm)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard try answerButtonEnabled(), answerFields(window.contentView!).contains(where: { $0 is NSSecureTextField }), RenderChecks.findAccessible(window.contentView!, identifier: "task-question-guidance-email-0") != nil else { throw RenderError.failed("Format, optional semantics or secure answer control was lost") }
-    try RenderChecks.capture(window, name: "codex-form-secret")
-    let choices = TaskRequestRecord(id: "form-choices", approval: false, summary: "Connected tool: choose a format and project areas", questions: [
-        TaskQuestionRecord(required: true, id: "format", text: "Document format", header: "", description: "", guidance: [], secret: false, options: [], optionDescriptions: [], choices: [TaskChoiceRecord(label: "Markdown document", value: "md"), TaskChoiceRecord(label: "Plain text", value: "txt")], multiple: false),
-        TaskQuestionRecord(required: false, id: "areas", text: "Project areas", header: "", description: "Choose the areas to inspect.", guidance: ["Minimum selections: 1", "Maximum selections: 2"], secret: false, options: [], optionDescriptions: [], choices: [TaskChoiceRecord(label: "Source files", value: "src"), TaskChoiceRecord(label: "Documentation", value: "docs")], multiple: true)
-    ], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsInput, title: "Connected-tool choices", request: choices)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard try !answerButtonEnabled() else { throw RenderError.failed("Single-select form accepted no selection") }
-    for identifier in ["task-choice-format-md", "task-choice-areas-src", "task-choice-areas-docs"] {
-        guard let control = RenderChecks.findAccessible(window.contentView!, identifier: identifier), RenderChecks.pressAccessible(control) else { throw RenderError.failed("Native choice is not interactive: \(identifier)") }
-        try await Task.sleep(for: .milliseconds(100))
-    }
-    guard try answerButtonEnabled(), answerFields(window.contentView!).isEmpty else { throw RenderError.failed("Choice form did not accept selection or exposed unusable text fields") }
-    try RenderChecks.capture(window, name: "codex-form-choices")
-    guard let sendChoices = RenderChecks.findAccessible(window.contentView!, identifier: "task-send-answers"), RenderChecks.pressAccessible(sendChoices) else { throw RenderError.failed("Choice form cannot submit") }
-    try await Task.sleep(for: .milliseconds(150)); model.error = nil
-    let parsedApproval = TaskRequestRecord(id: "parsed-approval", approval: true, summary: "Codex requests permission to proceed.\nExecute a command\nRead file · Name: README.md · Path: README.md · Command: cat README.md\nSearch · Path: src · Pattern: TODO · Command: rg TODO src\nWorkspace: synthetic project", questions: [], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsApproval, title: "Review the parsed operation", request: parsedApproval)]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-approval-actions")
-    let stdinApproval = TaskRequestRecord(id: "stdin-approval", approval: true, summary: "Codex requests permission to proceed.\nSend input to an existing terminal\nCodex did not supply operation text or parsed action details.\nWorkspace: synthetic project", questions: [], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsApproval, title: "Review terminal input", request: stdinApproval)]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-approval-stdin")
-    let networkApproval = TaskRequestRecord(id: "network-approval", approval: true, summary: "Codex requests permission to proceed.\nExecute a command\nCodex did not supply operation text or parsed action details.\nNetwork host: api.example.com\nNetwork protocol: https\nWorkspace: synthetic project", questions: [], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsApproval, title: "Review managed-network access", request: networkApproval)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-allow-once") != nil,
-          let networkSummary = RenderChecks.findAccessible(window.contentView!, identifier: "task-request-summary"),
-          let networkText = (networkSummary.perform(NSSelectorFromString("accessibilityValue"))?.takeUnretainedValue() as? String) ?? (networkSummary.perform(NSSelectorFromString("accessibilityLabel"))?.takeUnretainedValue() as? String),
-          networkText.contains("Network host: api.example.com"), networkText.contains("Network protocol: https") else { throw RenderError.failed("Managed-network approval did not expose its host/protocol before Allow") }
-    try RenderChecks.capture(window, name: "codex-approval-network")
-    let authorization = TaskRequestRecord(id: "synthetic-authorization", approval: true, summary: "Connected tool: complete authorization, then confirm or deny.", questions: [], authorizationUrl: "https://example.org/authorize?state=synthetic")
-    model.delegatedTasks = [fixture(.needsApproval, title: "Connected-tool authorization", request: authorization)]
-    try await Task.sleep(for: .milliseconds(150))
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-authorization-link") != nil else { throw RenderError.failed("Pending authorization link is unavailable") }
-    try RenderChecks.capture(window, name: "codex-authorization-pending")
-    model.delegatedTasks = [fixture(.running, title: "Authorization resolved; task continues")]
-    try await Task.sleep(for: .milliseconds(150))
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-authorization-link") == nil else { throw RenderError.failed("Resolved authorization link remains visible") }
-    model.delegatedTasks = [fixture(.running, title: "Oversized operation refused", detail: "Codex requested an approval whose full scope exceeds Pebble's native review limit. No permission was granted.")]
-    try await Task.sleep(for: .milliseconds(150))
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-allow-once") == nil else { throw RenderError.failed("Oversized scope exposed an Allow action") }
-    try RenderChecks.capture(window, name: "codex-approval-oversized")
-    let approval = TaskRequestRecord(id: "synthetic-approval", approval: true, summary: "Codex requests one scoped write.\nCreate answer.txt inside the selected workspace.\nEarlier effects remain if the task is cancelled.", questions: [], authorizationUrl: nil)
-    model.delegatedTasks = [fixture(.needsApproval, title: "Write the requested artifact", request: approval)]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-approval")
-    model.delegatedTasks = [fixture(.completed, title: "Synthetic evidence and artifact saved", result: "Verified synthetic result from the official source. The requested answer.txt artifact is saved.")]
-    try await Task.sleep(for: .milliseconds(150))
-    try RenderChecks.capture(window, name: "codex-completed-collapsed")
-    guard let details = RenderChecks.findAccessible(window.contentView!, identifier: "task-details-synthetic-delegation"), RenderChecks.pressAccessible(details) else { throw RenderError.failed("Cannot expand saved task result") }
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-completed")
-    window.setContentSize(NSSize(width: 820, height: 610))
-    try await Task.sleep(for: .milliseconds(150)); model.replyRevision += 1
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-completed-compact")
-    window.setContentSize(NSSize(width: 1000, height: 730))
-    var failedReport = fixture(.completed, title: "Execution saved, explanation needs recovery", result: "Verified stored evidence.")
-    failedReport.reportState = "failed"
-    model.delegatedTasks = [failedReport]
-    let reportBubble = ChatBubble(MessageRecord(id: "synthetic-failed-report", conversationId: persona.conversationId, sequence: 999, senderKind: "persona", senderId: persona.id, content: "", status: .failed, createdAt: "2026-10-11T12:00:00Z", failureDetail: "Explanation failed; stored task result remains available.", canRetry: false, images: []))
-    try await Task.sleep(for: .milliseconds(150))
-    guard !model.canRetry(reportBubble), RenderChecks.findAccessible(window.contentView!, identifier: "task-retry-report-synthetic-delegation") != nil else { throw RenderError.failed("Failed report offered ordinary Retry or hid its task-card recovery") }
-    try RenderChecks.capture(window, name: "codex-report-retry")
-    for reportState in ["pending", "queued", "completed"] {
-        var waitingReport = fixture(.completed, title: "Saved execution with explanation status", result: "Stored evidence remains available.")
-        waitingReport.reportState = reportState
-        model.delegatedTasks = [waitingReport]
+    try RenderChecks.capture(window, name: "task-monitor-private-open")
+    guard dropdownVisible(), executionProgressCount(window.contentView!) == 2 else { throw RenderError.failed("Monitor did not open with real header and row progress") }
+    let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+    NSApplication.shared.sendEvent(escape)
+    try await Task.sleep(for: .milliseconds(200))
+    guard !dropdownVisible() else { throw RenderError.failed("Escape did not close monitor") }
+    try await pressMonitor()
+    click(NSPoint(x: 250, y: 50))
+    try await Task.sleep(for: .milliseconds(200))
+    guard !dropdownVisible() else { throw RenderError.failed("Outside click did not close monitor") }
+
+    for state: DelegationState in [.queued, .needsInput, .needsApproval, .failed, .interrupted, .cancelled, .uncertain, .completed, .cancellationRequested] {
+        model.delegatedTasks = [fixture(state, report: "queued")]
         try await Task.sleep(for: .milliseconds(150))
-        let hasFollowup = RenderChecks.findAccessible(window.contentView!, identifier: "task-followup-synthetic-delegation") != nil
-        guard hasFollowup == (reportState == "completed") else { throw RenderError.failed("Followup control disagrees with report eligibility: \(reportState)") }
-        guard !model.taskActivity(persona.conversationId),
-              !hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Explanation status presented completed execution as active") }
-        if reportState == "queued" { try RenderChecks.capture(window, name: "codex-report-waiting") }
+        guard hasExecutionProgress(window.contentView!) == (state == .cancellationRequested) else { throw RenderError.failed("Monitor progress misrepresented \(state)") }
+        let visible = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") != nil
+        guard visible == (state == .cancellationRequested) else { throw RenderError.failed("Non-running task retained the monitor: \(state)") }
+        try assertNoTaskControls()
     }
-    var unavailable = fixture(.completed, title: "Original membership no longer eligible", result: "Stored evidence remains available.")
-    unavailable.reportState = "destination_unavailable"
-    model.delegatedTasks = [unavailable]
+    model.delegatedTasks = [fixture(.completed), fixture(.completed, id: "explanation-failed", report: "failed"), fixture(.cancelled)]
     try await Task.sleep(for: .milliseconds(150))
-    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-retry-report-synthetic-delegation") == nil else { throw RenderError.failed("Lost original membership offered an impossible retry") }
-    try RenderChecks.capture(window, name: "codex-destination-unavailable")
-    model.delegatedTasks = [fixture(.interrupted, title: "Task interrupted on restart", detail: "Pebble stopped before a confirmed outcome. Earlier effects remain; reconcile the saved thread.")]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-interrupted")
-    model.delegatedTasks = [fixture(.failed, title: "Task could not start", detail: "Codex is unavailable. Select the installed executable in Codex settings.")]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-failed")
-    model.delegatedTasks = [fixture(.uncertain, title: "Saved task needs reconciliation", detail: "Codex disconnected before a confirmed outcome. Reconcile the saved thread; this work will not be resent.")]
-    try await Task.sleep(for: .milliseconds(150)); try RenderChecks.capture(window, name: "codex-uncertain")
-    try await checkTerminalStatuses()
-    model.showCodexSettings = true
-    try await Task.sleep(for: .milliseconds(250))
-    guard let sheet = window.attachedSheet else { throw RenderError.failed("Codex settings did not open") }
-    try RenderChecks.capture(sheet, name: "codex-settings")
-    model.showCodexSettings = false; model.delegatedTasks = []; model.delegationStream = nil
+    guard model.monitorTasks.isEmpty, RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") == nil else { throw RenderError.failed("Completed tasks or failed explanations retained the monitor") }
+    try RenderChecks.capture(window, name: "task-monitor-all-completed")
+    model.delegatedTasks = [fixture(.completed), fixture(.running, id: "working")]
     try await Task.sleep(for: .milliseconds(150))
-    print("Native Codex cards rendered: labelled running/activity, question, approval, completion and uncertain recovery, plus separate settings.")
+    guard model.monitorTasks.map(\.id) == ["working"], aggregateLabel() == "Background tasks · Working" else { throw RenderError.failed("Completed task was not filtered beside a running task") }
+    model.delegatedTasks = [fixture(.failed, id: "old-failure")] + (0..<8).map { fixture(.completed, id: "recent-\($0)") } + [fixture(.running)]
+    try await Task.sleep(for: .milliseconds(150))
+    guard model.monitorTasks.map(\.id) == ["synthetic-task"], aggregateLabel() == "Background tasks · Working", hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Old outcomes changed the running-only monitor") }
+    try await pressMonitor()
+    guard executionProgressCount(window.contentView!) == 2 else { throw RenderError.failed("Running row and button must both show progress") }
+    try RenderChecks.capture(window, name: "task-monitor-running-only")
+    model.delegatedTasks = [fixture(.failed, report: "failed")]
+    try await Task.sleep(for: .milliseconds(150))
+    guard !hasExecutionProgress(window.contentView!), !dropdownVisible(), RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") == nil else { throw RenderError.failed("Failed execution or explanation retained the open monitor") }
+    try RenderChecks.capture(window, name: "task-monitor-failed-hidden")
+    model.delegatedTasks = [fixture(.running, title: "Review the release changes and summarize the important migration steps for this workspace")]
+    try await Task.sleep(for: .milliseconds(150))
+    guard !dropdownVisible() else { throw RenderError.failed("A new task reopened the dropdown automatically") }
+    try await pressMonitor()
+    try RenderChecks.capture(window, name: "task-monitor-wrapped-title")
+    try await pressMonitor()
+
+    guard await model.createGroup("Release notes", members: [persona.id]) else { throw RenderError.failed("Cannot create synthetic group") }
+    for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(20)) }
+    model.mentionedIDs = [persona.id]
+    model.draft = "Keep talking here while the release check runs."
+    model.sendMessage()
+    for _ in 0..<200 where model.isReplying { try await Task.sleep(for: .milliseconds(20)) }
+    guard model.selectedConversation?.kind == "group", model.bubbles.contains(where: { $0.senderID == persona.id }), model.error == nil else { throw RenderError.failed("Synthetic group conversation missing its persona reply") }
+    model.delegatedTasks = [fixture(.running)] // Task belongs to private chat; the monitor remains app-wide.
+    try await Task.sleep(for: .milliseconds(200))
+    guard model.monitorTasks.count == 1, hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Cross-room monitor disappeared") }
+    try RenderChecks.capture(window, name: "task-monitor-group-closed")
+    try await pressMonitor()
+    try RenderChecks.capture(window, name: "task-monitor-group-open")
+    window.setContentSize(NSSize(width: 820, height: 610))
+    try await Task.sleep(for: .milliseconds(200))
+    try RenderChecks.capture(window, name: "task-monitor-group-compact")
+    try assertNoTaskControls()
+    try await pressMonitor()
+    model.delegatedTasks = []
+    try await Task.sleep(for: .milliseconds(150))
+    guard RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") == nil else { throw RenderError.failed("Empty monitor retained its button") }
+    model.delegationStream = nil
+    print("Native task monitor checks passed: fixed private/group overlay, dismissal, running-only rows, terminal and queued tasks hidden, automatic disappearance, real progress and no task controls.")
 }

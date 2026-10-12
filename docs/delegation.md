@@ -38,8 +38,8 @@ Ordinary read-only lookups need no project selection. Each gets a managed
 `data/codex-workspaces/<task-id>` directory under Pebble's existing data root and
 Codex's read-only sandbox. File/code writes require an explicitly selected,
 existing external workspace and **Allow writes**. The settings snapshot and
-canonical workspace are frozen for the task and its followups. Native permission
-requests are displayed before granting additional access. A workspace setting is
+canonical workspace are frozen for the task and its followups. Additional native permission
+requests are declined and reported as limitations; the monitor cannot grant access. A workspace setting is
 an execution policy, not a guarantee that every installed integration works.
 Image generation, deletion and an always-running service are outside this scope.
 External messages require explicit authorization in the actual user request.
@@ -63,8 +63,7 @@ and followup inputs include the immutable original initiating message, the
 actual current followup user text (empty initially), the current delegated
 objective and runtime-current local date/time/UTC offset. Native persona
 followups preserve the current canonical user message separately from the
-model’s instructions; card followups preserve the actual entered continuation.
-Both retain the same thread and frozen scope across restart. Codex checks the
+model’s instructions and retain the same thread and frozen scope across restart. Codex checks the
 objective against the original and continuation texts, so authorization and
 relative dates do not depend on a stale character prefix.
 
@@ -73,7 +72,7 @@ starts turns and consumes actual notifications. It persists thread/turn IDs and
 the dispatch boundary. States distinguish queued, running, needs input, needs
 approval, cancellation requested, completed, failed, cancelled, interrupted and
 uncertain. Only actual item events produce specific activity labels; otherwise
-the card says Codex is working. There are no invented percentages, reasoning,
+the monitor shows the saved execution state. There are no invented percentages, reasoning,
 raw tool logs or repeated persona polling. The Rust manager owns subscriptions
 and explicit reconciliation. A matching turn-level `error` with `willRetry=true`
 keeps execution active with retry detail; `willRetry=false` immediately saves a
@@ -82,56 +81,55 @@ trailing final evidence and `turn/completed`, preserving the failure if they do
 not arrive. This grace does not infer failure from inactivity. Stale errors,
 ordinary failed tools and hook activity cannot end the current turn.
 
-Cards show a title, **Codex**, reporting character, spinner/current state and
-Cancel. Only running/cancelling execution shows progress; terminal states use
-distinct static symbols and status colors. Explanation retries retain the task's
-execution state, and empty results do not imply saved completed work.
-Details are collapsed unless a question, approval or actionable recovery
-needs attention. Completed evidence, actual source URLs and scoped artifact
-links remain saved across navigation and restart. Citation control markers are
-removed from display; unresolved markers receive an explicit source limitation,
-and no missing URLs are fabricated. Multiple simultaneous native requests are
-retained by request ID and presented in order. Duplicate, stale and resolved
-requests do not replace or replay another pending question/approval. Command,
-file, permission and supported connected-tool forms/authorization requests use
-the native response shape; permission is granted only by an explicit answer.
-Connected-tool forms preserve their required fields. Blank optional fields are
-omitted from the response and the complete content is validated against the
-original schema. String enum and titled `oneOf` choices preserve labels and
-submitted values; array `items.enum` and titled `items.anyOf` choices use native
-checkboxes and submit arrays. Primitive string, boolean, number and integer
-fields remain available. Nested objects, arbitrary arrays and other unsupported
-choice shapes are rejected explicitly before an answer is sent. Field descriptions,
-numeric minimum/maximum, string length/format and choice-count constraints are
-shown before submission and validated against the original schema, including
-supported email/URI/date/date-time formats. Suggested defaults are displayed
-without automatically answering; secret default values are hidden. Unsupported
-constraints (including pattern, absent from the standard supplied schema) are
-refused rather than hidden. Rejected answers remain editable until the request
-actually changes. Native Codex questions remain required; their headers and
-option descriptions stay visible while choosing, with free-text answers retained.
-Command approvals display available parsed command,
-file path and search details; terminal-input approvals identify the operation as
-sending input, and managed-network requests show their complete host/protocol.
-Missing operation details are stated explicitly. Pebble never
-silently truncates an approval scope: native permission, command and file-change
-approval summaries exceeding 8192 characters are explicitly refused before any
-Allow control appears. File previews remain complete for this review decision.
-Connected-tool HTTP/HTTPS authorization URLs belong only to the current native
-request. They disappear when that request resolves and never become evidence,
-artifact links or persona-report input. Only irreversible URL identities remain
-for this task, so a later echoed authorization URL is removed from result text,
-source links and outcome diagnostics, including saved-thread recovery and
-followups. Ordinary returned sources remain available; original user messages
-and frozen persona history are not rewritten.
+A small circular activity button is fixed at the transcript viewport’s top-right,
+below the private/group header. Its compact dropdown lists only tasks executing
+across the app: running or awaiting cancellation confirmation, without a pending
+native interaction. Both the button and each row show a progress circle.
+Queued, blocked, failed, interrupted, uncertain, completed and cancelled tasks
+are hidden; the button disappears when nothing is executing. Outcomes and failures
+are explained by the character through chat, with saved task evidence retained.
+Rows contain only the brief task description and reporting character/status;
+there are no task cards in the transcript, task followup fields, approval/question
+forms, retry or reconciliation controls. The button has a subtle shadow and dims
+on hover. Outside clicks and Escape close the dropdown; reduced motion disables
+its transition. Explanation delivery never revives a hidden task or animates
+otherwise inactive execution.
 
-**Stop** affects conversation generation. Task **Cancel** sends the actual Codex
-turn interrupt and first records cancellation requested. Only a confirmed turn
-outcome marks cancellation complete. If Codex acknowledges the interrupt but
-provides no terminal confirmation within five seconds, the task becomes uncertain
-and can be reconciled; it is never declared cancelled or resubmitted. Earlier completed effects are retained.
-Cancel immediately removes pending questions/approvals and rejects queued or late
-answers and requests; it grants no new permission while confirmation is pending.
+Codex is instructed to begin each run with one short public commentary describing
+its task. Rust captures the first nonempty commentary, normalizes whitespace and
+bounds the display to 96 characters; invalid long/link-bearing descriptions keep
+the initial persona title. Later commentary, reasoning and tool logs never become
+monitor content. The description is saved in the existing task record and resets
+for a same-thread followup; no database schema migration is needed.
+
+Native clarification requests are deferred without supplying an answer. Rust
+retains a bounded question with its option consequences for the reporting character,
+interrupts the turn and waits up to five seconds for actual terminal confirmation.
+The character asks in ordinary chat; the user’s subsequent message can continue
+the same task using `delegate_task(task_id)` after reporting finishes. Secret
+questions and connected-tool forms/authorization requests instead produce a
+configuration limitation; chat must not solicit secrets or authorization tokens.
+Command, file and permission requests are explicitly declined, never auto-approved.
+The selected read-only/workspace-write scope and on-request approval policy are
+unchanged. Duplicate/stale requests do not replay an answer. A turn that completes
+after a deferred interaction remains a blocked failed outcome, including after
+saved-thread reconciliation, rather than claiming the requested work succeeded.
+
+Connected-tool authorization URLs are fingerprinted and stripped from saved
+results, sources and diagnostics, including later recovery and followups. No
+pending authorization URL appears in the monitor or persona report. Actual source
+and scoped artifact links remain in durable evidence for explanation through chat.
+Citation control markers are removed from display, and missing URLs are never
+fabricated. Original user messages and frozen persona history are not rewritten.
+
+**Stop** affects conversation generation. The core retains explicit task cancellation
+for lifecycle control, but the monitor exposes no Codex actions. Interruption only
+becomes confirmed after the actual turn outcome; an acknowledged interrupt without
+confirmation becomes uncertain after five seconds and cannot be blindly resubmitted.
+A normal owner `delegate_task(task_id)` for an uncertain task reads only its saved
+thread after reporting finishes; it never submits a new turn or silently retries work.
+Earlier completed effects remain saved. Closing Pebble interrupts its managed
+children; it does not promise work continues after quit.
 Standard invalid request, method-not-found and invalid-params turn/start
 rejections fail the task with the returned bounded reason; they do not trigger
 reconciliation or automatic retry. Transport losses, internal errors and unknown
@@ -147,7 +145,7 @@ Already-submitted unfinished work is marked
 interrupted/uncertain and only reads the saved thread when possible. If a turn/start response was lost before its turn ID was saved,
 recovery matches the saved submission to the user message’s echoed `clientId`,
 not its server-generated item ID. Unmatched submissions remain uncertain and
-are never resent. **Reconcile** reads actual
+are never resent. Recovery reads actual
 outcomes, and followup is unavailable until execution and reporting permit it.
 Pebble manages children while open and interrupts/closes them on shutdown; it
 does not promise that work continues after quit.
@@ -161,23 +159,24 @@ Execution and character reporting are separate durable lifecycles. Rust saves
 evidence before admitting one completion report into the original character's
 normal queue. A configuration or launch error after report admission immediately
 fails that pending explanation and its bubble, keeping the saved outcome ready
-for **Retry explanation** after repair without restarting or executing work again.
+for ordinary latest failed-reply **Retry** after repair without restarting or executing work again.
 Ordinary chat and explicit fresh contexts can run during task
 execution; reporting uses the current accepted context/state. The report gets
 stored evidence, has no active work or memory tools, and publishes through the
-normal validated reply/state transaction. A failed explanation exposes **Retry
-report**, which uses the stored result without rerunning Codex. Failed, uncertain
+normal validated reply/state transaction. A failed explanation exposes the ordinary latest-reply **Retry**, which uses the
+stored result without rerunning Codex. Failed, uncertain
 or interrupted execution can also be explained accurately without pretending
 that the requested work completed. Each report freezes its outcome revision and
 evidence. A later reconciled outcome receives its own report; earlier queued or
 streaming reports cannot publish over that newer outcome. Repeated callbacks do
-not report the same revision again. Ordinary bubble Retry is unavailable for
-task reports; use the card’s explanation recovery control, including after a
-fresh context.
+not report the same revision again. Ordinary bubble Retry preserves latest/idle/membership eligibility and retries
+only the saved explanation, including after a fresh context. Older failed
+explanations remain saved; a later user continuation can reuse the task’s saved
+thread once reporting is no longer pending.
 
 The origin room and original membership interval must still be eligible when
 publication occurs. Removing/rejoining a character does not revive the old
-interval. An invalid destination retains its card/result and receives no public
+interval. An invalid destination retains its saved result and receives no public
 reply or automatic private-to-group reroute. The original membership interval
 cannot be restored, so this state offers no explanation retry. Same-task followup
 stays unavailable while its explanation is pending or queued, matching the core
@@ -216,10 +215,10 @@ activates delegation. New contexts include the delegation contract.
 
 Deterministic [core fixtures](../crates/pebble-core/tests/delegation.rs) exercise
 both native protocols, prompt return/replay, dispatch loss, stale callbacks,
-concurrent questions, approvals, same-thread followups, cancellation, restart,
+deferred questions, declined approvals, same-thread followups, cancellation, restart,
 report retry, continued chat/context changes, shared/explicit group assignments
 and membership privacy. A [followup fixture](../crates/pebble-core/tests/delegation_followup.rs)
-checks original/continuation/objective payloads through both native APIs, card
+checks original/continuation/objective payloads through both native APIs, core
 followups, reloads and frozen scope. Opt-in probes use isolated synthetic roots; ordinary
 checks never access personal calendars or notes.
 

@@ -123,6 +123,9 @@ while True:
         if mode == 'restart':
             (root / ('fake-saved-' + thread + '.json')).write_text(json.dumps({'id': turn, 'status': 'completed', 'items': [{'type': 'agentMessage', 'phase': 'final_answer', 'text': 'Recovered actual synthetic result; completion notification was lost'}]}))
         reply({'turn': {'id': turn, 'status': 'inProgress'}})
+        if options.get('commentary'):
+            event('item/completed', {'item': {'type': 'agentMessage', 'phase': 'commentary', 'text': options['commentary']}})
+            event('item/completed', {'item': {'type': 'agentMessage', 'phase': 'commentary', 'text': 'Later progress must not replace the task description.'}})
         if mode == 'disconnect':
             os._exit(0)
         if mode in ('error-fatal', 'error-delayed', 'error-retry'):
@@ -192,11 +195,17 @@ while True:
                 schema = {'type': 'object', 'properties': {'name': {'type': 'string', 'pattern': '[A-Z]+'}}}
             if mode in ('form-unsupported', 'form-failed'):
                 schema = {'type': 'object', 'properties': {'nested': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}}
-            write({'id': 'interaction-1', 'method': 'mcpServer/elicitation/request', 'params': {'threadId': thread, 'turnId': turn, 'serverName': 'synthetic', 'mode': 'openai/form' if mode in ('form-constrained', 'form-pattern') else 'form', 'message': 'Synthetic form', 'requestedSchema': schema}})
+            form = {'id': 'interaction-1', 'method': 'mcpServer/elicitation/request', 'params': {'threadId': thread, 'turnId': turn, 'serverName': 'synthetic', 'mode': 'openai/form' if mode in ('form-constrained', 'form-pattern') else 'form', 'message': 'Synthetic form', 'requestedSchema': schema}}
+            if mode == 'form-pattern':
+                for key in ('threadId', 'turnId'):
+                    write(dict(form, params=dict(form['params'], **{key: 'stale-unrelated'})))
+            write(form)
+            if mode == 'form-pattern':
+                write(form)
         elif mode in ('question', 'approval', 'overlap', 'approval-actions', 'approval-stdin', 'approval-network', 'cancel-approval', 'cancel-question'):
             params = {'threadId': thread, 'turnId': turn, 'itemId': 'interaction'}
             if mode in ('question', 'overlap', 'cancel-question'):
-                params.update(isBlocking=True, questions=[{'id': 'choice', 'header': 'Scope and cost', 'question': 'Which synthetic artifact?', 'isSecret': False, 'options': [{'label': 'Small', 'description': 'Read one synthetic file; no modifications.'}, {'label': 'Large', 'description': 'Inspect all synthetic files; higher latency.'}]}])
+                params.update(isBlocking=True, questions=[{'id': 'choice', 'header': 'Scope and cost', 'question': 'Which synthetic artifact?', 'isSecret': options.get('secret_question', False), 'options': [{'label': 'Small', 'description': 'Read one synthetic file; no modifications.'}, {'label': 'Large', 'description': 'Inspect all synthetic files; higher latency.'}]}])
                 native_method = 'item/tool/requestUserInput'
             else:
                 params.update(command='write synthetic output.txt', cwd=str(root), reason='Synthetic fixture requests one scoped write.', startedAtMs=1)
@@ -224,16 +233,18 @@ while True:
             finish()
     elif method == 'turn/interrupt':
         reply({})
+        if mode == 'form-failed':
+            continue  # A confirmed failed turn cannot be replaced by a later interrupt.
         if mode in ('cancel-approval', 'cancel-question'):
             cancel_waiting = True
             write({'id': 'interaction-3', 'method': native_method, 'params': params})
             write({'method': 'serverRequest/resolved', 'params': {'threadId': thread, 'requestId': 'interaction-1'}})
             (root / 'late-request-sent').write_text('synthetic')
-        elif mode == 'cancel-ack-only':
+        elif mode == 'cancel-ack-only' or options.get('interrupt_unconfirmed'):
             saved = {'id': turn, 'status': 'inProgress', 'items': [{'id': 'partial', 'type': 'agentMessage', 'phase': 'final_answer', 'text': 'Saved partial effects; outcome not confirmed.'}]}
             (root / ('fake-saved-' + thread + '.json')).write_text(json.dumps(saved))
         else:
-            finish('interrupted', 'Cancelled fixture; earlier effects remain.')
+            finish('interrupted', options.get('text') or 'Interrupted fixture; earlier effects remain.')
     elif not method and value.get('id') in ('interaction-1', 'interaction-2', 'interaction-3'):
         with (root / 'fake-responses.jsonl').open('a') as log:
             log.write(json.dumps(value) + '\n')
@@ -254,5 +265,7 @@ while True:
                 event('turn/completed', {'turn': saved})
             else:
                 waiting = True
+        elif value.get('result', {}).get('decision') == 'decline' or value.get('result', {}).get('action') == 'decline' or value.get('result', {}).get('permissions') == {}:
+            waiting = True
         else:
             finish(text='Interaction completed with actual user response: ' + json.dumps(value['result']))

@@ -23,7 +23,7 @@ struct RenderChecks {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_DELEGATION_ONLY"] == "1" {
-                    try await checkDelegationCards(window: window, model: model)
+                    try await checkDelegationMonitor(window: window, model: model)
                     model.closeChat()
                     app.terminate(nil)
                     return
@@ -267,7 +267,7 @@ struct RenderChecks {
                     try await Task.sleep(for: .milliseconds(120))
                     try capture(window, name: phase)
                 })
-                try await checkDelegationCards(window: window, model: model)
+                try await checkDelegationMonitor(window: window, model: model)
                 print("Rendered actual SwiftUI views at 1000×730 and 820×610; composer sizing, native marked text, Chinese commit, Enter send, Command–Enter/Shift–Enter newlines, empty draft, and input selection passed.")
                 app.terminate(nil)
             } catch {

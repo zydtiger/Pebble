@@ -30,7 +30,7 @@ struct CodexSheet: View {
                     Button("Choose…") { chooseWorkspace() }
                 }
                 Toggle("Allow writes in the selected workspace", isOn: $settings.writable)
-                Text("Read-only lookups use a private task folder by default. File/code writes require an explicit workspace. Native permissions are shown before Codex proceeds. Tasks are managed while Pebble is open; restart reconciles saved outcomes without resending work.").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Read-only lookups use a private task folder by default. File/code writes require an explicit workspace. Additional native permission requests are declined and explained by the character; the monitor grants no access. Tasks are managed while Pebble is open; restart reconciles saved outcomes without resending work.").font(.system(size: 11)).foregroundStyle(.secondary)
             }
             if let capabilities {
                 Text(capabilities.authenticated ? "Local Codex authentication is ready." : "Codex needs authentication. Run codex login, then check again.").font(.system(size: 12))

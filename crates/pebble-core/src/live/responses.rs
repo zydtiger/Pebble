@@ -8,8 +8,24 @@ enum Item {
     Id(String),
     Index(usize),
 }
+#[derive(Clone, Copy, Default)]
+struct Size {
+    identity: usize,
+    streamed: usize,
+    snapshot: usize,
+    arguments: usize,
+}
+impl Size {
+    fn bytes(&self) -> usize {
+        self.streamed
+            .saturating_add(self.identity)
+            .max(self.snapshot)
+    }
+}
 #[derive(Default)]
 pub(super) struct Stream {
+    pub(super) bound: super::output_bound::Bound,
+    sizes: BTreeMap<Item, Size>,
     visible: String,
     parts: BTreeMap<(Item, usize), String>,
     indexed_ids: BTreeMap<usize, String>,
@@ -36,6 +52,7 @@ impl Stream {
                 .as_str()
                 .filter(|id| !id.is_empty())
                 .ok_or_else(|| failure("The Responses stream has an invalid item ID."))?;
+            self.charge(Item::Id(id.into()), 0, false, false)?;
             if let Some(position) = position {
                 if self
                     .indexed_ids
@@ -45,6 +62,18 @@ impl Stream {
                     return Err(failure("The Responses stream changed a message ID."));
                 }
                 self.indexed_ids.insert(position, id.into());
+                // Index-only deltas may precede the provider's stable item ID.
+                if let Some(prior) = self.sizes.remove(&Item::Index(position)) {
+                    let size = self.sizes.entry(Item::Id(id.into())).or_default();
+                    let before = size.bytes().saturating_add(prior.bytes());
+                    size.streamed = size.streamed.saturating_add(prior.streamed);
+                    size.snapshot = size.snapshot.max(prior.snapshot);
+                    size.arguments = size.arguments.saturating_add(prior.arguments);
+                    if size.arguments > crate::memory::ARGUMENT_CAP {
+                        return Err(failure("Native tool arguments exceeded their bound."));
+                    }
+                    self.bound.replace(before, size.bytes())?;
+                }
             }
             Ok(Item::Id(id.into()))
         } else if let Some(position) = position {
@@ -52,6 +81,43 @@ impl Stream {
         } else {
             Err(failure("The Responses event has no item identity."))
         }
+    }
+    fn charge(
+        &mut self,
+        item: Item,
+        bytes: usize,
+        snapshot: bool,
+        arguments: bool,
+    ) -> Result<(), Error> {
+        if !self.bound.enabled {
+            return Ok(());
+        }
+        let item = match item {
+            Item::Index(position) => self
+                .indexed_ids
+                .get(&position)
+                .map_or(Item::Index(position), |id| Item::Id(id.clone())),
+            item => item,
+        };
+        let mut size = self.sizes.get(&item).copied().unwrap_or_default();
+        let before = size.bytes();
+        if let Item::Id(id) = &item {
+            size.identity = id.len();
+        }
+        if snapshot {
+            size.snapshot = size.snapshot.max(bytes);
+        } else {
+            size.streamed = size.streamed.saturating_add(bytes);
+        }
+        if arguments {
+            size.arguments = size.arguments.saturating_add(bytes);
+            if size.arguments > crate::memory::ARGUMENT_CAP {
+                return Err(failure("Native tool arguments exceeded their bound."));
+            }
+        }
+        self.bound.replace(before, size.bytes())?;
+        self.sizes.insert(item, size);
+        Ok(())
     }
     fn part(&self, event: &Value, item: &Item) -> Result<usize, Error> {
         if let Some(position) = event.get("content_index") {
@@ -124,6 +190,7 @@ impl Stream {
                 let text = event["delta"]
                     .as_str()
                     .ok_or_else(|| failure("The Responses stream has an invalid text delta."))?;
+                self.charge(item.clone(), text.len(), false, false)?;
                 self.parts.entry((item, part)).or_default().push_str(text);
                 self.visible.push_str(text);
                 if !text.is_empty() {
@@ -146,18 +213,46 @@ impl Stream {
             }
             "response.output_item.added" => {
                 supported(&event["item"], self.allow_tools)?;
-                self.item(&event)?;
+                let item = self.item(&event)?;
+                self.charge(
+                    item,
+                    super::output_bound::decoded_bytes(&event["item"]),
+                    true,
+                    false,
+                )?;
             }
             "response.output_item.done" => {
                 supported(&event["item"], self.allow_tools)?;
                 let Item::Id(id) = self.item(&event)? else {
                     return Err(failure("The completed Responses item has no ID."));
                 };
+                self.charge(
+                    Item::Id(id.clone()),
+                    super::output_bound::decoded_bytes(&event["item"]),
+                    true,
+                    false,
+                )?;
                 if self.done_items.insert(id, event["item"].clone()).is_some() {
                     return Err(failure(
                         "The Responses stream completed an item more than once.",
                     ));
                 }
+            }
+            "response.reasoning_text.delta"
+            | "response.reasoning_summary_text.delta"
+            | "response.function_call_arguments.delta"
+                if self.bound.enabled =>
+            {
+                let item = self.item(&event)?;
+                let text = event["delta"]
+                    .as_str()
+                    .ok_or_else(|| failure("The Responses stream has an invalid native delta."))?;
+                self.charge(
+                    item,
+                    text.len(),
+                    false,
+                    kind == "response.function_call_arguments.delta",
+                )?;
             }
             "response.completed" => {
                 if event["response"]["status"] != "completed"
@@ -207,6 +302,15 @@ impl Stream {
                     "The completed Responses message ID differs from its stream.",
                 ));
             }
+            // Reconcile index-only streams before charging the authoritative item.
+            let identity =
+                self.item(&serde_json::json!({"output_index":item_index,"item_id":id}))?;
+            self.charge(
+                identity,
+                super::output_bound::decoded_bytes(item),
+                true,
+                false,
+            )?;
             if item
                 .get("status")
                 .is_some_and(|status| status != "completed")
@@ -282,6 +386,13 @@ impl Stream {
     }
 }
 fn supported(item: &Value, allow_tools: bool) -> Result<(), Error> {
+    if item["type"] == "function_call"
+        && item["arguments"]
+            .as_str()
+            .is_some_and(|text| text.len() > crate::memory::ARGUMENT_CAP)
+    {
+        return Err(failure("Native tool arguments exceeded their bound."));
+    }
     if matches!(item["type"].as_str(), Some("reasoning" | "message"))
         || (allow_tools && item["type"] == "function_call")
     {

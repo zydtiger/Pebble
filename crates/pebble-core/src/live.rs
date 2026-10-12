@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 mod chat_completions;
+mod output_bound;
 mod responses;
 mod sse;
 
@@ -66,9 +67,10 @@ pub(crate) async fn generate(
     let mut framing = sse::Framing::default();
     let mut completion = chat_completions::Stream::default();
     completion.allow_tools = request.memory_tools || request.delegation_tools;
+    completion.bound.enabled = request.memory_capable;
     let mut responses = responses::Stream::default();
     responses.allow_tools = request.memory_tools || request.delegation_tools;
-    let mut received = 0usize;
+    responses.bound.enabled = request.memory_capable;
     loop {
         let chunk = tokio::time::timeout(Duration::from_secs(45), response.chunk())
             .await
@@ -79,12 +81,6 @@ pub(crate) async fn generate(
                 "The model stream ended before its completion marker.",
             ));
         };
-        received = received.saturating_add(chunk.len());
-        if request.memory_capable && received > crate::memory::NATIVE_CAP {
-            return Err(failure(
-                "Memory-capable response exceeded the 128 KiB stream bound.",
-            ));
-        }
         if control.is_cancelled() {
             return Err(failure("Cancelled"));
         }

@@ -39,7 +39,11 @@ extension DelegationState {
     }
 }
 extension ChatModel {
-    var roomTasks: [DelegatedTaskRecord] { delegatedTasks.filter { $0.conversationId == selectedID } }
+    var monitorTasks: [DelegatedTaskRecord] {
+        delegatedTasks.reversed().filter {
+            [.running, .cancellationRequested].contains($0.state) && $0.request == nil
+        }
+    }
     func taskActivity(_ room: String) -> Bool {
         delegatedTasks.contains { $0.conversationId == room && $0.state.active }
     }

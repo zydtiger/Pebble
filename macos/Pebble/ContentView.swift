@@ -17,17 +17,22 @@ struct ContentView: View {
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
                     if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
-                    if model.bubbles.isEmpty && model.markers.isEmpty && model.roomTasks.isEmpty {
-                        GeometryReader { geometry in
-                            ScrollView {
-                                Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
-                                    .frame(maxWidth: .infinity)
-                                    .frame(minHeight: geometry.size.height)
+                    ZStack(alignment: .topTrailing) {
+                        if model.bubbles.isEmpty && model.markers.isEmpty {
+                            GeometryReader { geometry in
+                                ScrollView {
+                                    Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
+                                        .frame(maxWidth: .infinity)
+                                        .frame(minHeight: geometry.size.height)
+                                }
+                                .scrollIndicators(.never)
                             }
-                            .scrollIndicators(.never)
+                        } else {
+                            transcript
                         }
-                    } else {
-                        transcript
+                        if !model.monitorTasks.isEmpty {
+                            TaskMonitor(model: model).padding(.top, 12).padding(.trailing, 30)
+                        }
                     }
                     composer
                 } else {
@@ -314,14 +319,13 @@ struct ContentView: View {
                         }
                         contextDividers(after: bubble.sequence)
                     }
-                    ForEach(model.roomTasks, id: \.id) { task in DelegationCard(model: model, task: task) }
                     Color.clear.frame(height: 1).id("latest")
                 }
-                .padding(.horizontal, 30).padding(.vertical, 20)
+                .padding(.horizontal, 30).padding(.bottom, 20)
+                .padding(.top, model.monitorTasks.isEmpty ? 20 : 52)
             }
             .onAppear { reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
-            .onChange(of: model.roomTasks.map { "\($0.id):\($0.state):\($0.request?.id ?? "")" }) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.markers.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
         }

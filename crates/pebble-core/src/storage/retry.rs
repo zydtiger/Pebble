@@ -24,7 +24,23 @@ impl Database {
             return Err(unavailable());
         }
         if super::delegation::report_input(&tx, &original)?.is_some() {
-            return Err(Error::RetryUnavailable("This reply explains a saved Codex outcome. Use Retry report on its task card; ordinary Retry cannot rerun task work.".into()));
+            let record: Option<(String, String)> = tx.query_row(
+                "SELECT id,record FROM delegated_tasks WHERE json_extract(record,'$.report_call')=?1 AND json_extract(record,'$.report_state')='failed'",
+                [&original], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?;
+            let Some((id, record)) = record else {
+                return Err(unavailable());
+            };
+            let mut task: crate::DelegatedTask = serde_json::from_str(&record)?;
+            task.report_state = "pending".into();
+            task.report_call = None;
+            tx.execute(
+                "UPDATE delegated_tasks SET record=?2 WHERE id=?1",
+                params![id, serde_json::to_string(&task)?],
+            )?;
+            tx.commit()?;
+            drop(connection);
+            return self.enqueue_task_report(&id)?.ok_or_else(unavailable);
         }
         if let Some(id) = &membership
             && !tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_memberships WHERE id=?1 AND persona_id=?2 AND conversation_id=?3 AND left_publication IS NULL)",params![id,persona.id,conversation],|r|r.get::<_,bool>(0))? {return Err(unavailable());}

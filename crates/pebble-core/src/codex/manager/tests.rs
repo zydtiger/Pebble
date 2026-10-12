@@ -291,3 +291,75 @@ fn queued_answer_rechecks_cancelled_ownership_before_writing_to_stdio() {
     assert_eq!(task.state, DelegationState::CancellationRequested);
     assert!(task.request.is_none() && task.pending_requests.is_empty());
 }
+
+#[test]
+fn task_description_uses_first_public_commentary_once_per_run_and_never_terminal_evidence() {
+    let (_root, core, id) = admitted_task();
+    let mut task = core.database.task(&id).unwrap();
+    task.state = DelegationState::Running;
+    task.thread_id = Some("summary-thread".into());
+    task.turn_id = Some("summary-turn".into());
+    let commentary = |text: &str| json!({"method":"item/completed","params":{"threadId":"summary-thread","turnId":"summary-turn","item":{"type":"agentMessage","phase":"commentary","text":text}}});
+    events::apply(&mut task, &commentary(" \n\t"), None).unwrap();
+    assert_eq!(task.title, "Synthetic");
+    events::apply(
+        &mut task,
+        &commentary("  Inspect   the release\nnotes "),
+        None,
+    )
+    .unwrap();
+    assert_eq!(task.title, "Inspect the release notes");
+    assert!(task.result.is_empty() && task.links.is_empty());
+    events::apply(&mut task, &commentary("Later progress"), None).unwrap();
+    assert_eq!(task.title, "Inspect the release notes");
+    let encoded = serde_json::to_string(&task).unwrap();
+    let mut reloaded: DelegatedTask = serde_json::from_str(&encoded).unwrap();
+    events::apply(&mut reloaded, &commentary("Resumed progress"), None).unwrap();
+    assert_eq!(reloaded.title, task.title);
+    task.summary_captured = false;
+    events::apply(&mut task, &commentary(&"界".repeat(120)), None).unwrap();
+    assert_eq!(task.title.chars().count(), 96);
+    task.summary_captured = false;
+    let title = task.title.clone();
+    events::apply(&mut task, &commentary(&"x".repeat(161)), None).unwrap();
+    events::apply(&mut task, &commentary("Unrelated later update"), None).unwrap();
+    assert_eq!(task.title, title);
+    task.summary_captured = false;
+    task.state = DelegationState::Failed;
+    events::apply(
+        &mut task,
+        &commentary("Late commentary"),
+        Some(DelegationState::Running),
+    )
+    .unwrap();
+    assert_eq!(task.title, title);
+}
+
+#[test]
+fn deferred_clarification_remains_blocked_through_completed_frames_and_saved_thread_recovery() {
+    let (_root, core, id) = admitted_task();
+    let mut task = core.database.task(&id).unwrap();
+    task.state = DelegationState::Running;
+    task.thread_id = Some("deferred-thread".into());
+    task.turn_id = Some("deferred-turn".into());
+    let question = json!({"id":"question","method":"item/tool/requestUserInput","params":{"threadId":"deferred-thread","turnId":"deferred-turn","questions":[{"id":"scope","header":"Scope","question":"Which file?","options":[{"label":"README","description":"Read documentation only"}]}]}});
+    events::apply(&mut task, &question, None).unwrap();
+    assert!(events::defer_interaction(&mut task).is_some());
+    assert!(task.request.is_none());
+    let evidence = json!({"method":"item/completed","params":{"threadId":"deferred-thread","turnId":"deferred-turn","item":{"type":"agentMessage","phase":"final_answer","text":"Partial evidence \u{e200}unresolved\u{e201}"}}});
+    events::apply(&mut task, &evidence, None).unwrap();
+    let completed = json!({"method":"turn/completed","params":{"threadId":"deferred-thread","turn":{"id":"deferred-turn","status":"completed"}}});
+    events::apply(&mut task, &completed, None).unwrap();
+    assert_eq!(task.state, DelegationState::Failed);
+    assert!(task.detail.contains("Which file?") && task.detail.contains("Read documentation only"));
+    let mut task: DelegatedTask =
+        serde_json::from_str(&serde_json::to_string(&task).unwrap()).unwrap();
+    events::reconcile(
+        &mut task,
+        &json!({"thread":{"turns":[{"id":"deferred-turn","status":"completed","items":[]}]}}),
+    )
+    .unwrap();
+    assert_eq!(task.state, DelegationState::Failed);
+    assert!(task.detail.contains("Which file?"));
+    assert!(!task.detail.contains("Recovered the completed result"));
+}

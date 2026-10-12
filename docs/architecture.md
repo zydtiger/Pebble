@@ -167,14 +167,25 @@ origin visibility and the original membership interval before public publication
 Reporting and execution have separate durable statuses, so retrying an
 explanation cannot rerun work. Group task ownership comes from the canonical
 user message and explicit saved mention partitions, not model-generated keys.
-Overlapping questions/approvals are queued by native request ID; resolution
-notifications and answers advance that queue without stranding another request.
+Native questions are deferred without an invented answer; permission and
+connected-tool requests are declined. Rust interrupts the turn, waits for its
+actual outcome, and includes the question or configuration limitation in the
+durable persona report. A normal user reply can continue the same saved task
+through `delegate_task(task_id)`. Uncertain work is never blindly resumed.
 
 UniFFI exposes typed task snapshots, subscriptions and short commands. Swift
-renders collapsed Codex-labelled cards, required questions/approvals, actual
-links, room activity and separate local settings. It never reconstructs task
-history, executes work or polls the persona. Conversation Stop and task Cancel
-are distinct. Closing Pebble stops its managed children; restart reconciles
+presents an app-wide circular task monitor fixed at the transcript’s top-right,
+below the persona/group header, plus separate local settings. Its dropdown shows
+brief task descriptions, owners and actual execution status only while tasks are
+running or awaiting cancellation confirmation. The button and rows show progress;
+queued, blocked and terminal tasks are hidden. Failures are explained through chat.
+It has no task controls or
+transcript cards. The first public Codex commentary supplies a bounded description
+for each run, with the persona title retained until it arrives. Ordinary latest
+failed-reply Retry can requeue a saved outcome explanation with tools disabled;
+it cannot re-execute Codex. Swift never reconstructs task history, executes work
+or polls the persona. Conversation Stop affects conversation generation.
+Closing Pebble stops its managed children; restart reconciles
 saved threads rather than promising execution after quit. See
 [delegation lifecycle, scope and measured limits](delegation.md).
 
