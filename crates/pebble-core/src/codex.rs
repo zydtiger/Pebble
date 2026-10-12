@@ -95,6 +95,10 @@ pub struct TaskRequest {
 pub struct DelegatedTask {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub(crate) summary_captured: bool,
+    #[serde(default)]
+    pub(crate) interaction_deferred: bool,
     pub persona_id: String,
     pub conversation_id: String,
     pub state: DelegationState,

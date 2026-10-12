@@ -316,12 +316,14 @@ impl Core {
         reply_id: &str,
         listener: Arc<dyn ChatListener>,
     ) -> Result<Arc<ChatTask>, Error> {
-        self.chats.retry(
+        let task = self.chats.retry(
             self.database.clone(),
             || self.persona(persona_id),
             reply_id,
-            listener,
-        )
+            self.codex.retry_listener(listener),
+        )?;
+        self.codex.notify();
+        Ok(task)
     }
 
     pub fn start_fresh_context(&self, persona_id: &str) -> Result<Arc<MaintenanceTask>, Error> {

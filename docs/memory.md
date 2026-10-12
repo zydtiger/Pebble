@@ -67,9 +67,13 @@ One chat permits at most one native memory call and four HTTP requests: the auto
 tool/direct-final phase plus at most three final candidates after a tool call.
 All share a 180-second operation deadline and the configured per-request output
 cap, so the total requested output is at most four times that cap. Memory-capable
-sessions also bound each complete SSE response to 128 KiB, including framing,
-reasoning and tool arguments. Preserved pre-upgrade sessions retain their earlier
-native-stream behavior. Final/repair requests disable tools and apply the selected
+sessions also bound each response's decoded model output to 128 KiB, including
+reply/refusal text, reasoning, opaque native fields and tool arguments. SSE
+framing and repeated metadata do not consume this output allowance; Responses
+delta, done and final representations of the same item are counted once.
+Individual SSE events/lines retain their independent 1 MiB limit. The MEMORY and
+tool-argument limits above remain independent. Preserved pre-upgrade sessions
+retain their earlier native-stream behavior. Final/repair requests disable tools and apply the selected
 schema dialect. A rejected candidate is not accepted native output.
 
 ## Start fresh context

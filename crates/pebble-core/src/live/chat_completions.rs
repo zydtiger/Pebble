@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 #[derive(Default)]
 pub(super) struct Stream {
+    pub(super) bound: super::output_bound::Bound,
     content: String,
     reasoning: String,
     refusal: String,
@@ -51,6 +52,7 @@ impl Stream {
                     let text = value
                         .as_str()
                         .ok_or_else(|| failure("The model delta has an invalid text field."))?;
+                    self.bound.add(text.len())?;
                     match field.as_str() {
                         "content" => {
                             self.content.push_str(text);
@@ -81,6 +83,7 @@ impl Stream {
                                     let text = value
                                         .as_str()
                                         .ok_or_else(|| failure("Invalid tool ID delta."))?;
+                                    self.bound.add(text.len())?;
                                     call[field] = format!(
                                         "{}{}",
                                         call[field].as_str().unwrap_or_default(),
@@ -95,16 +98,22 @@ impl Stream {
                                 let text = value
                                     .as_str()
                                     .ok_or_else(|| failure("Invalid function delta."))?;
+                                let length = call["function"][field]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .len()
+                                    .saturating_add(text.len());
+                                if length > crate::memory::ARGUMENT_CAP {
+                                    return Err(failure(
+                                        "Native tool arguments exceeded their bound.",
+                                    ));
+                                }
+                                self.bound.add(text.len())?;
                                 let text = format!(
                                     "{}{}",
                                     call["function"][field].as_str().unwrap_or_default(),
                                     text
                                 );
-                                if text.len() > crate::memory::ARGUMENT_CAP {
-                                    return Err(failure(
-                                        "Native tool arguments exceeded their bound.",
-                                    ));
-                                }
                                 call["function"][field] = text.into();
                             }
                         }

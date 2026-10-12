@@ -299,6 +299,7 @@ pub(super) fn apply(
                 Some("failed") => DelegationState::Failed,
                 _ => DelegationState::Uncertain,
             };
+            preserve_deferred_outcome(task);
             let outcome = match task.state {
                 DelegationState::Cancelled => {
                     "Codex confirmed interruption. Any completed effects remain in place."
@@ -331,6 +332,9 @@ pub(super) fn apply(
     Ok(change)
 }
 fn capture_item(task: &mut DelegatedTask, item: &Value) {
+    if task.state.active() {
+        capture_summary(task, item);
+    }
     if item["type"] == "webSearch"
         && let Some(url) = item["action"]["url"].as_str()
     {
@@ -389,6 +393,72 @@ fn capture_item(task: &mut DelegatedTask, item: &Value) {
             }
         }
     }
+}
+fn preserve_deferred_outcome(task: &mut DelegatedTask) {
+    if task.state == DelegationState::Completed && task.interaction_deferred {
+        task.state = DelegationState::Failed;
+    }
+}
+// Only the first short public commentary in this run describes the monitor entry.
+fn capture_summary(task: &mut DelegatedTask, item: &Value) {
+    if task.summary_captured || item["type"] != "agentMessage" || item["phase"] != "commentary" {
+        return;
+    }
+    let Some(text) = item["text"].as_str() else {
+        return;
+    };
+    let safe = clean_citations(&redact_authorization(task, text));
+    let summary = safe.split_whitespace().collect::<Vec<_>>().join(" ");
+    if summary.is_empty() {
+        return;
+    }
+    task.summary_captured = true;
+    if summary.chars().count() > 160 || summary.contains("http") {
+        return;
+    }
+    task.title = summary.chars().take(96).collect();
+    task.summary_captured = true;
+}
+
+/// A hidden native request must never leave the background task waiting for UI input.
+pub(super) fn defer_interaction(task: &mut DelegatedTask) -> Option<TaskRequest> {
+    let request = task.request.take()?;
+    task.interaction_deferred = true;
+    let explanation = if request.method == "item/tool/requestUserInput"
+        && !request.questions.iter().any(|q| q.secret)
+    {
+        let questions = request
+            .questions
+            .iter()
+            .map(|q| {
+                let options = q
+                    .options
+                    .iter()
+                    .zip(&q.option_descriptions)
+                    .map(|(label, description)| format!("{label}: {description}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("{} {} {}", q.header, q.text, options)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "Codex paused for clarification. Ask the user through the reporting character before continuing this same task: {questions}"
+        )
+    } else {
+        "Codex paused because additional permission or connected-tool input is required. No permission or form answer was granted. Resolve the connection or execution scope in settings outside chat; do not send secrets or authorization tokens in conversation.".into()
+    };
+    let explanation = if explanation.chars().count() > 4096 {
+        "Codex paused because its clarification exceeds the conversation relay limit. Ask for a shorter clarification before continuing this same task; no answer was supplied.".into()
+    } else {
+        explanation
+    };
+    limitation(task, &redact_authorization(task, &explanation));
+    task.resolved_requests.push(request.id.clone());
+    task.pending_requests.clear();
+    task.state = DelegationState::Running;
+    task.activity = "Pausing for the reporting character…".into();
+    Some(request)
 }
 fn push_link(task: &mut DelegatedTask, link: TaskLink) {
     if !known_authorization(&task.authorization_url_digests, &link.target)
@@ -471,6 +541,7 @@ pub(super) fn reconcile(task: &mut DelegatedTask, response: &Value) -> Result<()
     };
     task.turn_id = turn["id"].as_str().map(str::to_owned);
     for item in turn["items"].as_array().into_iter().flatten() {
+        capture_summary(task, item);
         capture_item(task, item);
     }
     task.state = match turn["status"].as_str() {
@@ -479,6 +550,7 @@ pub(super) fn reconcile(task: &mut DelegatedTask, response: &Value) -> Result<()
         Some("interrupted") => DelegationState::Interrupted,
         _ => DelegationState::Uncertain,
     };
+    preserve_deferred_outcome(task);
     let outcome = if task.state == DelegationState::Completed {
         "Recovered the completed result from the saved Codex thread."
     } else {
@@ -492,8 +564,18 @@ pub(super) fn reconcile(task: &mut DelegatedTask, response: &Value) -> Result<()
 }
 
 fn limitation(task: &mut DelegatedTask, notice: &str) {
-    task.local_limitation = notice.into();
-    task.detail = notice.into();
+    if task.interaction_deferred
+        && !task.local_limitation.is_empty()
+        && !task.local_limitation.contains(notice)
+    {
+        task.local_limitation = format!("{}\n{notice}", task.local_limitation)
+            .chars()
+            .take(8192)
+            .collect();
+    } else if !task.interaction_deferred || task.local_limitation.is_empty() {
+        task.local_limitation = notice.into();
+    }
+    task.detail = task.local_limitation.clone();
 }
 fn terminal_detail(task: &mut DelegatedTask, outcome: &str, turn: &Value) {
     let error = diagnostic(task, turn["error"]["message"].as_str().unwrap_or_default());

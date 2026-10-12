@@ -1,9 +1,10 @@
 mod delegation_support;
 mod live_support;
 mod responses_support;
+mod stream_bound_support;
 use delegation_support::{configure as codex_configure, method_count, settled, tool, wait};
 use live_support::*;
-use pebble_core::{Core, DelegationState, TaskAnswer};
+use pebble_core::{Core, DelegationState};
 use serde_json::json;
 use std::time::Duration;
 fn final_reply(api: &str, text: &str) -> String {
@@ -125,13 +126,12 @@ fn conversation_stop_does_not_cancel_task_native_cancel_waits_for_confirmation()
     assert_eq!(method_count(workspace.path(), "turn/interrupt"), 1);
 }
 #[test]
-fn native_questions_and_approvals_reject_stale_answers_and_followups_resume_exact_thread() {
+fn deferred_native_questions_report_limits_and_persona_followups_resume_exact_thread() {
     for mode in ["question", "approval"] {
         let server = Server::memory(vec![
             stream(tool("chat_completions", mode)),
             stream(success("I started your task.")),
-            stream(success("The first result is saved.")),
-            stream(success("The followup result is saved.")),
+            stream(success("Please clarify through chat.")),
         ]);
         let (root, core, id) = isolated();
         configure(root.path(), &server.url, "mock", "chat_completions", "");
@@ -139,50 +139,57 @@ fn native_questions_and_approvals_reject_stale_answers_and_followups_resume_exac
         codex_configure(&core, workspace.path(), mode);
         let (_handle, events) = start(&core, &id, "Run the synthetic interaction.");
         terminal(&events);
-        let task = wait(&core, |t| t.len() == 1 && t[0].request.is_some()).remove(0);
-        let request = task.request.unwrap();
+        let finished = settled(&core);
+        assert_eq!(finished.state, DelegationState::Interrupted);
+        assert!(finished.request.is_none());
         assert!(
-            core.answer_delegation(&task.id, "stale", Some(true), &[])
+            core.answer_delegation(&finished.id, "\"interaction-1\"", Some(true), &[])
                 .is_err()
         );
-        let answers = if mode == "question" {
-            vec![TaskAnswer {
-                question_id: "choice".into(),
-                answers: vec!["Small".into()],
-            }]
+        let report = server.requests.try_iter().last().unwrap().1;
+        assert_eq!(report["tool_choice"], "none");
+        assert!(report.to_string().contains(if mode == "question" {
+            "Which synthetic artifact?"
         } else {
-            vec![]
-        };
-        core.answer_delegation(
-            &task.id,
-            &request.id,
-            if mode == "approval" {
-                Some(false)
-            } else {
-                None
-            },
-            &answers,
-        )
-        .unwrap();
-        let finished = settled(&core);
-        assert_eq!(finished.state, DelegationState::Completed);
-        let thread = finished.thread_id.clone();
+            "No permission or form answer was granted"
+        }));
+        let continuation = Server::memory(vec![
+            stream(delegation_support::tool_for(
+                "chat_completions",
+                "continue",
+                Some(&finished.id),
+            )),
+            stream(success("Continuing the task.")),
+            stream(success("The result is saved.")),
+        ]);
+        configure(
+            root.path(),
+            &continuation.url,
+            "mock",
+            "chat_completions",
+            "",
+        );
         std::fs::write(
             workspace.path().join("fake-options.json"),
-            r#"{"mode":"complete"}"#,
+            r#"{"mode":"complete","commentary":"Inspect the selected synthetic artifact"}"#,
         )
         .unwrap();
-        core.followup_delegation(&finished.id, "Continue the same synthetic task.")
-            .unwrap();
+        let (_followup, events) = start(&core, &id, "Inspect only the small artifact.");
+        terminal(&events);
         let followed = wait(&core, |t| {
             t[0].turn_id.as_deref() == Some("turn-2") && t[0].report_state == "completed"
         })
         .remove(0);
-        assert_eq!(followed.thread_id, thread);
+        assert_eq!(followed.state, DelegationState::Completed);
+        assert_eq!(followed.title, "Inspect the selected synthetic artifact");
+        assert_eq!(followed.thread_id, finished.thread_id);
         assert_eq!(method_count(workspace.path(), "thread/start"), 1);
         assert_eq!(method_count(workspace.path(), "thread/resume"), 1);
+        let methods = std::fs::read_to_string(workspace.path().join("fake-methods.jsonl")).unwrap();
+        assert!(methods.contains("Inspect only the small artifact."));
     }
 }
+
 #[test]
 fn ambiguous_dispatch_is_never_resent_and_reconciliation_recovers_saved_result() {
     let server = Server::memory(vec![
@@ -227,23 +234,54 @@ fn ambiguous_dispatch_is_never_resent_and_reconciliation_recovers_saved_result()
 }
 #[test]
 fn failed_report_retry_reuses_result_without_reexecuting_task() {
-    let server = Server::memory(vec![
-        stream(tool("chat_completions", "report")),
-        stream(success("Accepted separately.")),
-        stream(event(json!({}), json!("length"))),
-        stream(success("Now I can explain the saved evidence.")),
-    ]);
-    let (root, core, id) = isolated();
-    configure(root.path(), &server.url, "mock", "chat_completions", "");
-    let workspace = tempfile::tempdir().unwrap();
-    codex_configure(&core, workspace.path(), "complete");
-    let (_handle, events) = start(&core, &id, "Look up evidence.");
-    terminal(&events);
-    let task = settled(&core);
-    assert_eq!(task.report_state, "failed");
-    core.retry_delegation_report(&task.id).unwrap();
-    wait(&core, |t| t[0].report_state == "completed");
-    assert_eq!(method_count(workspace.path(), "turn/start"), 1);
+    for api in ["chat_completions", "responses"] {
+        let oversized = "x".repeat(128 * 1024 + 1);
+        let failed = if api == "responses" {
+            stream_bound_support::response_event(
+                "response.reasoning_text.delta",
+                json!({"output_index":0,"delta":oversized}),
+            )
+        } else {
+            event(
+                json!({"reasoning_content":oversized}),
+                serde_json::Value::Null,
+            )
+        };
+        let reply = format!("Saved evidence: {}", "x".repeat(900));
+        let server = Server::memory(vec![
+            stream(tool(api, "report")),
+            stream(final_reply(api, "Accepted separately.")),
+            stream(failed),
+            stream(stream_bound_support::verbose_success(api, &reply)),
+        ]);
+        let (root, core, id) = isolated();
+        configure(root.path(), &server.url, "mock", api, "");
+        let workspace = tempfile::tempdir().unwrap();
+        codex_configure(&core, workspace.path(), "complete");
+        let (_handle, events) = start(&core, &id, "Look up evidence.");
+        terminal(&events);
+        let task = settled(&core);
+        assert_eq!(task.report_state, "failed");
+        assert!(
+            core.messages(&id)
+                .unwrap()
+                .last()
+                .unwrap()
+                .failure_detail
+                .contains("decoded output limit")
+        );
+        core.retry_delegation_report(&task.id).unwrap();
+        wait(&core, |t| t[0].report_state == "completed");
+        assert_eq!(core.messages(&id).unwrap().last().unwrap().content, reply);
+        assert_eq!(method_count(workspace.path(), "turn/start"), 1);
+        let bodies = server
+            .requests
+            .try_iter()
+            .map(|(_, body)| body)
+            .collect::<Vec<_>>();
+        assert_eq!(bodies.len(), 4);
+        assert!(bodies[2..].iter().all(|body| body["tool_choice"] == "none"));
+    }
 }
 
 #[test]
@@ -486,53 +524,6 @@ fn restart_reconciles_saved_execution_without_a_second_dispatch() {
 }
 
 #[test]
-fn overlapping_native_requests_are_answered_in_order_without_stranding_or_replaying() {
-    let server = Server::memory(vec![
-        stream(tool("chat_completions", "overlap")),
-        stream(success("Task started.")),
-        stream(success("Both answers received.")),
-    ]);
-    let (root, core, id) = isolated();
-    configure(root.path(), &server.url, "mock", "chat_completions", "");
-    let workspace = tempfile::tempdir().unwrap();
-    codex_configure(&core, workspace.path(), "overlap");
-    let (_handle, events) = start(&core, &id, "Ask the two synthetic questions.");
-    terminal(&events);
-    let task = wait(&core, |t| t.first().is_some_and(|t| t.request.is_some())).remove(0);
-    let first = task.request.unwrap().id;
-    let answers = vec![TaskAnswer {
-        question_id: "choice".into(),
-        answers: vec!["Small".into()],
-    }];
-    core.answer_delegation(&task.id, &first, None, &answers)
-        .unwrap();
-    let second = wait(&core, |t| {
-        t[0].request.as_ref().is_some_and(|r| r.id != first)
-    })
-    .remove(0)
-    .request
-    .unwrap()
-    .id;
-    assert_eq!(second, "\"interaction-2\"");
-    assert!(
-        core.answer_delegation(&task.id, &first, None, &answers)
-            .is_err()
-    );
-    core.answer_delegation(&task.id, &second, None, &answers)
-        .unwrap();
-    assert_eq!(settled(&core).state, DelegationState::Completed);
-    let responses = std::fs::read_to_string(workspace.path().join("fake-responses.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 2);
-    assert_eq!(responses[0]["id"], "interaction-1");
-    assert_eq!(responses[1]["id"], "interaction-2");
-    assert_eq!(method_count(workspace.path(), "turn/start"), 1);
-}
-
-#[test]
 fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispatch() {
     for mode in ["managed", "missing-cli", "unauthenticated"] {
         let server = Server::memory(vec![
@@ -603,112 +594,7 @@ fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispa
 }
 
 #[test]
-fn concurrent_file_approvals_preserve_the_matching_preview_for_each_native_item() {
-    let server = Server::memory(vec![
-        stream(tool("chat_completions", "files")),
-        stream(success("Started.")),
-        stream(success("Completed.")),
-    ]);
-    let (root, core, id) = isolated();
-    configure(root.path(), &server.url, "mock", "chat_completions", "");
-    let workspace = tempfile::tempdir().unwrap();
-    codex_configure(&core, workspace.path(), "file-overlap");
-    let (_handle, events) = start(&core, &id, "Approve the synthetic file changes separately.");
-    terminal(&events);
-    let first = wait(&core, |t| t[0].request.is_some()).remove(0);
-    let request = first.request.unwrap();
-    assert!(request.summary.contains("proposed file-A"));
-    assert!(!request.summary.contains("file-B"));
-    core.answer_delegation(&first.id, &request.id, Some(true), &[])
-        .unwrap();
-    let second = wait(&core, |t| {
-        t[0].request.as_ref().is_some_and(|r| r.id != request.id)
-    })
-    .remove(0);
-    let request = second.request.unwrap();
-    assert!(request.summary.contains("proposed file-B"));
-    assert!(!request.summary.contains("file-A"));
-    core.answer_delegation(&second.id, &request.id, Some(false), &[])
-        .unwrap();
-    assert_eq!(settled(&core).state, DelegationState::Completed);
-}
-
-#[test]
-fn mcp_forms_preserve_required_fields_and_omit_blank_optional_content() {
-    for mode in ["form-mixed", "form-optional"] {
-        let server = Server::memory(vec![
-            stream(tool("chat_completions", mode)),
-            stream(success("Started.")),
-            stream(success("Saved form result.")),
-        ]);
-        let (root, core, id) = isolated();
-        configure(root.path(), &server.url, "mock", "chat_completions", "");
-        let workspace = tempfile::tempdir().unwrap();
-        codex_configure(&core, workspace.path(), mode);
-        let (_handle, events) = start(&core, &id, "Answer a synthetic connected-tool form.");
-        terminal(&events);
-        let task = wait(&core, |t| t[0].request.is_some()).remove(0);
-        let request = task.request.unwrap();
-        assert_eq!(
-            request
-                .questions
-                .iter()
-                .find(|q| q.id == "name")
-                .unwrap()
-                .required,
-            mode == "form-mixed"
-        );
-        assert!(
-            !request
-                .questions
-                .iter()
-                .find(|q| q.id == "count")
-                .unwrap()
-                .required
-        );
-        if mode == "form-mixed" {
-            assert!(
-                core.answer_delegation(&task.id, &request.id, None, &[])
-                    .is_err()
-            );
-        }
-        let mut answers = vec![TaskAnswer {
-            question_id: "count".into(),
-            answers: vec!["".into()],
-        }];
-        if mode == "form-mixed" {
-            answers.push(TaskAnswer {
-                question_id: "name".into(),
-                answers: vec!["actual name".into()],
-            });
-        }
-        let mut invalid = answers.clone();
-        invalid[0].answers = vec!["not an integer".into()];
-        assert!(
-            core.answer_delegation(&task.id, &request.id, None, &invalid)
-                .is_err()
-        );
-        core.answer_delegation(&task.id, &request.id, None, &answers)
-            .unwrap();
-        assert_eq!(settled(&core).state, DelegationState::Completed);
-        let response: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(workspace.path().join("fake-response.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            response["result"]["content"],
-            if mode == "form-mixed" {
-                json!({"name":"actual name"})
-            } else {
-                json!({})
-            }
-        );
-    }
-}
-
-#[test]
-fn ordinary_retry_of_a_failed_report_is_rejected_after_fresh_context_and_card_retry_is_result_only()
-{
+fn ordinary_retry_of_a_failed_report_after_fresh_context_explains_saved_result_only() {
     struct Ignore;
     impl pebble_core::ChatListener for Ignore {
         fn on_event(&self, _: pebble_core::ChatEvent) -> Result<(), String> {
@@ -720,7 +606,10 @@ fn ordinary_retry_of_a_failed_report_is_rejected_after_fresh_context_and_card_re
         stream(success("Started.")),
         stream(event(json!({}), json!("length"))),
         stream(event(json!({}), json!("length"))),
-        stream(success("Explained saved evidence in current context.")),
+        stream(stream_bound_support::verbose_success(
+            "chat_completions",
+            &format!("Explained saved evidence. {}", "x".repeat(900)),
+        )),
     ]);
     let (root, core, id) = isolated();
     configure(root.path(), &server.url, "mock", "chat_completions", "");
@@ -733,14 +622,14 @@ fn ordinary_retry_of_a_failed_report_is_rejected_after_fresh_context_and_card_re
     core.fresh_context(&id).unwrap();
     for attempt in 0..2 {
         let last = core.messages(&id).unwrap().pop().unwrap();
-        assert!(!last.can_retry);
-        let error = core
+        assert!(
+            last.can_retry,
+            "attempt={attempt}, last={last:?}, task={:?}",
+            core.delegated_tasks().unwrap()
+        );
+        let _retry = core
             .retry_message(&id, &last.id, std::sync::Arc::new(Ignore))
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("task card"), "{error}");
-        core.retry_delegation_report(&task.id).unwrap();
+            .unwrap();
         wait(&core, |t| {
             t[0].report_state == if attempt == 0 { "failed" } else { "completed" }
         });
