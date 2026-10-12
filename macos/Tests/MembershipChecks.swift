@@ -23,6 +23,32 @@ enum MembershipChecks {
         try check(grouped, "Create membership group failed")
         try await wait(model, until: { !model.loading })
         let room = model.selectedConversation!.id
+        let assignmentGroup = await model.createGroup("Per-message task assignments", members: [a, b])
+        try check(assignmentGroup, "Create assignment group failed")
+        try await wait(model, until: { !model.loading })
+        let assignmentRoom = model.selectedConversation!.id
+        model.mentionedIDs = [a, b]; model.separateTasks = true
+        model.draft = "First explicitly separate assignment"; model.sendMessage()
+        try await wait(model, until: { !model.hasActiveReplies })
+        try check(!model.separateTasks && model.draft.isEmpty, "Separate assignment leaked into the next message")
+        model.mentionedIDs = [a, b]; model.draft = "Second defaults to shared"; model.sendMessage()
+        try await wait(model, until: { !model.hasActiveReplies })
+        let query = Process(), output = Pipe()
+        query.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        query.arguments = ["python3", "-c", "import sqlite3,json,sys; db=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps([r[0] for r in db.execute(\"SELECT separate_delegations FROM messages WHERE conversation_id=? AND sender_kind='user' ORDER BY sequence\",(sys.argv[2],))]))", model.dataRoot.appendingPathComponent("data/app.sqlite").path, assignmentRoom]
+        query.standardOutput = output; try query.run(); query.waitUntilExit()
+        let modes = try JSONDecoder().decode([Int].self, from: output.fileHandleForReading.readDataToEndOfFile())
+        try check(query.terminationStatus == 0 && modes == [1, 0], "Backend did not persist separate then shared per-message choices")
+        model.separateTasks = true; model.mentionedIDs = [a, b]
+        model.draft = "Accepted draft with newer choice edit"; model.sendMessage()
+        model.separateTasks = false; model.separateTasks = true
+        try await wait(model, until: { !model.hasActiveReplies })
+        try check(model.separateTasks && model.draft == "Accepted draft with newer choice edit", "Acceptance erased a newer mode-only draft choice")
+        model.mentionedIDs = []; model.draft = "@MissingMember rejected assignment"; model.sendMessage()
+        try await wait(model, until: { !model.hasActiveReplies })
+        try check(model.error != nil && model.separateTasks, "Failed send erased its explicit task choice")
+        model.error = nil; model.select(room)
+        try await wait(model, until: { !model.loading })
         let originalInterval = model.selectedConversation!.members.first { $0.personaId == a }!.membershipId
 
         // These edits happen before the async acceptance task resumes on MainActor.

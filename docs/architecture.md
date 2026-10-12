@@ -2,7 +2,8 @@
 
 v0.3.0 adds bounded persona memory tools and explicit memory consolidation to the reviewed private + group lifecycle. [Group scheduling](group-flow.md), [membership](groups.md),
 [state lifetime](state.md) and [provider contracts](providers.md) define the
-current boundaries; the [roadmap](roadmap.md) maps completion scenarios to tests.
+current boundaries. The version-unassigned [Codex delegation](delegation.md) increment
+adds Rust-owned local execution and durable reporting; the [roadmap](roadmap.md) maps completion scenarios to tests.
 
 ## Boundaries
 
@@ -39,7 +40,7 @@ scroll when an expanded composer reduces its available space.
 
 ## Durable storage and generation
 
-Rust owns the twenty chat/history/state/membership/decision/round/memory/context tables and schema migration. Visible
+Rust owns chat/history/state/membership/decision/round/memory/context/image/task records and schema migration. Visible
 messages and frozen model items are distinct records; the UI never reconstructs
 model context from bubbles. See [durable history](history.md) for table ownership,
 ordering, request reconstruction, atomic writes, and interrupted-call behavior.
@@ -138,7 +139,37 @@ zstd items decode into the exact saved JSON bytes under a fixed 8 MiB context
 bound; zstd window and output reads have independent bounds. A conservative
 byte-based input estimate plus configured output reserve is checked before the
 adapter starts. Budget edits alone leave the session and prefix unchanged.
-See [context and encoding](context.md). There is no background service, threshold-triggered rollover, or delegated work. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
+See [context and encoding](context.md). There is no always-running background service or threshold-triggered rollover. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
+
+## Delegation boundary
+
+Rust owns the stdio app-server child, capability discovery, scoped execution,
+server requests, task IDs and Codex thread/turn mappings. Schema 13 stores task
+snapshots, native submission identities/results, frozen group assignments and
+historical runs. The native `delegate_task` transaction records the task and
+replayable tool response before dispatch. Restart can safely give accepted,
+never-submitted work its first dispatch with its saved identity and frozen scope.
+Explicitly cancelled and terminal failed tasks are excluded. Already-submitted
+or uncertain execution only reconciles saved outcomes and is never resent
+automatically. App-level `[codex]` inherits local login/model/effort unless
+explicitly overridden, independently of chat and classifier connections.
+
+Task execution runs outside the persona queue; one stored completion later
+joins that original persona queue with current context/state. Rust verifies
+origin visibility and the original membership interval before public publication.
+Reporting and execution have separate durable statuses, so retrying an
+explanation cannot rerun work. Group task ownership comes from the canonical
+user message and explicit saved mention partitions, not model-generated keys.
+Overlapping questions/approvals are queued by native request ID; resolution
+notifications and answers advance that queue without stranding another request.
+
+UniFFI exposes typed task snapshots, subscriptions and short commands. Swift
+renders collapsed Codex-labelled cards, required questions/approvals, actual
+links, room activity and separate local settings. It never reconstructs task
+history, executes work or polls the persona. Conversation Stop and task Cancel
+are distinct. Closing Pebble stops its managed children; restart reconciles
+saved threads rather than promising execution after quit. See
+[delegation lifecycle, scope and measured limits](delegation.md).
 
 ## Image boundary
 

@@ -180,6 +180,11 @@ pub(super) fn maintenance_reply(body: &Value) -> Option<String> {
         .or(last["content"][0]["text"].as_str())?;
     let maintenance = serde_json::from_str::<Value>(text).ok()?;
     maintenance.get("maintenance")?;
+    assert_eq!(
+        body["tools"].as_array().unwrap().len(),
+        1,
+        "Maintenance may expose only its memory tool, including after delegated native history."
+    );
     let args = json!({"content":maintenance["current_memory"]}).to_string();
     Some(if body.get("input").is_some() {
         format!(

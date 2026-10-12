@@ -25,6 +25,8 @@ final class RoomState {
     var draft = "" { didSet { draftRevision += 1 } }
     var mentions: [String] = [] { didSet { mentionRevision += 1 } }
     var images: [ImageAssetRecord] = [] { didSet { imageRevision += 1 } }
+    var separateTasks = false { didSet { delegationRevision += 1 } }
+    var delegationRevision = 0
     var imageRevision = 0
     var importingImages = 0
     var draftRevision = 0

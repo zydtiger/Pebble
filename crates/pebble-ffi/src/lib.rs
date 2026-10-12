@@ -1,3 +1,5 @@
+mod delegation_api;
+pub use delegation_api::*;
 mod images_api;
 pub use images_api::*;
 mod participation_api;

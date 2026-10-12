@@ -26,6 +26,7 @@ impl Database {
                         state_before: None,
                         memory_tools: false,
                         memory_capable: false,
+                        delegation_tools: false,
                     },
                     row.get(6)?,
                 ))
@@ -39,6 +40,15 @@ impl Database {
             |r| r.get(0),
         )?;
         request.memory_capable = request.memory_tools;
+        request.delegation_tools = connection.query_row(
+            "SELECT delegation_tools FROM model_sessions WHERE id=?1",
+            [&request.session_id],
+            |r| r.get(0),
+        )?;
+        if super::delegation::report_input(&connection, call_id)?.is_some() {
+            request.delegation_tools = false;
+            request.memory_tools = false;
+        }
         request.response_schema = schema.map(|s| serde_json::from_str(&s)).transpose()?;
         request.state_before = state.map(|s| serde_json::from_str(&s)).transpose()?;
         // First scan metadata only: never materialize an oversized saved history.

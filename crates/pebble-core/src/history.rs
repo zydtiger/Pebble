@@ -64,6 +64,8 @@ pub struct ModelRequest {
     pub state_before: Option<serde_json::Value>,
     pub memory_tools: bool,
     pub memory_capable: bool,
+    #[serde(default)]
+    pub delegation_tools: bool,
 }
 
 #[derive(Debug, Clone)]

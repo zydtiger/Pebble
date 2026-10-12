@@ -82,14 +82,17 @@ and schema-keyword support remain limited as documented above.
 
 ## Native memory tools
 
-New sessions expose only `update_memory({content: complete revised MEMORY.md})`.
+New sessions expose `update_memory({content: complete revised MEMORY.md})` and
+the separate [delegate_task contract](delegation.md). One bounded native tool
+effect is permitted per conversational reply; a replayed/retried effect disables
+further effects for that reply.
 Ordinary chat starts with `tool_choice=auto`, `parallel_tool_calls=false` and no
 provider response-format constraint; Rust still validates a direct final
 `{reply,state}` locally. The selected compatible service suppresses native tools
 when Chat Completions auto tools and response_format are combined. A tool result
 is followed by a final-only request with tools disabled and the configured strict
-schema dialect; schema repair also disables tools. Maintenance requires one
-native call (`tool_choice=required`) and has no conversational final request.
+schema dialect; schema repair also disables tools. Maintenance exposes only `update_memory`, even when outgoing history contains
+delegation calls. It requires one native call (`tool_choice=required`) and has no conversational final request.
 
 Chat Completions assembles indexed fragmented IDs/names/argument strings and
 retains assistant reasoning with the native call. Responses uses authoritative

@@ -23,6 +23,12 @@ saved images from the transcript. Rust stores durable originals and frozen model
 renditions; chat, classification and explicit memory consolidation receive real
 pixels. See [image input and limits](docs/images.md).
 
+Codex delegation is implemented as a version-unassigned increment: characters
+hand grounding and authorized work to a local app-server while chat continues.
+Native task cards retain progress, questions/approvals, evidence and artifacts.
+Open **Codex tasks** for local CLI/login checks and separate settings; ordinary
+read-only lookups need no project selection. See [delegation and limits](docs/delegation.md).
+
 See [completion evidence and current limits](docs/roadmap.md#group-boundaries-and-completion-scenarios)
 for the verified end-to-end scenarios. Participation remains a model judgment;
 manual mentions provide an explicit request, and whole-group fallback permits
@@ -144,13 +150,14 @@ files. Existing files are never overwritten by the seed operation.
 │   ├── .MEMORY-<operation-id>.displaced # retained displaced inode after memory publication
 │   └── response_schema.json
 └── data/
-    ├── app.sqlite        # twenty chat/history/state/memory/context/image tables (schema v12)
+    ├── app.sqlite        # chat/history/state/memory/context/image/task records (schema v13)
     ├── app.lock          # exclusive app ownership; released automatically on exit
-    └── assets/<image-uuid>/ # original, fixed model rendition and thumbnail
+    ├── assets/<image-uuid>/ # original, fixed model rendition and thumbnail
+    └── codex-workspaces/<task-uuid>/ # managed read-only task working directory
 ```
 
 SQLite may also create its own WAL and shared-memory sidecars. Schema versions 1
-through 11 are upgraded transactionally to 12, preserving character, room, message,
+through 12 are upgraded transactionally to 13, preserving character, room, message,
 and history IDs. Only
 one app instance can open a data root at a time; a second instance reports an
 error without changing active calls. Keep this data
@@ -192,7 +199,7 @@ are failed replies; unvalidated candidate text is not shown or saved. Provider r
 in native model history and is never rendered as a message. Responses sends
 `store = false` and requests encrypted reasoning state. Completed native output
 items, including IDs and opaque fields, are stored and replayed in order with
-the full input history; no `previous_response_id` is sent. New contexts support only the persona-scoped `update_memory` native tool. Tool calls/results and reasoning remain hidden from bubbles and replay in native order. Existing contexts keep their frozen prefix and an explicit capability notice until a successful fresh-context transition. See [memory and consolidation](docs/memory.md). In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
+the full input history; no `previous_response_id` is sent. New contexts support the persona-scoped `update_memory` native tool and `delegate_task` for work through local Codex when enabled. Tool calls/results and reasoning remain hidden from bubbles and replay in native order. Existing contexts keep their frozen prefix and an explicit capability notice until a successful fresh-context transition. See [memory and consolidation](docs/memory.md). In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
 
 Changing the API root, model, or protocol starts a fresh model context. Earlier
 messages stay visible, and a notice explains the boundary. Those earlier events

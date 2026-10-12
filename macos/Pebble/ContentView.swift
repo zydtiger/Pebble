@@ -16,7 +16,7 @@ struct ContentView: View {
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
                     if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
-                    if model.bubbles.isEmpty && model.markers.isEmpty {
+                    if model.bubbles.isEmpty && model.markers.isEmpty && model.roomTasks.isEmpty {
                         GeometryReader { geometry in
                             ScrollView {
                                 Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
@@ -39,6 +39,7 @@ struct ContentView: View {
         .foregroundStyle(PebbleTheme.ink)
         .frame(minWidth: 820, minHeight: 610)
         .preferredColorScheme(.light)
+        .sheet(isPresented: $model.showCodexSettings) { CodexSheet(model: model) }
         .sheet(isPresented: $model.showCharacter) {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
         }
@@ -85,6 +86,7 @@ struct ContentView: View {
                                     Text(model.pendingCount(persona.id) > 0 ? "\(model.pendingCount(persona.id)) pending" : "Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                 }
                                 Spacer(minLength: 0)
+                                if model.taskActivity(persona.conversationId) { Image(systemName: "bolt.horizontal.circle").font(.system(size: 11)).foregroundStyle(PebbleTheme.sage) }
                                 if persona.conversationId == model.selectedID {
                                     Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
                                 }
@@ -111,6 +113,7 @@ struct ContentView: View {
                                         Text(model.pendingCount(group.id) > 0 ? "\(model.pendingCount(group.id)) pending" : "\(group.members.count) characters").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                     }
                                     Spacer(minLength: 0)
+                                    if model.taskActivity(group.id) { Image(systemName: "bolt.horizontal.circle").font(.system(size: 11)).foregroundStyle(PebbleTheme.sage) }
                                     if group.id == model.selectedID { Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5) }
                                 }
                                 .padding(11)
@@ -137,6 +140,7 @@ struct ContentView: View {
                 HStack {
                     Text("v0.3.0").font(.system(size: 10, design: .monospaced))
                     Spacer()
+                    Button { model.showCodexSettings = true } label: { Image(systemName: "bolt.horizontal.circle") }.help("Codex task settings")
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
                     Button { model.openFiles() } label: { Image(systemName: "folder") }
@@ -287,12 +291,14 @@ struct ContentView: View {
                         }
                         contextDividers(after: bubble.sequence)
                     }
+                    ForEach(model.roomTasks, id: \.id) { task in DelegationCard(model: model, task: task) }
                     Color.clear.frame(height: 1).id("latest")
                 }
                 .padding(.horizontal, 30).padding(.vertical, 20)
             }
             .onAppear { reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
+            .onChange(of: model.roomTasks.map { "\($0.id):\($0.state):\($0.request?.id ?? "")" }) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.markers.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
         }
@@ -330,7 +336,10 @@ struct ContentView: View {
                                 Label(model.memberLabel(member.personaId), systemImage: model.mentionedIDs.contains(member.personaId) ? "checkmark.circle.fill" : "circle")
                             }
                         }
-                    } label: { Label("Mention", systemImage: "at").font(.system(size: 11)) }
+                        Divider()
+                        Button { model.separateTasks = false } label: { Label("Shared delegated task", systemImage: model.separateTasks ? "circle" : "checkmark.circle.fill") }
+                        Button { model.separateTasks = true } label: { Label("Separate tasks for mentioned characters", systemImage: model.separateTasks ? "checkmark.circle.fill" : "circle") }.disabled(model.mentionedIDs.count < 2)
+                    } label: { Label(model.separateTasks && model.mentionedIDs.count > 1 ? "Mention · separate tasks" : "Mention", systemImage: "at").font(.system(size: 11)) }
                         .menuStyle(.borderlessButton).fixedSize().help("Choose who should reply")
                     ScrollView(.horizontal) {
                         HStack(spacing: 6) {

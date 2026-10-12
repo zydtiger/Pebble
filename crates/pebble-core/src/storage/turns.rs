@@ -176,6 +176,9 @@ impl Database {
                 "For this reply only, give a brief acknowledgment or clarification of the whole-group question. Do not turn this into an ordinary substantive answer or introduce a new discussion. Stay in character and follow the frozen response contract."
             );
         }
+        if let Some(result) = super::delegation::report_input(&tx, &call_id)? {
+            envelope["delegated_result"] = result;
+        }
         if let Some(state) = state {
             envelope["current_state"] = state;
         }
@@ -225,14 +228,16 @@ impl Database {
         let saved = message(&tx, &turn.reply.id)?;
         if saved.status != MessageStatus::Streaming {
             super::memory::annotate_stopped_memory(&tx, &turn.call_id, error)?;
+            super::delegation::finish_report(&tx, &turn.call_id, "failed")?;
             let saved = message(&tx, &turn.reply.id)?;
             tx.commit()?;
             return Ok(saved);
         }
         let allowed:bool=tx.query_row("SELECT (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships m WHERE m.id=c.membership_id AND m.left_publication IS NULL)) AND (c.slot_id IS NULL OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN group_rounds r ON r.id=s.round_id WHERE s.id=c.slot_id AND s.status='admitted' AND (r.status='active' OR (r.status='superseded' AND s.kind='required')))) FROM model_calls c WHERE c.id=?1",[&turn.call_id],|r|r.get(0))?;
-        if !allowed {
+        if !allowed || !super::delegation::report_current(&tx, &turn.call_id)? {
             super::rounds::cancel_publication(&tx, &turn.call_id, &turn.reply.id)?;
             super::memory::annotate_stopped_memory(&tx, &turn.call_id, error)?;
+            super::delegation::finish_report(&tx, &turn.call_id, "failed")?;
             let saved = message(&tx, &turn.reply.id)?;
             tx.commit()?;
             return Ok(saved);
@@ -335,6 +340,15 @@ impl Database {
             },
             &turn.reply.id,
         )?;
+        super::delegation::finish_report(
+            &tx,
+            &turn.call_id,
+            if status == MessageStatus::Complete {
+                "completed"
+            } else {
+                "failed"
+            },
+        )?;
         let message = message(&tx, &turn.reply.id)?;
         tx.commit()?;
         Ok(message)
@@ -347,7 +361,7 @@ pub(super) fn new_id() -> String {
 
 pub(super) fn message(db: &Connection, id: &str) -> Result<Message, Error> {
     let mut message=db.query_row("SELECT id, conversation_id, sequence, sender_kind, sender_id, content, status, created_at FROM messages WHERE id = ?1", [id],read_message)?;
-    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=c.membership_id AND member.left_publication IS NULL)) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=c.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=c.persona_id AND s.status IN ('pending','admitted'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let metadata:Option<(String,bool)>=db.query_row("SELECT COALESCE(c.error,''), (c.status IN ('failed','cancelled','interrupted') AND (c.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=c.membership_id AND member.left_publication IS NULL)) AND NOT EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=c.id OR EXISTS(SELECT 1 FROM json_each(task.record,'$.reports') r WHERE json_extract(r.value,'$.call')=c.id)) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=c.persona_id AND newer.persona_sequence>c.persona_sequence) AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=c.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=c.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=c.persona_id AND s.status IN ('pending','admitted'))) FROM model_calls c WHERE c.reply_message_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((detail, retry)) = metadata {
         message.failure_detail = detail;
         message.can_retry = retry;

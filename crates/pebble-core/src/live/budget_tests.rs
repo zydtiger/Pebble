@@ -40,6 +40,7 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
             state_before: None,
             memory_tools: false,
             memory_capable: false,
+            delegation_tools: false,
         };
         let (_, body) = request_body(&chat, &request, 77).unwrap();
         assert_eq!(

@@ -2,6 +2,11 @@
 extern crate self as pebble_core;
 
 mod chat;
+mod codex;
+pub use codex::{
+    CodexCapabilities, CodexSettings, DelegatedTask, DelegationListener, DelegationState,
+    TaskAnswer, TaskChoice, TaskLink, TaskQuestion, TaskRequest,
+};
 mod classifier_settings;
 mod config;
 mod connection;
@@ -85,6 +90,7 @@ pub struct Core {
     data_root: PathBuf,
     database: Arc<storage::Database>,
     chats: Arc<chat::Chats>,
+    codex: Arc<codex::Manager>,
 }
 
 impl Core {
@@ -94,12 +100,18 @@ impl Core {
         let database = Arc::new(storage::Database::open(&data_root)?);
         database.upgrade_persona_contracts(&data_root)?;
         config::load(&data_root)?;
+        let chats = Arc::new(chat::Chats::default());
+        let codex =
+            codex::Manager::new(database.clone(), data_root.clone(), Arc::downgrade(&chats));
+        *database.codex.lock().expect("task manager") = Arc::downgrade(&codex);
         let core = Self {
             data_root,
             database,
-            chats: Arc::new(chat::Chats::default()),
+            chats,
+            codex,
         };
         core.workspace()?;
+        core.codex.recover();
         Ok(core)
     }
 
@@ -161,6 +173,7 @@ impl Core {
                 text: prompt.trim(),
                 mentions,
                 images: &[],
+                separate_tasks: false,
             },
             listener,
         )
@@ -192,6 +205,33 @@ impl Core {
                 text: prompt.trim(),
                 mentions,
                 images,
+                separate_tasks: false,
+            },
+            listener,
+        )
+    }
+
+    pub fn send_room_assigned_images(
+        &self,
+        room: &str,
+        prompt: &str,
+        mentions: &[String],
+        images: &[String],
+        separate_tasks: bool,
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<ChatSubmission, Error> {
+        if prompt.trim().is_empty() && mentions.is_empty() && images.is_empty() {
+            return Err(Error::EmptyMessage);
+        }
+        self.chats.start_room(
+            self.database.clone(),
+            || self.workspace(),
+            chat::RoomInput {
+                room,
+                text: prompt.trim(),
+                mentions,
+                images,
+                separate_tasks,
             },
             listener,
         )
@@ -345,5 +385,45 @@ impl Core {
 impl Drop for Core {
     fn drop(&mut self) {
         self.chats.cancel_all();
+        self.codex.shutdown();
+    }
+}
+
+impl Core {
+    pub fn codex_settings(&self) -> Result<CodexSettings, Error> {
+        self.codex.settings()
+    }
+    pub fn save_codex_settings(&self, settings: &CodexSettings) -> Result<(), Error> {
+        self.codex.save_settings(settings)
+    }
+    pub fn codex_capabilities(&self) -> Result<CodexCapabilities, Error> {
+        self.codex.capabilities()
+    }
+    pub fn delegated_tasks(&self) -> Result<Vec<DelegatedTask>, Error> {
+        self.database.delegated_tasks()
+    }
+    pub fn observe_delegations(&self, listener: Arc<dyn DelegationListener>) -> Result<(), Error> {
+        self.codex.subscribe(listener)
+    }
+    pub fn cancel_delegation(&self, id: &str) -> Result<(), Error> {
+        self.codex.cancel(id)
+    }
+    pub fn answer_delegation(
+        &self,
+        id: &str,
+        request: &str,
+        approve: Option<bool>,
+        answers: &[TaskAnswer],
+    ) -> Result<(), Error> {
+        self.codex.respond(id, request, approve, answers)
+    }
+    pub fn followup_delegation(&self, id: &str, prompt: &str) -> Result<(), Error> {
+        self.codex.followup(id, prompt)
+    }
+    pub fn reconcile_delegation(&self, id: &str) -> Result<(), Error> {
+        self.codex.reconcile(id)
+    }
+    pub fn retry_delegation_report(&self, id: &str) -> Result<(), Error> {
+        self.codex.retry_report(id)
     }
 }

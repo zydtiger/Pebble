@@ -9,6 +9,10 @@ actor CoreClient {
 
     init(root: String) { self.root = root }
 
+    func requireBackend() throws -> PebbleBackend {
+        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }; return backend
+    }
+
     func load() throws -> WorkspaceRecord {
         if backend == nil { backend = try PebbleBackend(dataRoot: root) }
         return try backend!.workspace()
@@ -100,9 +104,9 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.removeGroupMember(roomId: room, personaId: persona)
     }
-    func send(room: String, prompt: String, mentions: [String], images: [String] = [], observer: ChatObserver) throws -> ChatSubmissionRecord {
+    func send(room: String, prompt: String, mentions: [String], images: [String] = [], separateTasks: Bool = false, observer: ChatObserver) throws -> ChatSubmissionRecord {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
-        return try backend.sendRoomImages(roomId: room, prompt: prompt, mentions: mentions, images: images, observer: observer)
+        return try backend.sendRoomAssignedImages(roomId: room, prompt: prompt, mentions: mentions, images: images, separateTasks: separateTasks, observer: observer)
     }
 
     func importImage(_ source: ImageImportSource) throws -> ImageAssetRecord {
@@ -170,7 +174,7 @@ struct ChatBubble: Identifiable {
 @Observable
 final class ChatModel {
     let dataRoot: URL
-    private let client: CoreClient
+    let client: CoreClient
     var workspace: WorkspaceRecord? { didSet { reconcileMentionChoices() } }
     var selectedID: String?
     var loading = true
@@ -180,6 +184,10 @@ final class ChatModel {
     var showRenameGroup = false
     var showGroupMembers = false
     var showFreshContext = false
+    var showCodexSettings = false
+    var delegatedTasks: [DelegatedTaskRecord] = []
+    var delegationStream: Task<Void, Never>?
+    var delegationSink: AsyncStream<[DelegatedTaskRecord]>.Continuation?
     var settingsTarget: SettingsTarget?
     var stateTarget: SettingsTarget?
     var classifierTarget: SettingsTarget?
@@ -217,6 +225,10 @@ final class ChatModel {
     }
     private func conversationID(_ id: String) -> String { workspace?.personas.first { $0.id == id }?.conversationId ?? id }
     private var selectedRoom: RoomState? { selectedID.map { room($0) } }
+    var separateTasks: Bool {
+        get { selectedRoom?.separateTasks ?? false }
+        set { selectedRoom?.separateTasks = newValue }
+    }
     var draft: String { get { selectedRoom?.draft ?? "" } set { selectedRoom?.draft = newValue } }
     var draftImages: [ImageAssetRecord] { selectedRoom?.images ?? [] }
     var importingImages: Bool { (selectedRoom?.importingImages ?? 0) > 0 }
@@ -295,6 +307,7 @@ final class ChatModel {
             let loaded = try await client.load()
             guard selectionRevision == revision else { return }
             workspace = loaded
+            try await startTaskObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
                 if let status = try await client.maintenanceStatus(persona: persona.id) {
                     maintenanceDetails[persona.id] = status.detail
@@ -430,7 +443,9 @@ final class ChatModel {
         let draftRevision = state.draftRevision
         let mentionRevision = state.mentionRevision
         let imageRevision = state.imageRevision
+        let delegationRevision = state.delegationRevision
         let mentions = usesDraft ? state.mentions : []
+        let separate = usesDraft && state.separateTasks
         let images = usesDraft ? state.images.map(\.id) : []
         state.error = nil
         let run = RoomRun()
@@ -447,7 +462,7 @@ final class ChatModel {
                 let handles: [ChatHandle]
                 if let retry { handles = [try await client.retry(persona: retry.0, reply: retry.1, observer: observer)] }
                 else {
-                    let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, images: images, observer: observer)
+                    let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, images: images, separateTasks: separate, observer: observer)
                     state.apply([submission.message], conversation: conversation.id)
                     handles = submission.handles
                     run.group = submission.group; run.classifying = submission.group != nil
@@ -457,9 +472,9 @@ final class ChatModel {
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handles.forEach { $0.cancel() }; sink.finish(); return }
                 run.handles = handles; run.accepting = false; run.pendingIDs = Set(handles.map { $0.id() })
                 if retry == nil && usesDraft {
-                    if state.draftRevision == draftRevision && state.mentionRevision == mentionRevision && state.imageRevision == imageRevision && state.draft == acceptedDraft {
+                    if state.draftRevision == draftRevision && state.mentionRevision == mentionRevision && state.imageRevision == imageRevision && state.delegationRevision == delegationRevision && state.draft == acceptedDraft {
                         if state.draft.trimmingCharacters(in: .whitespacesAndNewlines) == prompt { state.draft = "" }
-                        state.mentions = []; state.images = []
+                        state.mentions = []; state.images = []; state.separateTasks = false
                     }
                 }
                 for handle in handles { state.apply(handle.messages(), conversation: conversation.id) }
@@ -515,7 +530,7 @@ final class ChatModel {
             if !Task.isCancelled { await self?.refreshRoomsAfterReply() }
         }
     }
-    private func refreshRoomsAfterReply() async {
+    func refreshRoomsAfterReply() async {
         for (id, state) in rooms where state.loaded {
             do {
                 let messages = try await client.history(room: id)
@@ -549,6 +564,7 @@ final class ChatModel {
         }
     }
     func closeChat() {
+        delegationStream?.cancel(); delegationStream = nil; delegationSink?.finish(); delegationSink = nil
         selectionRevision = UUID()
         maintenanceHandles.values.forEach { $0.cancel() }
         for state in rooms.values {

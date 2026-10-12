@@ -1,5 +1,6 @@
 mod codec;
 mod contexts;
+mod delegation;
 pub(crate) mod images;
 #[cfg(test)]
 mod images_tests;
@@ -27,6 +28,7 @@ use uuid::Uuid;
 pub(crate) struct Database {
     connection: Mutex<Connection>,
     root: std::path::PathBuf,
+    pub(crate) codex: Mutex<std::sync::Weak<crate::codex::Manager>>,
     // Exclusive process lifetime ownership makes startup interruption recovery safe.
     _lock: File,
 }
@@ -55,7 +57,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 12 {
+        if version > 13 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -117,6 +119,9 @@ impl Database {
             tx.execute_batch("CREATE TABLE image_assets(id TEXT PRIMARY KEY,mime TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,source_bytes INTEGER NOT NULL,model_bytes INTEGER NOT NULL,source_name TEXT NOT NULL,reference TEXT NOT NULL);
                 CREATE TABLE message_images(message_id TEXT NOT NULL REFERENCES messages(id),asset_id TEXT NOT NULL REFERENCES image_assets(id),position INTEGER NOT NULL,PRIMARY KEY(message_id,position),UNIQUE(message_id,asset_id)); PRAGMA user_version=12;")?;
         }
+        if version < 13 {
+            tx.execute_batch(include_str!("storage/delegation-migration.sql"))?;
+        }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
@@ -133,10 +138,12 @@ impl Database {
         let database = Self {
             connection: Mutex::new(connection),
             root: root.to_path_buf(),
+            codex: Mutex::new(std::sync::Weak::new()),
             _lock: lock,
         };
         database.recover_memory(root)?;
         database.recover_maintenance()?;
+        database.recover_delegations()?;
         Ok(database)
     }
 
@@ -187,6 +194,10 @@ impl Database {
                 persona.context_notice="Fresh model context started; earlier messages and native history remain saved.".into();
             }
             if let Some(detail)=tx.query_row("SELECT detail FROM context_maintenance WHERE persona_id=?1 AND status IN ('failed','cancelled','interrupted') AND rowid=(SELECT MAX(rowid) FROM context_maintenance WHERE persona_id=?1)",[&persona.id],|r|r.get::<_,String>(0)).optional()? {persona.context_notice.push_str(&format!(" {detail}"));}
+            let delegation:Option<bool>=tx.query_row("SELECT delegation_tools FROM model_sessions WHERE persona_id=?1 AND status='active'",[&persona.id],|r|r.get(0)).optional()?;
+            if delegation == Some(false) {
+                persona.context_notice.push_str(" This preserved context has no delegation capability. Start fresh context to enable Codex tasks; the frozen prefix is unchanged.");
+            }
             persona.conversation_id = tx.query_row(
                 "SELECT id FROM conversations WHERE persona_id = ?1",
                 [&persona.id],
@@ -205,7 +216,7 @@ impl Database {
                 m.created_at, COALESCE(j.error, ''),
                 (j.status IN ('failed','cancelled','interrupted')
                   AND (j.membership_id IS NULL OR EXISTS(SELECT 1 FROM conversation_memberships member WHERE member.id=j.membership_id AND member.left_publication IS NULL))
-                  AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
+                  AND NOT EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=j.id OR EXISTS(SELECT 1 FROM json_each(task.record,'$.reports') r WHERE json_extract(r.value,'$.call')=j.id)) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
                   AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=j.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
                 WHERE m.conversation_id = ?1 ORDER BY m.sequence"

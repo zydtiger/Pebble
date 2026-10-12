@@ -82,6 +82,7 @@ pub(crate) struct RoomInput<'a> {
     pub text: &'a str,
     pub mentions: &'a [String],
     pub images: &'a [String],
+    pub separate_tasks: bool,
 }
 
 pub struct ChatSubmission {
@@ -95,6 +96,7 @@ pub struct ChatTask {
     pub id: String,
     pub messages: Vec<Message>,
     control: Arc<Control>,
+    cancel_on_drop: bool,
 }
 
 impl ChatTask {
@@ -105,7 +107,9 @@ impl ChatTask {
 
 impl Drop for ChatTask {
     fn drop(&mut self) {
-        self.cancel();
+        if self.cancel_on_drop {
+            self.cancel();
+        }
     }
 }
 
@@ -122,6 +126,49 @@ impl Chats {
     ) -> Result<T, Error> {
         let _queues = self.queues.lock().expect("generation queues lock");
         operation()
+    }
+
+    pub(crate) fn task_report(
+        self: &Arc<Self>,
+        db: Arc<Database>,
+        root: &std::path::Path,
+        id: &str,
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<(), Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        if let Some(turn) = db.enqueue_task_report(id)? {
+            let launch = (|| {
+                let persona = crate::config::load(root)?
+                    .personas
+                    .into_iter()
+                    .find(|p| p.id == turn.persona_id)
+                    .ok_or(Error::UnknownPersona)?;
+                let queue = queues.entry(persona.id.clone()).or_default().clone();
+                self.launch(
+                    db.clone(),
+                    persona,
+                    listener.clone(),
+                    queue,
+                    turn.clone(),
+                    None,
+                )
+            })();
+            match launch {
+                // Report work belongs to the manager, not a temporary frontend handle.
+                Ok(task) => drop(task),
+                Err(error) => {
+                    finish_pending(
+                        &db,
+                        &turn,
+                        &listener,
+                        MessageStatus::Failed,
+                        Some(error.to_string()),
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn start_maintenance(
@@ -223,12 +270,13 @@ impl Chats {
     ) -> Result<ChatSubmission, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
-        let (message, turns, decisions) = db.enqueue_room_images(
+        let (message, turns, decisions) = db.enqueue_room_assigned_images(
             input.room,
             input.text,
             input.mentions,
             &workspace.personas,
             input.images,
+            input.separate_tasks,
         )?;
         let mut tasks = Vec::new();
         for turn in turns {
@@ -391,6 +439,7 @@ impl Chats {
             id: turn.call_id.clone(),
             messages: vec![turn.user.clone(), turn.reply.clone()],
             control: control.clone(),
+            cancel_on_drop: !db.is_task_report(&turn.call_id).unwrap_or(false),
         });
         if let Some((group, _, _)) = &registration {
             group.register(task.clone());
@@ -724,12 +773,14 @@ fn generate_structured(
         .ok_or_else(|| Error::Generation("Missing frozen persona state.".into()))?;
     let mut feedback: Option<String> = None;
     let mut base_request = request.clone();
-    base_request.memory_tools = request.memory_tools && chat.is_some() && !db.tool_used(request)?;
+    let unused_tool_phase = !db.tool_used(request)? && !db.delegation_used(request)?;
+    base_request.memory_tools = request.memory_tools && chat.is_some() && unused_tool_phase;
+    base_request.delegation_tools = request.delegation_tools && chat.is_some() && unused_tool_phase;
     let deadline = std::time::Instant::now() + Duration::from_secs(180);
-    let mut tool_phase = base_request.memory_tools;
+    let mut tool_phase = base_request.memory_tools || base_request.delegation_tools;
     let mut candidate_count = 0;
     let runtime = worker_runtime()?;
-    for _ in 0..4 {
+    for _ in 0..5 {
         if control.is_cancelled() {
             return Err(Error::Generation("Cancelled".into()));
         }
@@ -753,7 +804,7 @@ fn generate_structured(
         if let Some(chat) = chat {
             let body =
                 crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1;
-            if candidate_request.memory_tools {
+            if candidate_request.memory_tools || candidate_request.delegation_tools {
                 budget.check_chat_start(&body)?;
             } else {
                 budget.check_body(&body)?;
@@ -783,9 +834,39 @@ fn generate_structured(
         };
         if tool_phase {
             db.archive_tool_output(&request.call_id, &output)?;
+            let delegation = crate::codex::tool::calls(&output)?;
+            if let Some(call) = delegation.first() {
+                if !base_request.delegation_tools {
+                    return Err(crate::codex::failure(
+                        "Delegation is unavailable in this context.",
+                    ));
+                }
+                let manager = db
+                    .codex
+                    .lock()
+                    .expect("task manager")
+                    .upgrade()
+                    .ok_or_else(|| crate::codex::failure("Task manager is closing."))?;
+                let (result, dispatch) = control
+                    .while_active(|| {
+                        db.prepare_delegation(request, call, &output, &manager.settings()?)
+                    })
+                    .ok_or_else(|| Error::Generation("Cancelled".into()))??;
+                if let Some(id) = dispatch {
+                    manager.dispatch(&id)?;
+                }
+                manager.notify();
+                crate::memory::append(&mut base_request, &output)?;
+                crate::memory::append(&mut base_request, &[result])?;
+                base_request.delegation_tools = false;
+                base_request.memory_tools = false;
+                tool_phase = false;
+                continue;
+            }
             let calls = crate::memory::calls(&output)?;
             tool_phase = false;
             base_request.memory_tools = false;
+            base_request.delegation_tools = false;
             if let Some(call) = calls.first() {
                 let expected = db.memory_snapshot(&request.call_id)?;
                 let result = db.execute_memory(

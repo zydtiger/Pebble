@@ -101,7 +101,7 @@ private navigation, recovery and per-room drafts. Composer checks retain native
 marked text, Enter send and Command/Shift–Enter newline behavior.
 
 After v0.3.0: memory retrieval, automatic threshold compaction,
-Codex delegation, attachments, proactive conversations outside a user-started
+proactive conversations outside a user-started
 group round, separate roleplay worlds, richer relationships, search/cold
 archives/exports/deletion, sync, notarization, and broader platform validation
 remain separately scoped. The local app remains ad-hoc signed for Apple Silicon;
@@ -123,15 +123,15 @@ publication failure/restart recovery and cancellation. Core journal tests cover
 prepared/write/result restart stages, duplicate call IDs and unchanged-memory
 no-op. Budget tests verify exact initial/maintenance boundaries. The local demo
 explicitly preserves memory without claiming model-backed consolidation.
-No Codex adapter, delegated task tables, work tools, retrieval or automatic
-rollover is included.
+This historical memory milestone did not include a Codex adapter, delegated task
+tables, work tools, retrieval or automatic rollover.
 
 ## Next development stages
 
-Conversation request parameters and image input are implemented below; delegation
-remains proposed work after v0.3.0. Keep the existing delegation version labels;
-the conversation improvements remain version-unassigned. Each increment should
-leave a runnable app.
+Conversation request parameters, image input and the delegation implementation
+are described below. The existing delegation version labels describe runnable
+stage boundaries; no new release version is assigned until integrated validation
+and independent review complete.
 
 ### Conversation improvements before delegation
 
@@ -161,7 +161,7 @@ leave a runnable app.
 These are useful independent increments while delegation details are discussed.
 Neither requires exposing work tools to personas or launching Codex tasks.
 
-### Proposed v0.3.1–v0.4.0 delegation sequence
+### v0.3.1–v0.4.0 delegation implementation
 
 | Stage | Runnable outcome | Completion boundary |
 | --- | --- | --- |
@@ -179,10 +179,15 @@ reply uses the current persona context and its original destination. If that
 destination is no longer eligible, retain the result in its card for explicit
 routing. Retrying the explanation must not repeat completed work.
 
-Before starting v0.3.1, settle the first allowed workspaces/execution scope,
-the task-card question/approval experience, and app-quit behavior. The proposed
-first lifecycle is app-managed while Pebble is open, with restart reconciliation,
-not a promise of an independent always-running service.
+The implementation uses managed per-task directories for ordinary read-only
+work, explicitly selected external workspaces for writes, native queued
+questions/approvals and app-managed children while Pebble is open. Restart
+reconciles actual outcomes without resending uncertain work. Shared ownership
+is frozen per canonical user message; the Mention menu can explicitly partition
+separate assignments among selected characters. See [delegation](delegation.md)
+for the complete contract, deterministic tests, local evidence and the remaining
+Calendar launch-context permission limitation. Independent audit and final
+integration gates remain necessary before treating these stage labels as a release.
 
 ### Image generation and later work
 

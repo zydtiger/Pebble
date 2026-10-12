@@ -65,9 +65,9 @@ pub(crate) async fn generate(
     }
     let mut framing = sse::Framing::default();
     let mut completion = chat_completions::Stream::default();
-    completion.allow_tools = request.memory_tools;
+    completion.allow_tools = request.memory_tools || request.delegation_tools;
     let mut responses = responses::Stream::default();
-    responses.allow_tools = request.memory_tools;
+    responses.allow_tools = request.memory_tools || request.delegation_tools;
     let mut received = 0usize;
     loop {
         let chunk = tokio::time::timeout(Duration::from_secs(45), response.chunk())
@@ -163,10 +163,24 @@ pub(crate) fn request_body(
             || item["role"] == "tool"
             || item["type"] == "function_call_output"
     });
-    if request.memory_tools || replay_tools {
-        body["tools"] = json!([crate::memory::declaration(&request.protocol)]);
+    if request.memory_tools || request.delegation_tools || replay_tools {
+        let mut tools = vec![crate::memory::declaration(&request.protocol)];
+        if request.delegation_tools
+            || (request.response_schema.is_some()
+                && messages.iter().any(|v| {
+                    v["name"] == "delegate_task"
+                        || v["tool_calls"].as_array().is_some_and(|calls| {
+                            calls
+                                .iter()
+                                .any(|c| c["function"]["name"] == "delegate_task")
+                        })
+                }))
+        {
+            tools.push(crate::codex::tool::declaration(&request.protocol));
+        }
+        body["tools"] = json!(tools);
         body["parallel_tool_calls"] = json!(false);
-        body["tool_choice"] = json!(if request.memory_tools {
+        body["tool_choice"] = json!(if request.memory_tools || request.delegation_tools {
             if request.response_schema.is_none() {
                 "required"
             } else {
@@ -177,6 +191,7 @@ pub(crate) fn request_body(
         });
     }
     if !request.memory_tools
+        && !request.delegation_tools
         && let Some(schema) = &request.response_schema
     {
         if chat.api == "chat_completions"

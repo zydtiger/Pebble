@@ -24,6 +24,17 @@ impl Database {
         personas: &[Persona],
         images: &[String],
     ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
+        self.enqueue_room_assigned_images(room_id, prompt, picked, personas, images, false)
+    }
+    pub(crate) fn enqueue_room_assigned_images(
+        &self,
+        room_id: &str,
+        prompt: &str,
+        picked: &[String],
+        personas: &[Persona],
+        images: &[String],
+        separate_tasks: bool,
+    ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         let room = super::rooms::room(&tx, room_id)?;
@@ -55,6 +66,18 @@ impl Database {
             super::turns::insert_event_for(&tx, persona, room_id, &user, "received")?;
         }
         if room.kind == "group" {
+            if separate_tasks && selected.len() > 1 {
+                tx.execute(
+                    "UPDATE messages SET separate_delegations=1 WHERE id=?1",
+                    [&user],
+                )?;
+                for persona in &selected {
+                    tx.execute(
+                        "INSERT INTO delegation_assignments(message_id,persona_id) VALUES (?1,?2)",
+                        params![user, persona],
+                    )?;
+                }
+            }
             let decisions = super::rounds::accept(&tx, &room, &user, &selected, personas)?;
             let user = message(&tx, &user)?;
             tx.commit()?;
@@ -124,6 +147,7 @@ impl Database {
             params![pending.reply.id, status.as_str()],
         )?;
         tx.execute("UPDATE model_calls SET status = ?2, error = ?3, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1 AND status = 'queued'", params![pending.call_id, status.as_str(), error])?;
+        super::delegation::finish_report(&tx, &pending.call_id, "failed")?;
         let reply = message(&tx, &pending.reply.id)?;
         super::rounds::complete_slot(
             &tx,

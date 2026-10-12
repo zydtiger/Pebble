@@ -4,7 +4,9 @@ Pebble is a macOS character-chat app. Read `README.md` and `docs/architecture.md
 before changing the application. The current baseline is the v0.3.0 local
 private/group-chat app with selective participation, bounded room scheduling, editable future-only membership, manual mentions, structured
 replies, durable state, and native contract controls. The current image-input
-increment adds durable static JPEG/PNG attachments to this baseline.
+increment adds durable static JPEG/PNG attachments to this baseline. The
+version-unassigned Codex delegation increment adds local task execution, native
+questions/approvals, durable evidence and queued private/group reporting.
 
 ## Ownership and scope
 
@@ -21,7 +23,11 @@ increment adds durable static JPEG/PNG attachments to this baseline.
   presentation; Rust owns validation, files, context, history, and execution.
   The completed v0.1.3–v0.2.0 sequence provides group rooms, visibility, response
   classification, bounded reply scheduling, and membership/recovery as defined
-  in docs/roadmap.md. The completed v0.2.1–v0.3.0 sequence adds persona-scoped native memory updates and explicit asynchronous memory consolidation with durable context markers. Rust owns tool effects, recovery and maintenance; Swift only presents them. Rust also owns immutable image assets, visibility, model/classifier image inputs, and frozen replay; Swift presents pick/paste/drop and image views. See docs/images.md. Future changes need scoped authorization. Automatic compaction, image generation, task delegation, deletion, import/export and cloud sync remain deferred.
+  in docs/roadmap.md. The completed v0.2.1–v0.3.0 sequence adds persona-scoped native memory updates and explicit asynchronous memory consolidation with durable context markers. Rust owns tool effects, recovery and maintenance; Swift only presents them. Rust also owns immutable image assets, visibility, model/classifier image inputs, and frozen replay; Swift presents pick/paste/drop and image views. See docs/images.md. Rust also owns local stdio Codex tasks, scope, durable identity/recovery, native
+  interactions and original-room result delivery; Swift presents typed task
+  cards/settings. See docs/delegation.md for capability and permission limits.
+  Future changes need scoped authorization. Automatic compaction, image
+  generation, deletion, import/export and cloud sync remain deferred.
 
 ## Development and validation
 

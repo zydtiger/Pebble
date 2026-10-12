@@ -23,6 +23,9 @@ impl Database {
         {
             return Err(unavailable());
         }
+        if super::delegation::report_input(&tx, &original)?.is_some() {
+            return Err(Error::RetryUnavailable("This reply explains a saved Codex outcome. Use Retry report on its task card; ordinary Retry cannot rerun task work.".into()));
+        }
         if let Some(id) = &membership
             && !tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_memberships WHERE id=?1 AND persona_id=?2 AND conversation_id=?3 AND left_publication IS NULL)",params![id,persona.id,conversation],|r|r.get::<_,bool>(0))? {return Err(unavailable());}
         let receipt = tx.query_row(

@@ -1,9 +1,10 @@
 # Persona memory and explicit consolidation
 
 Memory belongs to one character across private and group rooms. New supported
-contexts expose one native tool, `update_memory`, whose sole argument `content`
+contexts expose the native memory tool `update_memory`, whose sole argument `content`
 is the complete revised MEMORY.md. Rust chooses the persona directory and file;
-models cannot choose paths, run work tools or delegate tasks. The model should
+this tool cannot choose paths or perform work. External grounding and work use
+the separate [delegation contract](delegation.md). The model should
 preserve useful prior memory, correct outdated facts, distinguish fictional and
 real context, and avoid copying current affinity/mood state into long-term memory.
 A write is optional in ordinary conversation. Unchanged content succeeds without
@@ -126,5 +127,5 @@ The marker is never a model input or received/sent event.
 
 See [context](context.md#maintenance-headroom) for conservative reserve arithmetic,
 [providers](providers.md#native-memory-tools) for protocol contracts, and
-[history](history.md) for schema 11 storage. No threshold rollover, retrieval,
-attachments, work execution or delegation is included.
+[history](history.md) for schema 11 storage. This memory subsystem includes no threshold rollover or retrieval.
+[Images](images.md) and [delegation](delegation.md) have separate contracts.

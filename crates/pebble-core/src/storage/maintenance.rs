@@ -189,6 +189,7 @@ impl Database {
             state_before: Some(state.clone()),
             memory_tools: true,
             memory_capable: true,
+            delegation_tools: false,
         };
         tx.execute("INSERT INTO context_maintenance(id,persona_id,source_session,event_cutoff,state_before,status,request,binding) VALUES(?1,?2,?3,?4,?5,'running',?6,?7)",params![id,persona.id,source.as_ref().map(|s|&s.0),cutoff,state.to_string(),serde_json::to_string(&request)?,serde_json::to_string(&binding)?])?;
         tx.commit()?;
