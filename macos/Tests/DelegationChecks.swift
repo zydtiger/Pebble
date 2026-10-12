@@ -37,36 +37,70 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
         NSApplication.shared.postEvent(up, atStart: true)
         NSApplication.shared.sendEvent(down)
     }
-    func pressMonitor() async throws {
-        guard let control = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") else { throw RenderError.failed("Missing monitor button") }
-        let selector = NSSelectorFromString("accessibilityFrame")
-        guard control.responds(to: selector) else { throw RenderError.failed("Monitor has no native hit target") }
-        typealias Frame = @convention(c) (AnyObject, Selector) -> CGRect
-        let frame = unsafeBitCast(control.method(for: selector), to: Frame.self)(control, selector)
-        if let button = control as? NSButton { button.performClick(nil) }
-        else { click(window.convertPoint(fromScreen: NSPoint(x: frame.midX + 8, y: frame.midY))) }
+    var pointerRegion: NSView?
+    func movePointer(_ point: NSPoint) async throws {
+        func findRegion(_ view: NSView) -> NSView? {
+            if view.identifier?.rawValue == "task-monitor-hover-region" { return view }
+            return view.subviews.lazy.compactMap(findRegion).first
+        }
+        let region = findRegion(window.contentView!)
+        let inside = region.map { $0.bounds.contains($0.convert(point, from: nil)) } ?? false
+        // Deliver native tracking transitions in-process, without system event-injection permissions.
+        func event(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.enterExitEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        }
+        if let previous = pointerRegion, previous !== region || !inside {
+            previous.mouseExited(with: event(.mouseExited))
+            pointerRegion = nil
+        }
+        if let region, inside, pointerRegion !== region {
+            try requireTracking(region)
+            region.mouseEntered(with: event(.mouseEntered))
+            pointerRegion = region
+        }
         try await Task.sleep(for: .milliseconds(200))
     }
+    func requireTracking(_ region: NSView) throws {
+        guard region.trackingAreas.contains(where: { $0.options.contains([.mouseEnteredAndExited, .inVisibleRect]) }) else {
+            throw RenderError.failed("Monitor is missing its native hover tracking area")
+        }
+    }
+    func monitorPoint() throws -> NSPoint {
+        guard let control = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton else {
+            throw RenderError.failed("Missing monitor button")
+        }
+        return control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
+    }
+    func hoverMonitor() async throws { try await movePointer(monitorPoint()) }
+    func leaveMonitor() async throws { try await movePointer(NSPoint(x: 250, y: 50)) }
     func dropdownVisible() -> Bool {
-        (RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton)?.toolTip == "Hide background tasks"
+        (RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton)?.accessibilityValue() as? String == "Expanded"
     }
     func assertNoTaskControls() throws {
         for identifier in ["delegated-task-synthetic-task", "task-followup-synthetic-task", "task-retry-report-synthetic-task", "task-allow-once", "task-send-answers", "task-request-summary"] {
             guard RenderChecks.findAccessible(window.contentView!, identifier: identifier) == nil else { throw RenderError.failed("Obsolete task control remains: \(identifier)") }
         }
     }
+    window.acceptsMouseMovedEvents = true
+    NSApplication.shared.activate()
+    try await leaveMonitor()
     model.delegatedTasks = [fixture(.running)]
     try await Task.sleep(for: .milliseconds(200))
     guard hasExecutionProgress(window.contentView!), !dropdownVisible() else { throw RenderError.failed("Running monitor has no progress or opens automatically") }
     try assertNoTaskControls()
     try RenderChecks.capture(window, name: "task-monitor-private-closed")
-    if let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton {
-        let point = button.convert(NSPoint(x: button.bounds.midX + 8, y: button.bounds.midY), to: nil)
-        NSApplication.shared.activate()
-        click(point)
-        try await Task.sleep(for: .milliseconds(200))
-        guard dropdownVisible() else { throw RenderError.failed("Actual monitor pointer click did not open") }
-    }
+    try await hoverMonitor()
+    guard dropdownVisible() else { throw RenderError.failed("Pointer hover did not open the monitor") }
+    let indicator = try monitorPoint()
+    try await movePointer(NSPoint(x: indicator.x, y: indicator.y - 18))
+    guard dropdownVisible() else { throw RenderError.failed("Crossing the indicator/menu gap closed the dropdown") }
+    try await movePointer(NSPoint(x: indicator.x - 80, y: indicator.y - 55))
+    guard dropdownVisible() else { throw RenderError.failed("Moving into the dropdown closed it") }
+    try await hoverMonitor()
+    click(try monitorPoint())
+    try await Task.sleep(for: .milliseconds(200))
+    guard dropdownVisible() else { throw RenderError.failed("Clicking a hovered indicator toggled the dropdown closed") }
 
     try RenderChecks.capture(window, name: "task-monitor-private-open")
     guard dropdownVisible(), executionProgressCount(window.contentView!) == 2 else { throw RenderError.failed("Monitor did not open with real header and row progress") }
@@ -74,10 +108,18 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
     NSApplication.shared.sendEvent(escape)
     try await Task.sleep(for: .milliseconds(200))
     guard !dropdownVisible() else { throw RenderError.failed("Escape did not close monitor") }
-    try await pressMonitor()
+    // Keyboard/VoiceOver can still open the monitor without a pointer.
+    try await leaveMonitor()
+    (RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton)?.performClick(nil)
+    try await Task.sleep(for: .milliseconds(200))
+    guard dropdownVisible() else { throw RenderError.failed("Accessible activation did not open the monitor") }
     click(NSPoint(x: 250, y: 50))
     try await Task.sleep(for: .milliseconds(200))
     guard !dropdownVisible() else { throw RenderError.failed("Outside click did not close monitor") }
+
+    try await hoverMonitor()
+    try await leaveMonitor()
+    guard !dropdownVisible() else { throw RenderError.failed("Pointer exit did not close the monitor") }
 
     for state: DelegationState in [.queued, .needsInput, .needsApproval, .failed, .interrupted, .cancelled, .uncertain, .completed, .cancellationRequested] {
         model.delegatedTasks = [fixture(state, report: "queued")]
@@ -97,7 +139,7 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
     model.delegatedTasks = [fixture(.failed, id: "old-failure")] + (0..<8).map { fixture(.completed, id: "recent-\($0)") } + [fixture(.running)]
     try await Task.sleep(for: .milliseconds(150))
     guard model.monitorTasks.map(\.id) == ["synthetic-task"], aggregateLabel() == "Background tasks · Working", hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Old outcomes changed the running-only monitor") }
-    try await pressMonitor()
+    try await hoverMonitor()
     guard executionProgressCount(window.contentView!) == 2 else { throw RenderError.failed("Running row and button must both show progress") }
     try RenderChecks.capture(window, name: "task-monitor-running-only")
     model.delegatedTasks = [fixture(.failed, report: "failed")]
@@ -107,9 +149,9 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
     model.delegatedTasks = [fixture(.running, title: "Review the release changes and summarize the important migration steps for this workspace")]
     try await Task.sleep(for: .milliseconds(150))
     guard !dropdownVisible() else { throw RenderError.failed("A new task reopened the dropdown automatically") }
-    try await pressMonitor()
+    try await hoverMonitor()
     try RenderChecks.capture(window, name: "task-monitor-wrapped-title")
-    try await pressMonitor()
+    try await leaveMonitor()
 
     guard await model.createGroup("Release notes", members: [persona.id]) else { throw RenderError.failed("Cannot create synthetic group") }
     for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(20)) }
@@ -122,16 +164,16 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
     try await Task.sleep(for: .milliseconds(200))
     guard model.monitorTasks.count == 1, hasExecutionProgress(window.contentView!) else { throw RenderError.failed("Cross-room monitor disappeared") }
     try RenderChecks.capture(window, name: "task-monitor-group-closed")
-    try await pressMonitor()
+    try await hoverMonitor()
     try RenderChecks.capture(window, name: "task-monitor-group-open")
     window.setContentSize(NSSize(width: 820, height: 610))
     try await Task.sleep(for: .milliseconds(200))
     try RenderChecks.capture(window, name: "task-monitor-group-compact")
     try assertNoTaskControls()
-    try await pressMonitor()
+    try await leaveMonitor()
     model.delegatedTasks = []
     try await Task.sleep(for: .milliseconds(150))
     guard RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") == nil else { throw RenderError.failed("Empty monitor retained its button") }
     model.delegationStream = nil
-    print("Native task monitor checks passed: fixed private/group overlay, dismissal, running-only rows, terminal and queued tasks hidden, automatic disappearance, real progress and no task controls.")
+    print("Native task monitor checks passed: fixed private/group overlay, hover open/exit/gap traversal, accessible activation, dismissal, running-only rows, terminal and queued tasks hidden, automatic disappearance, real progress and no task controls.")
 }

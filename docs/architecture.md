@@ -179,7 +179,10 @@ through `delegate_task(task_id)`. Uncertain work is never blindly resumed.
 
 UniFFI exposes typed task snapshots, subscriptions and short commands. Swift
 presents an app-wide circular task monitor fixed at the transcript’s top-right,
-below the persona/group header, plus separate local settings. Its dropdown shows
+below the persona/group header, plus separate local settings. Hovering opens its
+dropdown; a shared hover region spans the indicator, gap and dropdown, keeping it
+open until the pointer leaves. Keyboard/accessibility activation can also open it,
+and Escape dismisses it. The dropdown shows
 brief task descriptions, owners and actual execution status only while tasks are
 running or awaiting cancellation confirmation. The button and rows show progress;
 queued, blocked and terminal tasks are hidden. Failures are explained through chat.

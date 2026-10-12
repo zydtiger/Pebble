@@ -91,7 +91,9 @@ are explained by the character through chat, with saved task evidence retained.
 Rows contain only the brief task description and reporting character/status;
 there are no task cards in the transcript, task followup fields, approval/question
 forms, retry or reconciliation controls. The button has a subtle shadow and dims
-on hover. Outside clicks and Escape close the dropdown; reduced motion disables
+on hover. Hovering opens the dropdown and moving out of the combined indicator/menu
+region closes it; crossing the gap between them keeps it open. Keyboard/accessibility
+activation can also open it. Outside clicks and Escape close it; reduced motion disables
 its transition. Explanation delivery never revives a hidden task or animates
 otherwise inactive execution.
 

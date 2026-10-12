@@ -25,8 +25,9 @@ pixels. See [image input and limits](docs/images.md).
 
 Codex delegation is implemented as a version-unassigned increment: characters
 hand grounding and authorized work to a local app-server while chat continues.
-A small circular task monitor stays at the transcript’s top-right corner. Open it
-to see app-wide running work; the button disappears when no task is executing.
+A small circular task monitor stays at the transcript’s top-right corner. Hover
+over it to see app-wide running work; the dropdown stays open while the pointer
+is over it and closes when the pointer leaves. The button disappears when no task is executing.
 Characters relay failures, questions, limitations,
 evidence and artifacts through ordinary chat.
 Open **Codex tasks** for local CLI/login checks and separate settings; ordinary

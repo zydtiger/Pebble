@@ -9,7 +9,7 @@ struct TaskMonitor: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            MonitorButton(expanded: expanded) { toggle() }
+            MonitorButton(expanded: expanded) { open() }
             .overlay {
                 ProgressView().controlSize(.small).scaleEffect(0.8)
                     .allowsHitTesting(false)
@@ -52,12 +52,12 @@ struct TaskMonitor: View {
                 .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -5)))
             }
         }
-        .background(MonitorDismissal(enabled: expanded) { close() })
+        .background(MonitorInteraction(enabled: expanded, enter: { open() }, dismiss: { close() }))
         .onChange(of: model.selectedID) { _, _ in close() }
         .onChange(of: model.monitorTasks.isEmpty) { _, empty in if empty { close() } }
     }
-    private func toggle() {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { expanded.toggle() }
+    private func open() {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { expanded = true }
     }
     private func close() {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) { expanded = false }
@@ -77,7 +77,7 @@ private struct MonitorButton: NSViewRepresentable {
     }
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.action = action
-        button.toolTip = expanded ? "Hide background tasks" : "Background tasks"
+        button.toolTip = "Background tasks"
         button.setAccessibilityLabel("Background tasks · Working")
         button.setAccessibilityValue(expanded ? "Expanded" : "Collapsed")
     }
@@ -88,21 +88,39 @@ private struct MonitorButton: NSViewRepresentable {
     }
 }
 
-// Observe without consuming outside clicks, so the normal chat remains interactive.
-private struct MonitorDismissal: NSViewRepresentable {
+// One tracking region spans the indicator, gap and dropdown without consuming chat clicks.
+private struct MonitorInteraction: NSViewRepresentable {
     var enabled: Bool
+    var enter: () -> Void
     var dismiss: () -> Void
-    func makeNSView(context: Context) -> DismissalView { DismissalView() }
-    func updateNSView(_ view: DismissalView, context: Context) {
+    func makeNSView(context: Context) -> InteractionView {
+        let view = InteractionView()
+        view.identifier = NSUserInterfaceItemIdentifier("task-monitor-hover-region")
+        return view
+    }
+    func updateNSView(_ view: InteractionView, context: Context) {
         view.enabled = enabled
+        view.enter = enter
         view.dismiss = dismiss
     }
-    static func dismantleNSView(_ view: DismissalView, coordinator: ()) { view.stopObserving() }
-    final class DismissalView: NSView {
+    static func dismantleNSView(_ view: InteractionView, coordinator: ()) { view.stopObserving() }
+    final class InteractionView: NSView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         var enabled = false
+        var enter: (() -> Void)?
         var dismiss: (() -> Void)?
         private var monitor: Any?
+        private var hoverArea: NSTrackingArea?
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let hoverArea { removeTrackingArea(hoverArea) }
+            let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                                      owner: self, userInfo: nil)
+            addTrackingArea(area)
+            hoverArea = area
+        }
+        override func mouseEntered(with event: NSEvent) { enter?() }
+        override func mouseExited(with event: NSEvent) { dismiss?() }
         func stopObserving() {
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         }
