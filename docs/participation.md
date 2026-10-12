@@ -8,12 +8,14 @@ and bot followups remain inside the finite [room round](group-flow.md).
 
 ## Configuration and provider contract
 
-The new-root seed selects:
+New data roots leave both model connections unconfigured. The seed config
+contains commented examples; replace the URL below with your classifier's API
+root and enable the connection to use automatic participation:
 
 ```toml
 [defaults.classifier]
 model = "Qwen/Qwen3.5-2B"
-base_url = "http://beluga:4014/v1"
+base_url = "https://api.example.com/v1"
 api = "chat_completions"
 api_key = ""
 context_len = 16384
@@ -37,8 +39,8 @@ Disabling a character override inherits app defaults. Saving requires idle
 replies, decisions and still-admittable slots in the affected scope; validation precedes atomic TOML
 replacement. No chat session or state boundary changes.
 
-Both protocols use streaming false, a configured output cap (64 in the seed),
-and required-boolean-only strict JSON schema. The seed explicitly configures
+Both protocols use streaming false, a configured output cap (64 in the example),
+and required-boolean-only strict JSON schema. The example explicitly configures
 `temperature = 0` and nested `chat_template_kwargs.enable_thinking = false`;
 otherwise optional parameters are omitted. Both connections use the concrete
 [request settings contract](settings.md#concrete-request-parameters).
@@ -135,25 +137,27 @@ privacy/nonconsumption, settings inheritance/credentials/protocol switches,
 mention plus volunteer, cancellation/stale callback/restart, populated migration,
 and actual newer cross-room prefix/state inheritance. Native bridge/render checks
 exercise real Deciding/Listening/error/Stop/manual recovery and dynamic replies.
-Manual synthetic fixtures disable classifiers explicitly and never contact the
-seed service.
+Synthetic fixtures use local deterministic servers and never contact a live
+model service.
 
 An opt-in integration check uses only synthetic temporary roots and the frozen
-unchanged-label subset in `tests/fixtures/participation-regressions.json`:
+unchanged-label subset in `tests/fixtures/participation-regressions.json`.
+Replace both example API roots and model names with your deployed services:
 
 ```sh
 mkdir -p build/participation-live
 PEBBLE_CLASSIFIER_REPORT="$PWD/build/participation-live/report.json" \
-PEBBLE_CLASSIFIER_API_ROOT=http://beluga:4014/v1 \
+PEBBLE_CLASSIFIER_API_ROOT=https://api.example.com/v1 \
 PEBBLE_CLASSIFIER_MODEL=Qwen/Qwen3.5-2B \
-PEBBLE_LIVE_API_ROOT=http://beluga:4013/v1 \
+PEBBLE_LIVE_API_ROOT=https://api.example.com/v1 \
 PEBBLE_LIVE_MODEL=gemma-4-31b-uncensored \
 cargo test -p pebble-core --test participation_live_endpoint -- --ignored --nocapture
 ```
 
 `PEBBLE_CLASSIFIER_REPORT` is required and must be an absolute path in an existing
 directory. If proxy routing fails, retry only that command with
-`NO_PROXY=beluga,127.0.0.1,localhost`.
+`NO_PROXY=api.example.com,127.0.0.1,localhost`, replacing the example host with
+your endpoint host.
 
 The final v0.2.0 selected-service run kept the eight frozen labels and scored
 TP 5 / FN 0 / FP 0 / TN 3, with no invalid initial response. Metrics use each

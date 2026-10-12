@@ -98,6 +98,9 @@ accepted as assistant context. Empty drafts are not sent.
 
 ## Try a group chat
 
+New installations support manual mentions immediately. Configure the separate
+**Participation model** connection to enable automatic participation.
+
 1. Choose **New group**, enter a name, and select one or more existing characters.
    Groups have stable IDs and appear beneath private chats in the sidebar.
 2. Type `@Name` or use **Mention** to choose members. Selected chips are explicit
@@ -202,7 +205,7 @@ For example, edit the local app config (replace the sample root and model):
 ```toml
 [defaults.chat]
 model = "your-model"
-base_url = "http://localhost:8080/v1"
+base_url = "https://api.example.com/v1"
 api = "chat_completions"
 api_key = ""
 context_len = 65536
@@ -366,6 +369,15 @@ in `.pre-commit-config.yaml` own the exact validation commands. Install `prek`
 on the development machine and run `prek install` in a clone to activate its
 pre-commit, pre-push, and commit-message hooks. Hooks are not installed globally.
 
+[GitHub Actions](.github/workflows/ci.yml) runs on `macos-latest` for pull
+requests, pushes to `main`, and manual dispatch. It uses `just check` for the
+pre-commit and pre-push stages (file checks, actionlint, Rust formatting/lint/tests,
+and Swift FFI integration), then runs the manual application-build hook. It
+does not run opt-in live endpoint tests or require model credentials.
+Rust uses the repository's pinned toolchain. Dependabot checks Actions weekly
+and Cargo, Rust toolchain, and hook updates monthly. The workflow's `prek-version`
+minor range and Homebrew build tools are maintained manually.
+
 Tests use isolated data roots; UI-check data stays under the ignored `build/`
 directory for inspection. The Rust tests cover restart
 identity, schema scope, file edits, connection inheritance, invalid files,
@@ -381,10 +393,11 @@ remove their isolated temporary persona files when finished.
 
 Live endpoint validation is opt-in; ordinary tests only use local deterministic
 servers. The following test seeds synthetic character files in an isolated
-temporary root, saves settings, completes two turns across restart, and checks early cancellation plus explicit retry:
+temporary root, saves settings, completes two turns across restart, and checks early cancellation plus explicit retry.
+Replace the example API root and model with your deployed service:
 
 ```sh
-PEBBLE_LIVE_API_ROOT=http://localhost:8080/v1 \
+PEBBLE_LIVE_API_ROOT=https://api.example.com/v1 \
 PEBBLE_LIVE_MODEL=your-model \
 cargo test -p pebble-core --test live_endpoint opt_in_live_two_turns_restart_and_cancel -- --ignored --nocapture
 ```
@@ -397,3 +410,7 @@ read the app's actual character files or chat history and prints no reasoning
 content or credentials.
 
 Nothing is committed, published, or released automatically by these commands.
+
+## License
+
+Pebble is licensed under the [MIT License](LICENSE).

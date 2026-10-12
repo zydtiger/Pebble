@@ -89,10 +89,11 @@ v0.1.2 migration. Native bridge/render checks exercise real room creation,
 switching, mention chips, member management and attribution. Both-protocol
 crash fixtures reopen during classification, queueing and generation, preserving
 accepted native bytes/state and interrupting unfinished work without resending. An opt-in two-protocol endpoint check
-uses only synthetic temporary roots:
+uses only synthetic temporary roots. Replace the example API root and model
+with your deployed service:
 
 ```sh
-PEBBLE_LIVE_API_ROOT=http://beluga:4013/v1 \
+PEBBLE_LIVE_API_ROOT=https://api.example.com/v1 \
 PEBBLE_LIVE_MODEL=gemma-4-31b-uncensored \
 PEBBLE_LIVE_RESPONSES_SCHEMA_FORMAT=response_format \
 cargo test -p pebble-core --test group_live_endpoint -- --ignored --nocapture

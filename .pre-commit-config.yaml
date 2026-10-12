@@ -19,6 +19,11 @@ repos:
         name: commit subject
         stages: [commit-msg]
         args: ['--multiline', '\A(feat|fix|docs|refactor|test|build|chore): [a-z]([^\n]*[^\n.])?(\n|\z)']
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+    hooks:
+      - id: actionlint
+        files: ^\.github/workflows/
   - repo: local
     hooks:
       - id: cargo-fmt
@@ -48,3 +53,10 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+      - id: native-app
+        name: Native macOS application build
+        entry: bash scripts/build-app.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]

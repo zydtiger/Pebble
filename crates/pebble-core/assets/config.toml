@@ -1,10 +1,10 @@
 # Shared provider settings belong here. Local demo mode needs no API key.
 [defaults]
 
-# Enable a complete connection for live model replies.
+# Uncomment and replace the example URL/model for live replies.
 # [defaults.chat]
 # model = "your-model"
-# base_url = "https://your-provider.example/v1"
+# base_url = "https://api.example.com/v1"
 # api = "chat_completions"
 # context_len = 65536
 # max_output_tokens = 4096
@@ -13,15 +13,16 @@
 # api_key_env = "PEBBLE_API_KEY"
 
 # Independent lightweight participation model; explicit mentions work without it.
-[defaults.classifier]
-model = "Qwen/Qwen3.5-2B"
-base_url = "http://beluga:4014/v1"
-api = "chat_completions"
-api_key = ""
-context_len = 16384
-max_output_tokens = 64
+# Uncomment and replace the example URL with your classifier's API root.
+# [defaults.classifier]
+# model = "Qwen/Qwen3.5-2B"
+# base_url = "https://api.example.com/v1"
+# api = "chat_completions"
+# api_key = ""
+# context_len = 16384
+# max_output_tokens = 64
 
-[defaults.classifier.request]
-temperature = 0
-[defaults.classifier.request.chat_template_kwargs]
-enable_thinking = false
+# [defaults.classifier.request]
+# temperature = 0
+# [defaults.classifier.request.chat_template_kwargs]
+# enable_thinking = false

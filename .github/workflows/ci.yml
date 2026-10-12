@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: macOS checks and build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build tools
+        run: brew install just xcodegen
+
+      - name: Activate pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install hook runner
+        uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+        with:
+          prek-version: "0.5.x"
+          install-only: true
+
+      - name: Run pre-commit and pre-push checks
+        run: just check
+
+      - name: Build native application
+        run: prek run --all-files --hook-stage manual

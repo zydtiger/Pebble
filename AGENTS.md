@@ -52,8 +52,9 @@ Commit subjects use `prefix: imperative summary`, without scopes or a trailing
 period. Allowed prefixes: `feat` (behavior), `fix` (correctness), `docs`
 (documentation), `refactor` (structure), `test` (validation), `build` (tooling or
 packaging), and `chore` (maintenance). Commits, merges, publication, tags, and
-releases each require user authorization. No remote or public release is
-configured. The local development app is not a signed distribution release.
+releases each require user authorization. The public source repository is
+https://github.com/zydtiger/Pebble. The local development app is not a signed
+distribution release.
 
 Repository instructions and docs must remain self-contained. Do not depend on
 personal vaults, global skills, or a particular developer's home directory.

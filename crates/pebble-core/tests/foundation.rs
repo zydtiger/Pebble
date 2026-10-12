@@ -15,6 +15,9 @@ fn restart_keeps_identity_and_state_table() {
         second.personas[0].conversation_id
     );
     assert!(first.personas[0].chat.is_none());
+    assert!(first.personas[0].classifier.is_none());
+    assert!(second.personas[0].chat.is_none());
+    assert!(second.personas[0].classifier.is_none());
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
     let tables: Vec<String> = db
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
