@@ -34,12 +34,22 @@ struct ImageAttachments: View {
             .frame(maxWidth: min(560, CGFloat(images.count) * (remove == nil ? 180 : 72) + CGFloat(max(0, images.count - 1)) * 8))
             .fixedSize(horizontal: false, vertical: true)
         .sheet(isPresented: Binding(get: { enlarged != nil }, set: { if !$0 { enlarged = nil } })) {
-            VStack(spacing: 12) {
-                if let image = enlarged, let original = NSImage(contentsOfFile: image.sourcePath) {
-                    Image(nsImage: original).resizable().scaledToFit().frame(maxWidth: 1000, maxHeight: 760)
-                } else { Text("Image attachment is missing or corrupt.") }
-                Button("Done") { enlarged = nil }.buttonStyle(SoftButtonStyle()).keyboardShortcut(.cancelAction)
-            }.padding(20).frame(minWidth: 420, minHeight: 300).background(PebbleTheme.canvas).foregroundStyle(PebbleTheme.ink)
+            if let image = enlarged { ImagePreview(sourcePath: image.sourcePath) }
         }
+    }
+}
+
+struct ImagePreview: View {
+    let sourcePath: String
+    var unavailableMessage = "Image attachment is missing or corrupt."
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if let original = NSImage(contentsOfFile: sourcePath) {
+                Image(nsImage: original).resizable().scaledToFit().frame(maxWidth: 1000, maxHeight: 760)
+            } else { Text(unavailableMessage) }
+            Button("Done") { dismiss() }.buttonStyle(SoftButtonStyle()).keyboardShortcut(.cancelAction)
+        }.padding(20).frame(minWidth: 420, minHeight: 300).background(PebbleTheme.canvas).foregroundStyle(PebbleTheme.ink)
     }
 }

@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var composerFocused = true
     @State private var composerHeight = ComposerScrollView.minimumHeight
     @State private var hoveredRoomID: String?
+    @State private var avatarPreviewPath: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -39,6 +40,11 @@ struct ContentView: View {
         .foregroundStyle(PebbleTheme.ink)
         .frame(minWidth: 820, minHeight: 610)
         .preferredColorScheme(.light)
+        .sheet(isPresented: Binding(get: { avatarPreviewPath != nil }, set: { if !$0 { avatarPreviewPath = nil } })) {
+            if let path = avatarPreviewPath {
+                ImagePreview(sourcePath: path, unavailableMessage: "Character image is missing or corrupt.")
+            }
+        }
         .sheet(isPresented: $model.showCodexSettings) { CodexSheet(model: model) }
         .sheet(isPresented: $model.showCharacter) {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
@@ -62,7 +68,7 @@ struct ContentView: View {
         }
         .task { await model.load() }
         .onDisappear { model.closeChat() }
-        .onChange(of: model.selectedID) { _, _ in composerFocused = true; model.showFreshContext = false }
+        .onChange(of: model.selectedID) { _, _ in composerFocused = true; model.showFreshContext = false; avatarPreviewPath = nil }
     }
 
     private var sidebar: some View {
@@ -190,7 +196,20 @@ struct ContentView: View {
 
     private func chatHeader(_ persona: PersonaRecord) -> some View {
         HStack(spacing: 12) {
-            CharacterAvatar(size: 35, image: model.avatars[persona.id])
+            if let image = model.avatars[persona.id] {
+                Button {
+                    avatarPreviewPath = URL(fileURLWithPath: persona.directory)
+                        .appendingPathComponent("avatar.png").path
+                } label: {
+                    CharacterAvatar(size: 35, image: image).contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("View \(persona.displayName)'s picture")
+                .accessibilityLabel("View \(persona.displayName)'s picture")
+                .accessibilityIdentifier("character-avatar-preview")
+            } else {
+                CharacterAvatar(size: 35)
+            }
             Text(persona.displayName).font(.system(size: 14, weight: .semibold))
             Spacer()
             Button { model.settingsTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "slider.horizontal.3") }
