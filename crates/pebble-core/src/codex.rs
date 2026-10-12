@@ -7,6 +7,7 @@ pub use adapter::CodexCapabilities;
 pub(crate) use manager::Manager;
 use serde::{Deserialize, Serialize};
 pub use settings::CodexSettings;
+pub(crate) use settings::TaskSettings;
 
 pub(crate) fn failure(detail: &str) -> Error {
     Error::Generation(format!("Codex: {detail}"))
@@ -119,7 +120,7 @@ pub struct DelegatedTask {
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
     pub created_at: String,
-    pub(crate) settings: CodexSettings,
+    pub(crate) settings: settings::TaskSettings,
     pub(crate) trigger: String,
     pub(crate) membership: Option<String>,
     pub(crate) instructions: String,

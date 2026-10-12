@@ -4,7 +4,6 @@ use std::sync::Arc;
 pub struct CodexSettingsRecord {
     pub enabled: bool,
     pub executable: String,
-    pub workspace: String,
     pub writable: bool,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -14,7 +13,6 @@ impl From<pebble_core::CodexSettings> for CodexSettingsRecord {
         Self {
             enabled: s.enabled,
             executable: s.executable,
-            workspace: s.workspace,
             writable: s.writable,
             model: s.model,
             effort: s.effort,
@@ -26,7 +24,6 @@ impl From<CodexSettingsRecord> for pebble_core::CodexSettings {
         Self {
             enabled: s.enabled,
             executable: s.executable,
-            workspace: s.workspace,
             writable: s.writable,
             model: s.model,
             effort: s.effort,

@@ -56,7 +56,10 @@ fn native_interactions_are_deferred_without_answers_or_permission_and_report_thr
             task.detail
         );
         assert!(task.request.is_none());
-        assert!(task.detail.contains("Codex paused"));
+        assert!(
+            task.detail.contains("no input remains pending")
+                || task.detail.contains("no approval remains pending")
+        );
         if ["question", "overlap"].contains(&mode) {
             for text in [
                 "Which synthetic artifact?",
@@ -89,7 +92,10 @@ fn native_interactions_are_deferred_without_answers_or_permission_and_report_thr
             .collect::<Vec<_>>();
         let report = reports.last().unwrap();
         assert_eq!(report["tool_choice"], "none");
-        assert!(report.to_string().contains("Codex paused"));
+        assert!(
+            report.to_string().contains("no input remains pending")
+                || report.to_string().contains("no approval remains pending")
+        );
         assert!(!report.to_string().contains("state=secret"));
         let responses =
             std::fs::read_to_string(workspace.path().join("fake-responses.jsonl")).unwrap();

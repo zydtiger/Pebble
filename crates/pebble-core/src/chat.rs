@@ -779,10 +779,17 @@ fn generate_structured(
     let deadline = std::time::Instant::now() + Duration::from_secs(180);
     let mut tool_phase = base_request.memory_tools || base_request.delegation_tools;
     let mut candidate_count = 0;
+    let mut invalid_delegations = 0;
     let runtime = worker_runtime()?;
-    for _ in 0..5 {
+    // Two argument corrections, one accepted tool phase, and three final candidates.
+    loop {
         if control.is_cancelled() {
             return Err(Error::Generation("Cancelled".into()));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(Error::Generation(
+                "The complete reply operation exceeded 180 seconds.".into(),
+            ));
         }
         // Retry input differs only by transient, specific validation feedback.
         // It never includes a rejected candidate or changes persisted frozen items.
@@ -833,9 +840,35 @@ fn generate_structured(
             ]
         };
         if tool_phase {
+            crate::live::output_text(&output)?; // Refusals are never argument-repair candidates.
             db.archive_tool_output(&request.call_id, &output)?;
             let delegation = crate::codex::tool::calls(&output)?;
-            if let Some(call) = delegation.first() {
+            if let crate::codex::tool::ParsedCall::InvalidArguments { id, detail } = &delegation {
+                if !base_request.delegation_tools {
+                    return Err(crate::codex::failure(
+                        "Delegation is unavailable in this context.",
+                    ));
+                }
+                invalid_delegations += 1;
+                let result = crate::codex::tool::argument_feedback(
+                    &request.protocol,
+                    id,
+                    detail,
+                    3 - invalid_delegations,
+                );
+                control
+                    .while_active(|| db.reject_delegation_arguments(request, &output, &result))
+                    .ok_or_else(|| Error::Generation("Cancelled".into()))??;
+                if invalid_delegations == 3 {
+                    return Err(crate::codex::failure(&format!(
+                        "Invalid delegate_task arguments after 3 attempts: {detail}"
+                    )));
+                }
+                crate::memory::append(&mut base_request, &output)?;
+                crate::memory::append(&mut base_request, &[result])?;
+                continue;
+            }
+            if let crate::codex::tool::ParsedCall::Valid(call) = &delegation {
                 if !base_request.delegation_tools {
                     return Err(crate::codex::failure(
                         "Delegation is unavailable in this context.",
@@ -903,7 +936,6 @@ fn generate_structured(
             }
         }
     }
-    unreachable!("bounded candidate loop")
 }
 
 #[cfg(test)]

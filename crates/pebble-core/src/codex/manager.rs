@@ -77,12 +77,9 @@ impl Manager {
         settings::save(&self.root, value)
     }
     pub(crate) fn capabilities(&self) -> Result<CodexCapabilities, Error> {
-        let mut settings = self.settings()?;
-        if settings.workspace.is_empty() {
-            let cwd = self.root.join("data/codex-workspaces/connection-check");
-            std::fs::create_dir_all(&cwd).map_err(|e| crate::file_error(&cwd, e))?;
-            settings.workspace = cwd.display().to_string();
-        }
+        let cwd = self.root.join("data/codex-workspaces/connection-check");
+        std::fs::create_dir_all(&cwd).map_err(|e| crate::file_error(&cwd, e))?;
+        let settings = settings::TaskSettings::new(&self.settings()?, &cwd);
         super::adapter::inspect(&settings)
     }
     pub(crate) fn subscribe(&self, listener: Arc<dyn DelegationListener>) -> Result<(), Error> {
@@ -321,7 +318,7 @@ impl Manager {
             Ok(())
         })?;
         self.notify();
-        let mut params = json!({"cwd":snapshot.settings.cwd()?,"sandbox":if snapshot.settings.writable{"workspace-write"}else{"read-only"},"approvalPolicy":"on-request","approvalsReviewer":"user"});
+        let mut params = json!({"cwd":snapshot.settings.cwd()?,"sandbox":if snapshot.settings.writable{"workspace-write"}else{"read-only"},"approvalPolicy":"on-request","approvalsReviewer":"auto_review"});
         if let Some(model) = &snapshot.settings.model {
             params["model"] = json!(model);
         }
@@ -431,6 +428,8 @@ impl Manager {
                     "turn/completed",
                     "error",
                     "serverRequest/resolved",
+                    "item/autoApprovalReview/started",
+                    "item/autoApprovalReview/completed",
                 ]
                 .contains(&event["method"].as_str().unwrap_or_default())
             {

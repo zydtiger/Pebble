@@ -158,12 +158,25 @@ Rust owns the stdio app-server child, capability discovery, scoped execution,
 server requests, task IDs and Codex thread/turn mappings. Schema 13 stores task
 snapshots, native submission identities/results, frozen group assignments and
 historical runs. The native `delegate_task` transaction records the task and
-replayable tool response before dispatch. Restart can safely give accepted,
+replayable tool response before dispatch. A uniquely identified call with invalid
+arguments receives up to two model corrections through matched native error
+results. Balanced call/result pairs use existing model history; no task is
+created before valid arguments. This shares the operation deadline and context
+bounds while preserving the final response validation budget. Restart can safely give accepted,
 never-submitted work its first dispatch with its saved identity and frozen scope.
 Explicitly cancelled and terminal failed tasks are excluded. Already-submitted
 or uncertain execution only reconciles saved outcomes and is never resent
 automatically. App-level `[codex]` inherits local login/model/effort unless
 explicitly overridden, independently of chat and classifier connections.
+New tasks always use their own `data/codex-workspaces/<task-id>` directory
+inside application data, with writes enabled by default. App settings expose no
+external workspace selection. Frozen task snapshots retain their saved paths
+and explicit read-only settings for restart and followups, independently of
+editable app settings. Thread start/resume always select on-request approval with Codex's
+`auto_review` reviewer (Approve for me). Codex owns eligible approval decisions;
+review notifications keep execution active and save bounded denial/timeout
+reasons in existing task evidence. Only an actual turn outcome ends execution.
+Unsupported policy configuration fails visibly without a permission fallback.
 
 Task execution runs outside the persona queue; one stored completion later
 joins that original persona queue with current context/state. Rust verifies
@@ -171,9 +184,9 @@ origin visibility and the original membership interval before public publication
 Reporting and execution have separate durable statuses, so retrying an
 explanation cannot rerun work. Group task ownership comes from the canonical
 user message and explicit saved mention partitions, not model-generated keys.
-Native questions are deferred without an invented answer; permission and
-connected-tool requests are declined. Rust interrupts the turn, waits for its
-actual outcome, and includes the question or configuration limitation in the
+Native questions are deferred without an invented answer; manual permission and
+connected-tool requests reaching Pebble are declined. Rust interrupts the turn,
+waits for its actual outcome, and includes the question or configuration limitation in the
 durable persona report. A normal user reply can continue the same saved task
 through `delegate_task(task_id)`. Uncertain work is never blindly resumed.
 

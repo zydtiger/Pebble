@@ -22,6 +22,18 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_CODEX_SETTINGS_ONLY"] == "1" {
+                    model.showCodexSettings = true
+                    try await Task.sleep(for: .milliseconds(400))
+                    guard let sheet = window.attachedSheet else { throw RenderError.failed("Codex settings sheet did not open") }
+                    try capture(sheet, name: "codex-approve-for-me-settings")
+                    model.showCodexSettings = false
+                    for _ in 0..<20 where window.attachedSheet != nil { try await Task.sleep(for: .milliseconds(50)) }
+                    guard window.attachedSheet == nil else { throw RenderError.failed("Codex settings sheet did not close") }
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_DELEGATION_ONLY"] == "1" {
                     try await checkDelegationMonitor(window: window, model: model)
                     model.closeChat()

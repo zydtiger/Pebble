@@ -17,7 +17,6 @@ pub fn configure(core: &Core, workspace: &Path, mode: &str) {
     core.save_codex_settings(&pebble_core::CodexSettings {
         enabled: true,
         executable: script.display().to_string(),
-        workspace: workspace.display().to_string(),
         writable: false,
         model: None,
         effort: None,

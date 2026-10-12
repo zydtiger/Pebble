@@ -524,8 +524,13 @@ fn restart_reconciles_saved_execution_without_a_second_dispatch() {
 }
 
 #[test]
-fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispatch() {
-    for mode in ["managed", "missing-cli", "unauthenticated"] {
+fn managed_workspace_accepts_default_writes_or_explicit_read_only_and_bad_connections_fail() {
+    for mode in [
+        "managed",
+        "managed-read-only",
+        "missing-cli",
+        "unauthenticated",
+    ] {
         let server = Server::memory(vec![
             stream(tool("chat_completions", mode)),
             stream(success("Task accepted.")),
@@ -536,8 +541,12 @@ fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispa
         let workspace = tempfile::tempdir().unwrap();
         codex_configure(&core, workspace.path(), mode);
         let mut settings = core.codex_settings().unwrap();
-        if mode == "managed" {
-            settings.workspace.clear();
+        if mode.starts_with("managed") {
+            settings.writable = if mode == "managed" {
+                pebble_core::CodexSettings::default().writable
+            } else {
+                false
+            };
         }
         if mode == "missing-cli" {
             settings.executable = workspace.path().join("absent-codex").display().to_string();
@@ -553,12 +562,32 @@ fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispa
         );
         terminal(&events);
         let task = settled(&core);
-        if mode == "managed" {
+        if mode.starts_with("managed") {
             assert_eq!(task.state, DelegationState::Completed);
             let cwd = root.path().join("data/codex-workspaces").join(&task.id);
-            assert_eq!(method_count(&cwd, "turn/start"), 1);
+            assert_eq!(method_count(workspace.path(), "turn/start"), 1);
             assert!(task.links.iter().any(|l| l.target.ends_with("output.txt")));
-            let records = std::fs::read_to_string(cwd.join("fake-methods.jsonl")).unwrap();
+            let records =
+                std::fs::read_to_string(workspace.path().join("fake-methods.jsonl")).unwrap();
+            let connection = records
+                .lines()
+                .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+                .find(|v| v["method"] == "thread/start")
+                .unwrap();
+            assert_eq!(
+                connection["params"]["cwd"],
+                cwd.canonicalize().unwrap().display().to_string()
+            );
+            assert_eq!(connection["params"]["approvalPolicy"], "on-request");
+            assert_eq!(connection["params"]["approvalsReviewer"], "auto_review");
+            assert_eq!(
+                connection["params"]["sandbox"],
+                if mode == "managed" {
+                    "workspace-write"
+                } else {
+                    "read-only"
+                }
+            );
             let start = records
                 .lines()
                 .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
@@ -576,7 +605,12 @@ fn read_only_lookup_needs_no_project_and_missing_cli_or_login_fails_before_dispa
                     .as_str()
                     .is_some()
             );
-            assert_eq!(input["workspace_writable"], false);
+            assert_eq!(input["workspace"], cwd.display().to_string());
+            assert_eq!(input["workspace_writable"], mode == "managed");
+            assert_eq!(
+                std::fs::read_to_string(cwd.join("output.txt")).unwrap(),
+                "synthetic artifact"
+            );
         } else {
             assert_eq!(task.state, DelegationState::Failed);
             assert_eq!(method_count(workspace.path(), "turn/start"), 0);

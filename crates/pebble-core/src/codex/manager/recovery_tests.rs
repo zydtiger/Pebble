@@ -20,7 +20,7 @@ fn admitted_core(
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = CodexSettings {
         executable: executable.display().to_string(),
-        workspace: workspace.display().to_string(),
+        writable: false,
         model: Some("frozen-fixture-model".into()),
         effort: Some("high".into()),
         ..Default::default()
@@ -52,6 +52,8 @@ fn admitted_core(
     let task = task.unwrap();
     core.database
         .update_task(&task, |t| {
+            // Simulate an existing snapshot with its formerly selected external path.
+            t.settings.workspace = workspace.display().to_string();
             t.state = state;
             t.thread_id = thread.map(str::to_owned);
             Ok(())
@@ -150,6 +152,8 @@ fn reopen_dispatches_accepted_never_submitted_work_once_with_frozen_identity_and
             .unwrap();
         assert_eq!(connection["params"]["model"], "frozen-fixture-model");
         assert_eq!(connection["params"]["sandbox"], "read-only");
+        assert_eq!(connection["params"]["approvalPolicy"], "on-request");
+        assert_eq!(connection["params"]["approvalsReviewer"], "auto_review");
         assert_eq!(
             connection["params"]["cwd"],
             Path::new(&prior.settings.workspace)

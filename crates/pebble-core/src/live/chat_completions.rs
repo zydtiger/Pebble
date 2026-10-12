@@ -142,6 +142,11 @@ impl Stream {
         Ok(false)
     }
     pub(super) fn output(self) -> Result<Value, Error> {
+        if !self.refusal.is_empty() {
+            return Err(failure(
+                "The model refused this reply; character state is unchanged.",
+            ));
+        }
         if self.finish.as_deref() == Some("tool_calls")
             && self.allow_tools
             && !self.tools.is_empty()

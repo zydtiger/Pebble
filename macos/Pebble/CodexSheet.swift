@@ -4,7 +4,7 @@ import AppKit
 struct CodexSheet: View {
     @Bindable var model: ChatModel
     @Environment(\.dismiss) private var dismiss
-    @State private var settings = CodexSettingsRecord(enabled: true, executable: "codex", workspace: "", writable: false, model: nil, effort: nil)
+    @State private var settings = CodexSettingsRecord(enabled: true, executable: "codex", writable: true, model: nil, effort: nil)
     @State private var modelName = ""
     @State private var effort = ""
     @State private var capabilities: CodexCapabilitiesRecord?
@@ -20,17 +20,13 @@ struct CodexSheet: View {
                     TextField("Executable", text: $settings.executable)
                     Button("Choose…") { chooseExecutable() }
                 }
-                TextField("Model · inherit when empty", text: $modelName)
+                TextField("Model", text: $modelName, prompt: Text("Inherit when empty"))
                 Picker("Reasoning effort", selection: $effort) {
                     Text("Inherit local Codex configuration").tag("")
                     ForEach(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"], id: \.self) { Text($0).tag($0) }
                 }
-                HStack {
-                    TextField("Workspace · managed task folder when empty", text: $settings.workspace)
-                    Button("Choose…") { chooseWorkspace() }
-                }
-                Toggle("Allow writes in the selected workspace", isOn: $settings.writable)
-                Text("Read-only lookups use a private task folder by default. File/code writes require an explicit workspace. Additional native permission requests are declined and explained by the character; the monitor grants no access. Tasks are managed while Pebble is open; restart reconciles saved outcomes without resending work.").font(.system(size: 11)).foregroundStyle(.secondary)
+                Toggle("Allow writes in the task workspace", isOn: $settings.writable)
+                Text("Approve for me lets Codex review eligible permission requests automatically. Each task uses its own folder in Pebble application data; turn off writes for read-only tasks. Manual approvals and connected-tool input are declined and explained by the character. Tasks are managed while Pebble is open; restart reconciles saved outcomes without resending work.").font(.system(size: 11)).foregroundStyle(.secondary)
             }
             if let capabilities {
                 Text(capabilities.authenticated ? "Local Codex authentication is ready." : "Codex needs authentication. Run codex login, then check again.").font(.system(size: 12))
@@ -67,9 +63,5 @@ struct CodexSheet: View {
     private func chooseExecutable() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url { settings.executable = url.path }
-    }
-    private func chooseWorkspace() {
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { settings.workspace = url.path }
     }
 }

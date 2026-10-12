@@ -219,6 +219,33 @@ pub(super) fn apply(
         return Ok(change);
     }
     match method {
+        "item/autoApprovalReview/started" | "item/autoApprovalReview/completed"
+            if task.turn_id.is_some() && p["turnId"].as_str() == task.turn_id.as_deref() =>
+        {
+            // Codex owns the decision; a review outcome is never a turn outcome.
+            if task.state == DelegationState::Running {
+                task.activity = if method.ends_with("/started") {
+                    "Codex is reviewing a permission request…"
+                } else {
+                    "Codex approval review finished; continuing…"
+                }
+                .into();
+            }
+            let outcome = match p["review"]["status"].as_str() {
+                Some("denied") => Some("denied the requested action"),
+                Some("timedOut") => Some("timed out before approving the requested action"),
+                Some("aborted") => Some("stopped before approving the requested action"),
+                _ => None,
+            };
+            if let Some(outcome) = outcome {
+                let reason =
+                    diagnostic(task, p["review"]["rationale"].as_str().unwrap_or_default());
+                limitation(
+                    task,
+                    &format!("Codex automatic approval review {outcome}. {reason}"),
+                );
+            }
+        }
         "error" if task.turn_id.is_some() && p["turnId"].as_str() == task.turn_id.as_deref() => {
             match p["willRetry"].as_bool() {
                 Some(false) => {
@@ -443,13 +470,13 @@ pub(super) fn defer_interaction(task: &mut DelegatedTask) -> Option<TaskRequest>
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "Codex paused for clarification. Ask the user through the reporting character before continuing this same task: {questions}"
+            "Codex requested clarification. Pebble supplied no answer and requested interruption of this turn; no input remains pending in Pebble. Ask the user through the reporting character before continuing this same task: {questions}"
         )
     } else {
-        "Codex paused because additional permission or connected-tool input is required. No permission or form answer was granted. Resolve the connection or execution scope in settings outside chat; do not send secrets or authorization tokens in conversation.".into()
+        "Pebble declined additional permission or connected-tool input and requested interruption of this turn. No permission or form answer was granted, and no approval remains pending in Pebble. Resolve the connection or execution scope in settings outside chat; do not send secrets or authorization tokens in conversation.".into()
     };
     let explanation = if explanation.chars().count() > 4096 {
-        "Codex paused because its clarification exceeds the conversation relay limit. Ask for a shorter clarification before continuing this same task; no answer was supplied.".into()
+        "Codex clarification exceeds the conversation relay limit. Pebble requested interruption of this turn; no input remains pending in Pebble. Ask for a shorter clarification before continuing this same task; no answer was supplied.".into()
     } else {
         explanation
     };
@@ -564,15 +591,12 @@ pub(super) fn reconcile(task: &mut DelegatedTask, response: &Value) -> Result<()
 }
 
 fn limitation(task: &mut DelegatedTask, notice: &str) {
-    if task.interaction_deferred
-        && !task.local_limitation.is_empty()
-        && !task.local_limitation.contains(notice)
-    {
+    if !task.local_limitation.is_empty() && !task.local_limitation.contains(notice) {
         task.local_limitation = format!("{}\n{notice}", task.local_limitation)
             .chars()
             .take(8192)
             .collect();
-    } else if !task.interaction_deferred || task.local_limitation.is_empty() {
+    } else if task.local_limitation.is_empty() {
         task.local_limitation = notice.into();
     }
     task.detail = task.local_limitation.clone();

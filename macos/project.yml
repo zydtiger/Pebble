@@ -17,7 +17,9 @@ settings:
     CURRENT_PROJECT_VERSION: "16"
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
-    PRODUCT_BUNDLE_IDENTIFIER: dev.pebble.local
+    INFOPLIST_KEY_NSCalendarsUsageDescription: Pebble uses your calendars to answer questions about your schedule and manage events when you ask.
+    INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: Pebble uses your calendars to answer questions about your schedule and manage events when you ask.
+    PRODUCT_BUNDLE_IDENTIFIER: io.github.zydtiger.pebble
     HEADER_SEARCH_PATHS: "$(SRCROOT)/Generated"
     OTHER_SWIFT_FLAGS:
       - "$(inherited)"

@@ -17,8 +17,7 @@ Open **Codex tasks** from the sidebar to inspect or change the app-level
 [codex]
 enabled = true
 executable = "codex"
-workspace = ""
-writable = false
+writable = true
 # model = "your-model"          # omit to inherit local Codex configuration
 # effort = "high"               # omit to inherit local Codex configuration
 ```
@@ -34,13 +33,24 @@ No provider HTTP credential is added for this stdio connection. Login, enabled
 skills and MCP configuration belong to the existing local Codex installation.
 Pebble does not rewrite its global configuration.
 
-Ordinary read-only lookups need no project selection. Each gets a managed
-`data/codex-workspaces/<task-id>` directory under Pebble's existing data root and
-Codex's read-only sandbox. File/code writes require an explicitly selected,
-existing external workspace and **Allow writes**. The settings snapshot and
-canonical workspace are frozen for the task and its followups. Additional native permission
-requests are declined and reported as limitations; the monitor cannot grant access. A workspace setting is
-an execution policy, not a guarantee that every installed integration works.
+Each new task gets its own `data/codex-workspaces/<task-id>` directory
+under Pebble's application data root. There is no configurable external workspace
+in app settings or the native interface; the former `[codex].workspace` key is
+no longer accepted. **Allow writes in the task workspace** defaults on and selects
+Codex's `workspace-write` sandbox; turning it off explicitly selects `read-only`.
+Existing explicit `writable = false` settings remain read-only. Durable task
+snapshots retain their saved workspace paths and execution settings for restart
+and followups, including tasks accepted before this setting was removed.
+Changing app defaults never widens an existing task's scope.
+
+**Approve for me** routes eligible permission requests to Codex's separate automatic
+reviewer. Both `thread/start` and `thread/resume` explicitly send
+`approvalPolicy = "on-request"` and `approvalsReviewer = "auto_review"`.
+Baseline execution stays sandboxed; the reviewer decides whether an eligible
+action may run beyond that sandbox. Rejected or unsupported policy settings fail
+visibly, with no fallback to manual approvals or unrestricted execution.
+An automatic approval does not guarantee host integration access. The sandbox
+policy is not a guarantee that every installed integration works.
 Image generation, deletion and an always-running service are outside this scope.
 External messages require explicit authorization in the actual user request.
 
@@ -52,6 +62,22 @@ paths, calendar identifiers or duplicated Swift connectors in this repository.
 A returned permission limitation is part of the result, not an invented lookup.
 
 ## Identity, execution and recovery
+
+A safely identified single `delegate_task` call with invalid arguments returns
+specific validation feedback as a native tool result matched to its call ID.
+The same chat model gets at most two corrective retries (three invalid attempts
+in total). All four fields are required, including explicit `task_id: null` for
+new work or an actual existing task ID for continuation. Rust does not invent
+missing values or change authorization. No task or submission exists before
+valid arguments are accepted. Malformed identities, mixed/multiple or unsupported
+calls, refusals and transport/truncation failures remain hard failures.
+
+Corrections share the existing 180-second operation deadline and context bounds,
+but do not consume the final response's three-candidate validation budget.
+Each rejected call and its error result are saved together in existing native
+history, including exhaustion or cancellation. Explicit reply retries replay
+that balanced history; once a task is accepted, they only repair its chat
+explanation and cannot dispatch it again.
 
 Rust creates the task, native submission/result and canonical origin binding in
 one SQLite transaction before dispatch. The immediate tool result contains its
@@ -111,9 +137,20 @@ The character asks in ordinary chat; the user’s subsequent message can continu
 the same task using `delegate_task(task_id)` after reporting finishes. Secret
 questions and connected-tool forms/authorization requests instead produce a
 configuration limitation; chat must not solicit secrets or authorization tokens.
-Command, file and permission requests are explicitly declined, never auto-approved.
-The selected read-only/workspace-write scope and on-request approval policy are
-unchanged. Duplicate/stale requests do not replay an answer. A turn that completes
+Codex handles eligible automatic reviews internally. Matching
+`item/autoApprovalReview/started` and `item/autoApprovalReview/completed`
+notifications keep the task running; approval, denial, timeout or abort never
+substitutes for the actual turn outcome. Bounded typed denial/timeout/abort
+rationales remain in saved limitations and the character's report, including
+after completion or recovery. Unstructured `guardianWarning` messages also
+announce successful reviews, so they are ignored in favor of typed outcomes.
+Stale thread/turn review events are ignored.
+
+Any manual command, file or permission request that still reaches Pebble is
+explicitly declined. Pebble requests interruption and explains the saved outcome;
+no approval remains pending in the monitor, which cannot grant access. Questions,
+secret inputs and connected-tool forms retain the same deferral/decline behavior.
+Duplicate/stale requests do not replay an answer. A turn that completes
 after a deferred interaction remains a blocked failed outcome, including after
 saved-thread reconciliation, rather than claiming the requested work succeeded.
 
@@ -217,14 +254,21 @@ activates delegation. New contexts include the delegation contract.
 
 Deterministic [core fixtures](../crates/pebble-core/tests/delegation.rs) exercise
 both native protocols, prompt return/replay, dispatch loss, stale callbacks,
-deferred questions, declined approvals, same-thread followups, cancellation, restart,
+deferred questions, declined manual approvals, automatic approval review lifecycles,
+managed writable/read-only workspaces, same-thread followups, cancellation, restart,
 report retry, continued chat/context changes, shared/explicit group assignments
 and membership privacy. A [followup fixture](../crates/pebble-core/tests/delegation_followup.rs)
 checks original/continuation/objective payloads through both native APIs, core
 followups, reloads and frozen scope. Opt-in probes use isolated synthetic roots; ordinary
 checks never access personal calendars or notes.
 
-Local evidence is kept under ignored
+The Approve for me increment adds deterministic policy, review lifecycle and
+managed workspace coverage with validation logs under ignored
+`build/validation/approve-for-me-2026-10-12/`. The notification payloads are based
+on the installed Codex 0.160.1 experimental app-server schema; these review
+notifications are marked unstable by that schema.
+
+Earlier local evidence is kept under ignored
 `build/validation/codex-delegation-2026-10-11/`, including raw command/exit/duration
 records, protocol schema and native renders. Installed Codex 0.160.1 authenticated
 successfully, exposed models/skills/MCP registrations, completed bounded official
