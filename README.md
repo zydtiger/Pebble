@@ -221,10 +221,10 @@ are failed replies; unvalidated candidate text is not shown or saved. Provider r
 in native model history and is never rendered as a message. Responses sends
 `store = false` and requests encrypted reasoning state. Completed native output
 items, including IDs and opaque fields, are stored and replayed in order with
-the full input history; no `previous_response_id` is sent. New contexts support the persona-scoped `update_memory` native tool and `delegate_task` for work through local Codex when enabled. Tool calls/results and reasoning remain hidden from bubbles and replay in native order. Existing contexts keep their frozen prefix and an explicit capability notice until a successful fresh-context transition. See [memory and consolidation](docs/memory.md). In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
+the full input history; no `previous_response_id` is sent. New contexts support the persona-scoped `update_memory` native tool and `delegate_task` for work through local Codex when enabled. Tool calls/results and reasoning remain hidden from bubbles and replay in native order. Existing contexts keep their frozen prefix and a capability notice in character information until a successful fresh-context transition. See [memory and consolidation](docs/memory.md). In structured contexts, provider refusal is a terminal failed turn and leaves state/native history unchanged. Legacy contexts retain their earlier plaintext refusal behavior; see [upgrade rules](docs/state.md#upgrading-a-v010-root).
 
 Changing the API root, model, or protocol starts a fresh model context. Earlier
-messages stay visible, and a notice explains the boundary. Those earlier events
+messages stay visible, and character information explains the context boundary. Those earlier events
 are not silently imported into the new model session. Editing character files
 does not change an existing session's frozen SOUL/MEMORY prefix.
 
@@ -317,9 +317,9 @@ to consolidate outgoing native knowledge and eligible private/group observations
 with current MEMORY. A successful review (including unchanged memory) publishes
 a new SOUL/MEMORY prefix with the accepted state unchanged. Messages and native
 archives remain saved. Other personas can keep chatting; later observations
-remain available in the new context. A thin gray line and diamond mark the
-successful transition in the private room and eligible current groups, where
-the label identifies the affected character.
+remain available in the new context. A thin gray line marks the successful transition in the private room and
+eligible current groups. Its tooltip and accessibility label identify the
+affected character.
 
 The UI shows progress, Cancel, and persisted recovery details. A cancelled or
 failed transition keeps the old context active and adds no marker. A memory

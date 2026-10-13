@@ -120,13 +120,14 @@ sources fail rather than silently empty-resetting or truncating knowledge.
 
 Rust projects a successful persona marker into its private room and groups with
 an active membership interval at publication. Removal during maintenance excludes
-that group; later joins do not backfill old markers. The group label identifies
+that group; later joins do not backfill old markers. The tooltip and accessibility label identify
 only the affected character. Each projection stores its current last allocated
 message sequence as a display anchor. This is independent from the frozen persona
 event cutoff and membership publication order. Other speakers' pending placeholders
 may appear before the line and complete later; the marker never implies a group
 reset or that those later public observations were summarized. Swift renders a
-thin gray horizontal line, small centered diamond and attribution outside bubbles.
+thin gray horizontal line outside bubbles, with attribution in its tooltip and
+accessibility label.
 The marker is never a model input or received/sent event.
 
 See [context](context.md#maintenance-headroom) for conservative reserve arithmetic,
