@@ -188,18 +188,38 @@ fn group_crash_fixture() {
     let Some(root) = std::env::var_os("PEBBLE_GROUP_CRASH") else {
         return;
     };
+    struct PauseAtStart {
+        started: std::sync::mpsc::Sender<()>,
+        gate: std::sync::Barrier,
+    }
+    impl pebble_core::ChatListener for PauseAtStart {
+        fn on_event(&self, event: pebble_core::ChatEvent) -> Result<(), String> {
+            if event.kind == ChatEventKind::Started {
+                self.started.send(()).map_err(|error| error.to_string())?;
+                // Keep the admitted reply unfinished until the process exits.
+                self.gate.wait();
+            }
+            Ok(())
+        }
+    }
     let core = pebble_core::Core::open(root).unwrap();
     let a = core.workspace().unwrap().personas[0].id.clone();
     let group = core
         .create_group("Restart group", std::slice::from_ref(&a))
         .unwrap();
-    let (_active, rx) = submit(
-        &core,
-        &group.id,
-        "before crash active",
-        std::slice::from_ref(&a),
-    );
-    rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let (started, rx) = std::sync::mpsc::channel();
+    let _active = core
+        .send_room_message(
+            &group.id,
+            "before crash active",
+            std::slice::from_ref(&a),
+            std::sync::Arc::new(PauseAtStart {
+                started,
+                gate: std::sync::Barrier::new(2),
+            }),
+        )
+        .unwrap();
+    rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let (_queued, _rx) = submit(&core, &group.id, "before crash queued", &[a]);
     std::process::exit(0);
 }
