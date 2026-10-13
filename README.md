@@ -16,6 +16,8 @@ characters, individually or together in a group.
   or display LaTeX math.
 - **Image sharing.** Paste, drop or select JPEG/PNG images, and chat about them
   with a vision-capable model.
+- **Image creation.** Ask a character to create an image through your configured
+  Studio service or local Codex with ChatGPT, then discuss it in chat.
 - **Tasks through Codex.** Let characters delegate research and other work to
   local Codex, then bring the results back into chat.
 - **Reply notifications.** Receive macOS notifications when the chat window is
@@ -57,6 +59,8 @@ without rebuilding.
    automatically. Manual mentions work without it.
 4. To delegate work, install and sign in to Codex locally, then enable it in
    **Codex tasks**.
+5. To create images, configure **Image generation**. ChatGPT uses your local
+   Codex login; Studio uses your selected service, model and GPU.
 
 Press **Enter** to send; **Shift–Enter** or **Command–Enter** inserts a newline.
 The first send requests notification permission.

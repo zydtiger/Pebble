@@ -324,6 +324,9 @@ pub(crate) fn load_candidate(
     if let Some(connection) = &app.defaults.classifier {
         validate_classifier(connection, &app_path)?;
     }
+    if overrides.is_empty() {
+        crate::image_generation::settings::read(root)?;
+    }
     let personas_path = root.join("personas");
     let directories =
         fs::read_dir(&personas_path).map_err(|error| file_error(&personas_path, error))?;

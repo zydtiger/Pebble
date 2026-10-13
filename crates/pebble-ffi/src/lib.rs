@@ -1,3 +1,5 @@
+mod image_generation_api;
+pub use image_generation_api::*;
 mod delegation_api;
 pub use delegation_api::*;
 mod images_api;

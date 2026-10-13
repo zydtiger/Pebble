@@ -66,10 +66,12 @@ pub(crate) async fn generate(
     }
     let mut framing = sse::Framing::default();
     let mut completion = chat_completions::Stream::default();
-    completion.allow_tools = request.memory_tools || request.delegation_tools;
+    completion.allow_tools =
+        request.memory_tools || request.delegation_tools || request.image_generation_tools;
     completion.bound.enabled = request.memory_capable;
     let mut responses = responses::Stream::default();
-    responses.allow_tools = request.memory_tools || request.delegation_tools;
+    responses.allow_tools =
+        request.memory_tools || request.delegation_tools || request.image_generation_tools;
     responses.bound.enabled = request.memory_capable;
     loop {
         let chunk = tokio::time::timeout(Duration::from_secs(45), response.chunk())
@@ -159,7 +161,11 @@ pub(crate) fn request_body(
             || item["role"] == "tool"
             || item["type"] == "function_call_output"
     });
-    if request.memory_tools || request.delegation_tools || replay_tools {
+    if request.memory_tools
+        || request.delegation_tools
+        || request.image_generation_tools
+        || replay_tools
+    {
         let mut tools = vec![crate::memory::declaration(&request.protocol)];
         if request.delegation_tools
             || (request.response_schema.is_some()
@@ -174,9 +180,32 @@ pub(crate) fn request_body(
         {
             tools.push(crate::codex::tool::declaration(&request.protocol));
         }
+        if request.image_generation_tools
+            || messages.iter().any(|v| {
+                v["name"] == "generate_image"
+                    || v["tool_calls"].as_array().is_some_and(|c| {
+                        c.iter().any(|v| v["function"]["name"] == "generate_image")
+                    })
+            })
+        {
+            let mut declaration = crate::image_generation::tool::declaration(&request.protocol);
+            if request.image_generation_tools {
+                let parameters = if request.protocol == "responses" {
+                    &mut declaration["parameters"]
+                } else {
+                    &mut declaration["function"]["parameters"]
+                };
+                parameters["properties"]["backend"]["enum"] =
+                    json!(request.image_generation_backends);
+            }
+            tools.push(declaration);
+        }
         body["tools"] = json!(tools);
         body["parallel_tool_calls"] = json!(false);
-        body["tool_choice"] = json!(if request.memory_tools || request.delegation_tools {
+        body["tool_choice"] = json!(if request.memory_tools
+            || request.delegation_tools
+            || request.image_generation_tools
+        {
             if request.response_schema.is_none() {
                 "required"
             } else {
@@ -188,6 +217,7 @@ pub(crate) fn request_body(
     }
     if !request.memory_tools
         && !request.delegation_tools
+        && !request.image_generation_tools
         && let Some(schema) = &request.response_schema
     {
         if chat.api == "chat_completions"

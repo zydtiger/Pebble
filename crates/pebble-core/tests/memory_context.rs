@@ -357,6 +357,8 @@ fn maintenance_saved_effect_recovers_publication_failure_without_another_request
     drop(task);
     drop(chat);
     drop(core);
+    // Saved schema-13 maintenance requests predate the image-generation field.
+    db(root.path()).execute("UPDATE context_maintenance SET request=json_remove(request,'$.image_generation_tools')", []).unwrap();
     let core = reopen(root.path());
     db(root.path())
         .execute_batch("DROP TRIGGER reject_marker;")

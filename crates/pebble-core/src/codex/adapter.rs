@@ -35,9 +35,20 @@ pub(crate) struct Adapter {
     events: Receiver<Result<Value, ()>>,
     pending: VecDeque<Value>,
     next: u64,
+    pending_cap: usize,
 }
 impl Adapter {
     pub(crate) fn start(settings: &TaskSettings) -> Result<Self, Error> {
+        Self::start_bounded(settings, MESSAGE_CAP, 256)
+    }
+    pub(crate) fn start_images(settings: &TaskSettings) -> Result<Self, Error> {
+        Self::start_bounded(settings, 18 * 1024 * 1024, 8)
+    }
+    fn start_bounded(
+        settings: &TaskSettings,
+        message_cap: u64,
+        pending_cap: usize,
+    ) -> Result<Self, Error> {
         let mut child = Command::new(super::settings::executable(&settings.executable)?)
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(settings.cwd()?)
@@ -52,15 +63,15 @@ impl Adapter {
             })?;
         let stdin = child.stdin.take().expect("piped input");
         let stdout = child.stdout.take().expect("piped output");
-        let (tx, events) = mpsc::sync_channel(256);
+        let (tx, events) = mpsc::sync_channel(pending_cap);
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut bytes = Vec::new();
                 let read = Read::by_ref(&mut reader)
-                    .take(MESSAGE_CAP + 1)
+                    .take(message_cap + 1)
                     .read_until(b'\n', &mut bytes);
-                if !matches!(read,Ok(n) if n>0 && n as u64<=MESSAGE_CAP) {
+                if !matches!(read,Ok(n) if n>0 && n as u64<=message_cap) {
                     let _ = tx.send(Err(()));
                     break;
                 }
@@ -77,6 +88,7 @@ impl Adapter {
             events,
             pending: VecDeque::new(),
             next: 0,
+            pending_cap,
         };
         adapter.rpc("initialize",json!({"clientInfo":{"name":"pebble","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}))?;
         adapter.send(json!({"method":"initialized"}))?;
@@ -88,10 +100,18 @@ impl Adapter {
         self.stdin.write_all(&bytes).and_then(|_|self.stdin.flush()).map_err(|_|failure("Codex disconnected; execution may have occurred. Reconcile this task before continuing."))
     }
     pub(crate) fn rpc(&mut self, method: &str, params: Value) -> Result<Value, RpcError> {
+        self.rpc_timeout(method, params, Duration::from_secs(30))
+    }
+    pub(crate) fn rpc_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, RpcError> {
         self.next += 1;
         let id = self.next;
         self.send(json!({"id":id,"method":method,"params":params}))?;
-        let until = Instant::now() + Duration::from_secs(30);
+        let until = Instant::now() + timeout;
         loop {
             let value=self.events.recv_timeout(until.saturating_duration_since(Instant::now()))
                 .map_err(|_|failure("Codex request timed out or disconnected. Its outcome is uncertain; it will not be resent."))?
@@ -109,7 +129,7 @@ impl Adapter {
                 }
                 return Ok(value["result"].clone());
             }
-            if self.pending.len() >= 256 {
+            if self.pending.len() >= self.pending_cap {
                 return Err(failure("Codex event queue exceeded its bound.").into());
             }
             self.pending.push_back(value);

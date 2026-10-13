@@ -171,6 +171,49 @@ impl Chats {
         Ok(())
     }
 
+    pub(crate) fn image_report(
+        self: &Arc<Self>,
+        db: Arc<Database>,
+        root: &std::path::Path,
+        id: &str,
+        listener: Arc<dyn ChatListener>,
+    ) -> Result<(), Error> {
+        let mut queues = self.queues.lock().expect("generation queues lock");
+        if let Some(turn) = db.enqueue_image_report(id)? {
+            let launch = (|| {
+                let persona = crate::config::load(root)?
+                    .personas
+                    .into_iter()
+                    .find(|p| p.id == turn.persona_id)
+                    .ok_or(Error::UnknownPersona)?;
+                let queue = queues.entry(persona.id.clone()).or_default().clone();
+                self.launch(
+                    db.clone(),
+                    persona,
+                    listener.clone(),
+                    queue,
+                    turn.clone(),
+                    None,
+                )
+            })();
+            match launch {
+                // Report work belongs to the manager, not a temporary frontend handle.
+                Ok(task) => drop(task),
+                Err(error) => {
+                    finish_pending(
+                        &db,
+                        &turn,
+                        &listener,
+                        MessageStatus::Failed,
+                        Some(error.to_string()),
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn start_maintenance(
         self: &Arc<Self>,
         db: Arc<Database>,
@@ -385,6 +428,10 @@ impl Chats {
     pub(crate) fn stop_room(&self, db: &Database, room: &str) -> Result<(), Error> {
         let queues = self.queues.lock().expect("generation queues lock");
         let calls = db.stop_room(room)?;
+        let ids = db.invalidate_room_images(room, None)?;
+        if let Some(manager) = db.image_generation.lock().expect("image manager").upgrade() {
+            manager.cancel_ids(&ids);
+        }
         for queue in queues.values() {
             queue.cancel_calls(&calls);
         }
@@ -400,6 +447,10 @@ impl Chats {
     ) -> Result<crate::Room, Error> {
         let queues = self.queues.lock().expect("generation queues lock");
         let (room, calls) = db.remove_group_member(room, persona)?;
+        let ids = db.invalidate_room_images(&room.id, Some(persona))?;
+        if let Some(manager) = db.image_generation.lock().expect("image manager").upgrade() {
+            manager.cancel_ids(&ids);
+        }
         for queue in queues.values() {
             queue.cancel_calls(&calls);
         }
@@ -439,7 +490,8 @@ impl Chats {
             id: turn.call_id.clone(),
             messages: vec![turn.user.clone(), turn.reply.clone()],
             control: control.clone(),
-            cancel_on_drop: !db.is_task_report(&turn.call_id).unwrap_or(false),
+            cancel_on_drop: !db.is_task_report(&turn.call_id).unwrap_or(false)
+                && !db.is_image_report(&turn.call_id).unwrap_or(false),
         });
         if let Some((group, _, _)) = &registration {
             group.register(task.clone());
@@ -773,11 +825,25 @@ fn generate_structured(
         .ok_or_else(|| Error::Generation("Missing frozen persona state.".into()))?;
     let mut feedback: Option<String> = None;
     let mut base_request = request.clone();
-    let unused_tool_phase = !db.tool_used(request)? && !db.delegation_used(request)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    let unused_tool_phase = !db.tool_used(request)?
+        && !db.delegation_used(request)?
+        && !db.image_generation_used(request)?;
     base_request.memory_tools = request.memory_tools && chat.is_some() && unused_tool_phase;
     base_request.delegation_tools = request.delegation_tools && chat.is_some() && unused_tool_phase;
-    let deadline = std::time::Instant::now() + Duration::from_secs(180);
-    let mut tool_phase = base_request.memory_tools || base_request.delegation_tools;
+    if request.image_generation_tools && chat.is_some() && unused_tool_phase {
+        let manager = db.image_generation.lock().expect("image manager").upgrade();
+        if let Some(manager) = manager {
+            base_request.image_generation_backends = manager.available_backends()?;
+        }
+    }
+    base_request.image_generation_tools = request.image_generation_tools
+        && chat.is_some()
+        && unused_tool_phase
+        && !base_request.image_generation_backends.is_empty();
+    let mut tool_phase = base_request.memory_tools
+        || base_request.delegation_tools
+        || base_request.image_generation_tools;
     let mut candidate_count = 0;
     let mut invalid_delegations = 0;
     let runtime = worker_runtime()?;
@@ -811,7 +877,10 @@ fn generate_structured(
         if let Some(chat) = chat {
             let body =
                 crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1;
-            if candidate_request.memory_tools || candidate_request.delegation_tools {
+            if candidate_request.memory_tools
+                || candidate_request.delegation_tools
+                || candidate_request.image_generation_tools
+            {
                 budget.check_chat_start(&body)?;
             } else {
                 budget.check_body(&body)?;
@@ -842,6 +911,66 @@ fn generate_structured(
         if tool_phase {
             crate::live::output_text(&output)?; // Refusals are never argument-repair candidates.
             db.archive_tool_output(&request.call_id, &output)?;
+            match crate::image_generation::tool::calls(&output)? {
+                crate::image_generation::tool::Parsed::None => {}
+                crate::image_generation::tool::Parsed::Invalid { id, detail } => {
+                    if !base_request.image_generation_tools {
+                        return Err(crate::image_generation::failure(
+                            "Image generation is unavailable in this context.",
+                        ));
+                    }
+                    invalid_delegations += 1;
+                    let result = crate::memory::result(&request.protocol, &id, &json!({"ok":false,"error":"invalid_arguments","detail":detail,"instruction":"Correct generate_image with exactly prompt, backend and size {width,height}. No generation was submitted."}).to_string());
+                    control
+                        .while_active(|| db.reject_delegation_arguments(request, &output, &result))
+                        .ok_or_else(|| Error::Generation("Cancelled".into()))??;
+                    if invalid_delegations == 3 {
+                        return Err(crate::image_generation::failure(&detail));
+                    }
+                    crate::memory::append(&mut base_request, &output)?;
+                    crate::memory::append(&mut base_request, &[result])?;
+                    continue;
+                }
+                crate::image_generation::tool::Parsed::Valid(call) => {
+                    if !base_request.image_generation_tools {
+                        return Err(crate::image_generation::failure(
+                            "Image generation is unavailable in this context.",
+                        ));
+                    }
+                    let manager = db
+                        .image_generation
+                        .lock()
+                        .expect("image manager")
+                        .upgrade()
+                        .ok_or_else(|| {
+                            crate::image_generation::failure("Image manager is closing.")
+                        })?;
+                    let settings = crate::image_generation::settings::read(&request.image_root)?;
+                    let executable = crate::codex::settings::read(&request.image_root)?.executable;
+                    let (result, dispatch) = control
+                        .while_active(|| {
+                            db.prepare_image_generation(
+                                request,
+                                &call,
+                                &output,
+                                &settings,
+                                &executable,
+                            )
+                        })
+                        .ok_or_else(|| Error::Generation("Cancelled".into()))??;
+                    if let Some(id) = dispatch {
+                        manager.dispatch(&id)?;
+                    }
+                    manager.notify();
+                    crate::memory::append(&mut base_request, &output)?;
+                    crate::memory::append(&mut base_request, &[result])?;
+                    base_request.image_generation_tools = false;
+                    base_request.memory_tools = false;
+                    base_request.delegation_tools = false;
+                    tool_phase = false;
+                    continue;
+                }
+            }
             let delegation = crate::codex::tool::calls(&output)?;
             if let crate::codex::tool::ParsedCall::InvalidArguments { id, detail } = &delegation {
                 if !base_request.delegation_tools {
@@ -891,6 +1020,7 @@ fn generate_structured(
                 manager.notify();
                 crate::memory::append(&mut base_request, &output)?;
                 crate::memory::append(&mut base_request, &[result])?;
+                base_request.image_generation_tools = false;
                 base_request.delegation_tools = false;
                 base_request.memory_tools = false;
                 tool_phase = false;
@@ -899,6 +1029,7 @@ fn generate_structured(
             let calls = crate::memory::calls(&output)?;
             tool_phase = false;
             base_request.memory_tools = false;
+            base_request.image_generation_tools = false;
             base_request.delegation_tools = false;
             if let Some(call) = calls.first() {
                 let expected = db.memory_snapshot(&request.call_id)?;
@@ -940,10 +1071,10 @@ fn generate_structured(
 
 #[cfg(test)]
 #[path = "../tests/responses_support/mod.rs"]
-mod memory_responses_support;
+pub(crate) mod memory_responses_support;
 #[cfg(test)]
 #[path = "../tests/live_support/mod.rs"]
-mod memory_test_support;
+pub(crate) mod memory_test_support;
 #[cfg(test)]
 mod memory_failure_tests {
     use super::{memory_test_support::*, *};

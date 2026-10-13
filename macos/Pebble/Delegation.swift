@@ -39,13 +39,17 @@ extension DelegationState {
     }
 }
 extension ChatModel {
-    var monitorTasks: [DelegatedTaskRecord] {
-        delegatedTasks.reversed().filter {
+    var monitorTasks: [MonitorTask] {
+        let codex = delegatedTasks.reversed().filter {
             [.running, .cancellationRequested].contains($0.state) && $0.request == nil
+        }.map { MonitorTask(id: $0.id, title: $0.title, personaId: $0.personaId, status: $0.state.label) }
+        let images = imageGenerations.reversed().filter { $0.active }.map {
+            MonitorTask(id: $0.id, title: "Generate image · \($0.backend == "chatgpt" ? "ChatGPT" : "Studio")", personaId: $0.personaId, status: $0.activity.isEmpty ? $0.status.capitalized : $0.activity)
         }
+        return codex + images
     }
     func taskActivity(_ room: String) -> Bool {
-        delegatedTasks.contains { $0.conversationId == room && $0.state.active }
+        delegatedTasks.contains { $0.conversationId == room && $0.state.active } || imageGenerations.contains { $0.conversationId == room && $0.active }
     }
     func startTaskObservation() async throws {
         guard delegationStream == nil else { return }
@@ -80,5 +84,44 @@ extension ChatModel {
         else if let parsed = URL(string: link.target), ["https", "http"].contains(parsed.scheme) { url = parsed }
         else { url = nil }
         if let url { NSWorkspace.shared.open(url) }
+    }
+}
+
+struct MonitorTask {
+    let id: String
+    let title: String
+    let personaId: String
+    let status: String
+}
+extension CoreClient {
+    func imageSettings() throws -> ImageGenerationSettingsRecord { try requireBackend().imageGenerationSettings() }
+    func saveImageSettings(_ settings: ImageGenerationSettingsRecord) throws { try requireBackend().saveImageGenerationSettings(settings: settings) }
+    func observeImages(_ observer: ImageGenerationObserver) throws { try requireBackend().observeImageGenerations(observer: observer) }
+}
+final class ImageObserver: ImageGenerationObserver {
+    let sink: AsyncStream<[ImageGenerationRecord]>.Continuation
+    init(_ sink: AsyncStream<[ImageGenerationRecord]>.Continuation) { self.sink = sink }
+    func onImages(operations: [ImageGenerationRecord]) throws {
+        if case .terminated = sink.yield(operations) { throw ListenerError.Closed(detail: "The image view closed.") }
+    }
+}
+extension ImageGenerationRecord {
+    var active: Bool { ["queued", "loading", "running", "cancelling"].contains(status) }
+}
+extension ChatModel {
+    var hasPendingImages: Bool { imageGenerations.contains { $0.conversationId == selectedID && ($0.active || $0.publicationStatus == "queued") } }
+    func startImageObservation() async throws {
+        guard imageGenerationStream == nil else { return }
+        let (stream, sink) = AsyncStream<[ImageGenerationRecord]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        imageGenerationSink = sink
+        try await client.observeImages(ImageObserver(sink))
+        imageGenerationStream = Task { [weak self] in
+            for await operations in stream {
+                guard let self, !Task.isCancelled else { break }
+                self.imageGenerations = operations
+                let reportRooms = self.replyNotifications == nil ? Set<String>() : Set(operations.map(\.conversationId))
+                await self.refreshRoomsAfterReply(notificationRooms: reportRooms)
+            }
+        }
     }
 }

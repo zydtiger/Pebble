@@ -148,6 +148,7 @@ impl Database {
         )?;
         tx.execute("UPDATE model_calls SET status = ?2, error = ?3, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1 AND status = 'queued'", params![pending.call_id, status.as_str(), error])?;
         super::delegation::finish_report(&tx, &pending.call_id, "failed")?;
+        super::image_generation::finish_report(&tx, &pending.call_id, "failed")?;
         let reply = message(&tx, &pending.reply.id)?;
         super::rounds::complete_slot(
             &tx,

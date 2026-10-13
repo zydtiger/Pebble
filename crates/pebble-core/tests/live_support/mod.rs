@@ -14,13 +14,13 @@ impl ChatListener for Listener {
         self.0.send(event).map_err(|e| e.to_string())
     }
 }
-pub(super) struct Plan {
+pub(crate) struct Plan {
     pub status: u16,
     pub body: String,
     pub delay_headers: bool,
     pub delay_tail: bool,
 }
-pub(super) fn stream(body: String) -> Plan {
+pub(crate) fn stream(body: String) -> Plan {
     Plan {
         status: 200,
         body,
@@ -28,19 +28,19 @@ pub(super) fn stream(body: String) -> Plan {
         delay_tail: false,
     }
 }
-pub(super) fn event(fields: Value, reason: Value) -> String {
+pub(crate) fn event(fields: Value, reason: Value) -> String {
     format!(
         "data: {}\r\n\r\n",
         json!({"choices":[{"index":0,"delta":fields,"finish_reason":reason}]})
     )
 }
-pub(super) fn structured(text: &str) -> String {
+pub(crate) fn structured(text: &str) -> String {
     json!({"reply":text,"state":{"affinity_user":20,"mood":"calm"}}).to_string()
 }
-pub(super) fn success(text: &str) -> String {
+pub(crate) fn success(text: &str) -> String {
     candidate(&structured(text))
 }
-pub(super) fn candidate(text: &str) -> String {
+pub(crate) fn candidate(text: &str) -> String {
     format!(
         "{}{}{}data: [DONE]\r\n\r\n",
         event(
@@ -51,7 +51,7 @@ pub(super) fn candidate(text: &str) -> String {
         event(json!({}), json!("stop"))
     )
 }
-pub(super) struct Server {
+pub(crate) struct Server {
     pub url: String,
     pub requests: mpsc::Receiver<(String, Value)>,
     worker: Option<std::thread::JoinHandle<()>>,
@@ -172,7 +172,7 @@ impl Drop for Server {
     }
 }
 // Older behavioral fixtures review unchanged memory without consuming a chat plan.
-pub(super) fn maintenance_reply(body: &Value) -> Option<String> {
+pub(crate) fn maintenance_reply(body: &Value) -> Option<String> {
     let inputs = body["messages"].as_array().or(body["input"].as_array())?;
     let last = inputs.last()?;
     let text = last["content"]
@@ -202,7 +202,7 @@ pub(super) fn maintenance_reply(body: &Value) -> Option<String> {
         )
     })
 }
-pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &str) {
+pub(crate) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &str) {
     std::fs::write(
         root.join("config.toml"),
         format!(
@@ -211,7 +211,7 @@ pub(super) fn configure(root: &Path, url: &str, model: &str, api: &str, key: &st
     )
     .unwrap();
 }
-pub(super) fn isolated() -> (tempfile::TempDir, Core, String) {
+pub(crate) fn isolated() -> (tempfile::TempDir, Core, String) {
     let root = tempfile::tempdir().unwrap();
     let core = Core::open(root.path()).unwrap();
     std::fs::write(
@@ -232,7 +232,7 @@ pub(super) fn isolated() -> (tempfile::TempDir, Core, String) {
     .unwrap();
     (root, core, persona.id)
 }
-pub(super) fn start(
+pub(crate) fn start(
     core: &Core,
     id: &str,
     text: &str,
@@ -243,7 +243,7 @@ pub(super) fn start(
         rx,
     )
 }
-pub(super) fn terminal(rx: &mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
+pub(crate) fn terminal(rx: &mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
     let mut events = Vec::new();
     loop {
         let event = rx.recv_timeout(Duration::from_secs(180)).unwrap();
@@ -257,7 +257,7 @@ pub(super) fn terminal(rx: &mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
         }
     }
 }
-pub(super) fn reopen(root: &Path) -> Core {
+pub(crate) fn reopen(root: &Path) -> Core {
     for _ in 0..100 {
         match Core::open(root) {
             Ok(core) => return core,
@@ -268,7 +268,7 @@ pub(super) fn reopen(root: &Path) -> Core {
     panic!("worker still owns root")
 }
 
-pub(super) fn retry(
+pub(crate) fn retry(
     core: &Core,
     persona: &str,
     reply: &str,
@@ -281,7 +281,7 @@ pub(super) fn retry(
 }
 
 /// Downgrade fixtures predating per-item encoding must contain raw native JSON.
-pub(super) fn raw_history(root: &Path) {
+pub(crate) fn raw_history(root: &Path) {
     let db = rusqlite::Connection::open(root.join("data/app.sqlite")).unwrap();
     let rows: Vec<(String, Vec<u8>)> = db
         .prepare("SELECT id,payload FROM model_items WHERE codec='zstd'")

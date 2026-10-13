@@ -2,7 +2,8 @@
 
 v0.3.0 adds bounded persona memory tools and explicit memory consolidation to the reviewed private + group lifecycle. [Group scheduling](group-flow.md), [membership](groups.md),
 [state lifetime](state.md) and [provider contracts](providers.md) define the
-current boundaries. The version-unassigned [Codex delegation](delegation.md) increment
+current boundaries. [Image generation](image-generation.md) adds background
+backend execution, durable assets and original-room persona publication. The version-unassigned [Codex delegation](delegation.md) increment
 adds Rust-owned local execution and durable reporting; the [roadmap](roadmap.md) maps completion scenarios to tests.
 
 ## Boundaries
@@ -242,7 +243,14 @@ Rust owns immutable assets, content validation, normalization, metadata,
 message ordering, visibility, frozen references, request materialization and
 image/transport budgets. Swift owns the native picker, paste/drop conversion,
 removable room drafts and image presentation; UniFFI carries typed records.
-Schema v12 adds two tables without rewriting old native items. All chat,
+Schema v12 adds two tables without rewriting old native items. Schema v14 adds
+independent image-generation operations and native submission records, with frozen
+settings/remote identities and separate execution/publication status. A bounded
+background worker releases the persona queue, then supplies actual generated
+pixels to an original-room report in that queue. Validated text/state, attachment
+and group events publish atomically. Stop invalidates unpublished room work and
+requests backend cancellation. Startup reconciles saved remote identities with
+read-only requests, never replacement generation or shared Studio queue resume. All chat,
 classifier and maintenance adapters use the same 768-pixel model rendition.
 Frozen user parts reference exact bytes; base64 exists only in a bounded HTTP
 request. Required images fail visibly if unavailable. See [image input](images.md)

@@ -70,6 +70,7 @@ struct BridgeChecks {
         let root = ProcessInfo.processInfo.environment["PEBBLE_DATA_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory.appendingPathComponent("pebble-bridge-\(UUID())")
         defer { if ProcessInfo.processInfo.environment["PEBBLE_DATA_DIR"] == nil { try? FileManager.default.removeItem(at: root) } }
         let (personaID, roomID, messageIDs) = try await exerciseBridge(root)
+        try await exerciseImageGenerationBridge(root.appendingPathComponent("image-generation"))
         try await Task.sleep(for: .milliseconds(100))
         do {
             let reopened = try PebbleBackend(dataRoot: root.path)

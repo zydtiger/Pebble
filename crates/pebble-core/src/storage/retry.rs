@@ -23,6 +23,11 @@ impl Database {
         {
             return Err(unavailable());
         }
+        if let Some(id) = super::image_generation::retry_report(&tx, &original)? {
+            tx.commit()?;
+            drop(connection);
+            return self.enqueue_image_report(&id)?.ok_or_else(unavailable);
+        }
         if super::delegation::report_input(&tx, &original)?.is_some() {
             let record: Option<(String, String)> = tx.query_row(
                 "SELECT id,record FROM delegated_tasks WHERE json_extract(record,'$.report_call')=?1 AND json_extract(record,'$.report_state')='failed'",

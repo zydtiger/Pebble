@@ -242,7 +242,8 @@ fn collect(envelope: &Value, refs: &mut Vec<(String, ImageReference)>) -> Result
     .into_iter()
     .filter_map(|key| envelope[key].as_array())
     .flatten()
-    .chain(envelope.get("latest_user_message"));
+    .chain(envelope.get("latest_user_message"))
+    .chain(envelope.get("generated_image_result"));
     for event in events {
         let Some(images) = event["image_attachments"].as_array() else {
             continue;

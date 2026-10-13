@@ -41,6 +41,8 @@ fn restart_keeps_identity_and_state_table() {
             "group_reply_slots",
             "group_rounds",
             "image_assets",
+            "image_generation_submissions",
+            "image_generations",
             "memory_operations",
             "message_images",
             "message_mentions",
