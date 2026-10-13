@@ -14,8 +14,8 @@ pub(super) fn create_session(
         [&persona.id],
     )?;
     let id = new_id();
-    db.execute("INSERT INTO model_sessions (id, persona_id, protocol, model, base_url, event_start_sequence, covered_event_sequence, status, context_reason, response_schema, memory_tools, delegation_tools)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'active', ?7, ?8, 1, 1)", params![id, persona.id, protocol, model, base_url, start, reason, serde_json::to_string(&persona.response_schema)?])?;
+    db.execute("INSERT INTO model_sessions (id, persona_id, protocol, model, base_url, event_start_sequence, covered_event_sequence, status, context_reason, response_schema, memory_tools, delegation_tools, image_generation_tools)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'active', ?7, ?8, 1, 1, 1)", params![id, persona.id, protocol, model, base_url, start, reason, serde_json::to_string(&persona.response_schema)?])?;
     let state = super::state::current(db, &persona.id)?;
     crate::structured::validate_state(&persona.response_schema, &state).map_err(|detail| Error::Generation(format!("Current state is incompatible with the response schema: {detail} Restore a compatible schema; state is never reset automatically.")))?;
     let content = format!(
@@ -28,8 +28,9 @@ pub(super) fn create_session(
         persona.display_name, persona.soul, persona.memory
     );
     let content = format!(
-        "{content}\n\nDELEGATION\n{}",
-        crate::codex::tool::INSTRUCTIONS
+        "{content}\n\nDELEGATION\n{}\n\nIMAGE_GENERATION\n{}",
+        crate::codex::tool::INSTRUCTIONS,
+        crate::image_generation::tool::INSTRUCTIONS
     );
     let content = format!(
         "{content}\n\nRESPONSE_CONTRACT\n{}\n\nRESPONSE_SCHEMA\n{}\n\nCURRENT_ACCEPTED_STATE\n{}",

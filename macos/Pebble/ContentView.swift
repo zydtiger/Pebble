@@ -44,6 +44,7 @@ struct ContentView: View {
         .foregroundStyle(PebbleTheme.ink)
         .frame(minWidth: 820, minHeight: 610)
         .preferredColorScheme(.light)
+        .sheet(isPresented: $model.showImageGenerationSettings) { ImageGenerationSheet(model: model) }
         .sheet(isPresented: $model.showCodexSettings) { CodexSheet(model: model) }
         .sheet(isPresented: $model.showCharacter) {
             if let persona = model.selected { CharacterSheet(model: model, persona: persona) }
@@ -142,6 +143,7 @@ struct ContentView: View {
                 HStack {
                     Text("v0.3.0").font(.system(size: 10, design: .monospaced))
                     Spacer()
+                    Button { model.showImageGenerationSettings = true } label: { Image(systemName: "photo") }.help("Image generation settings")
                     Button { model.showCodexSettings = true } label: { Image(systemName: "bolt.horizontal.circle") }.help("Codex task settings")
                     Button { model.settingsTarget = SettingsTarget(personaID: nil) } label: { Image(systemName: "gearshape") }
                         .help("App defaults")
@@ -387,10 +389,10 @@ struct ContentView: View {
                               onSubmit: { model.sendMessage() }, onImages: model.importImages,
                               onImageError: { model.error = $0 })
                     .frame(height: composerHeight)
-                if model.isReplying {
+                if model.isReplying || model.hasPendingImages {
                     Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
                         .buttonStyle(.plain).foregroundStyle(PebbleTheme.sage)
-                        .help("Stop every pending reply and check in this chat").accessibilityLabel("Stop reply")
+                        .help("Stop replies, checks and unpublished image generation in this chat").accessibilityLabel("Stop reply")
                 }
                 Button { model.sendMessage() } label: {
                     Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold))

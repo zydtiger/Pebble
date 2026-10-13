@@ -32,7 +32,7 @@ struct TaskMonitor: View {
                                     .frame(width: 14, height: 14).padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(task.title).font(.system(size: 12)).lineLimit(2)
-                                    Text("\(model.speakerName(task.personaId)) · \(task.state.label)")
+                                    Text("\(model.speakerName(task.personaId)) · \(task.status)")
                                         .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                 }
                                 Spacer(minLength: 0)

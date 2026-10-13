@@ -193,14 +193,17 @@ integration gates remain necessary before treating these stage labels as a relea
 
 ### Image generation and later work
 
-**Persona image generation** remains a separate, version-unassigned increment.
-It depends on durable image input/history and a verified Codex image-result
-contract. A narrow tool should persist the actual generated asset, let the
-persona inspect it, then publish validated text/state/attachments together.
-Reuse saved images after reply failure; uncertain external completion must not
-cause an automatic second generation. Queue blocking versus task-card background
-delivery still needs a product decision. A standalone generation/recovery probe
-does not establish the complete Pebble dispatch/cancel/restart contract.
+**Persona image generation** is implemented as a version-unassigned increment.
+G1–G6 provide strict native arguments and independent backend settings, durable
+execution/publication, direct Studio HTTP, typed local Codex ChatGPT images,
+actual-pixel persona delivery and original-room atomic publication. Generation
+runs in the background; Stop cancels unpublished room work. Saved assets survive
+reply failure, and saved remote identities only permit read-only reconciliation.
+Studio sizes are strict; ChatGPT preserves actual output and explains size
+mismatches. Targeted fixtures cover both protocols, queue release, failure/retry,
+uncertain submission, group fanout, membership and cancellation. See
+[image generation](image-generation.md) for the contract and verification entry
+points. Release placement and signed distribution remain separate decisions.
 
 Automatic threshold compaction, richer memory retrieval, attachment deletion,
 sync and broader distribution remain outside these increments.

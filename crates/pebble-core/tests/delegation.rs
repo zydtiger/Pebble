@@ -467,7 +467,7 @@ fn schema_twelve_upgrade_preserves_native_prefix_and_requires_explicit_capabilit
             |r| r.get(0),
         )
         .unwrap();
-    db.execute_batch("DROP TABLE delegation_runs;DROP TABLE delegation_submissions;DROP TABLE delegated_tasks;DROP TABLE delegation_assignments;ALTER TABLE model_sessions DROP COLUMN delegation_tools;ALTER TABLE messages DROP COLUMN separate_delegations;PRAGMA user_version=12;").unwrap();
+    db.execute_batch("DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs;DROP TABLE delegation_submissions;DROP TABLE delegated_tasks;DROP TABLE delegation_assignments;ALTER TABLE model_sessions DROP COLUMN delegation_tools;ALTER TABLE messages DROP COLUMN separate_delegations;PRAGMA user_version=12;").unwrap();
     drop(db);
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);

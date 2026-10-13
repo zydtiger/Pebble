@@ -202,7 +202,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
     {
         let db = core.database.connection.lock().unwrap();
         db.execute_batch(
-            "DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
+            "DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
         )
         .unwrap();
     }
@@ -230,7 +230,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
             .unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
 }
 

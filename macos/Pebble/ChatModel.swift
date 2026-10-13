@@ -188,6 +188,10 @@ final class ChatModel {
     var showRenameGroup = false
     var showGroupMembers = false
     var showFreshContext = false
+    var showImageGenerationSettings = false
+    var imageGenerations: [ImageGenerationRecord] = []
+    var imageGenerationStream: Task<Void, Never>?
+    var imageGenerationSink: AsyncStream<[ImageGenerationRecord]>.Continuation?
     var showCodexSettings = false
     var delegatedTasks: [DelegatedTaskRecord] = []
     var delegationStream: Task<Void, Never>?
@@ -326,6 +330,7 @@ final class ChatModel {
                 }
             }
             try await startTaskObservation()
+            try await startImageObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
                 if let status = try await client.maintenanceStatus(persona: persona.id) {
                     maintenanceDetails[persona.id] = status.detail
@@ -634,6 +639,7 @@ final class ChatModel {
         }
     }
     func closeChat() {
+        imageGenerationStream?.cancel(); imageGenerationStream = nil; imageGenerationSink?.finish(); imageGenerationSink = nil
         delegationStream?.cancel(); delegationStream = nil; delegationSink?.finish(); delegationSink = nil
         selectionRevision = UUID()
         maintenanceHandles.values.forEach { $0.cancel() }

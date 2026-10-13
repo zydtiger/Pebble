@@ -13,7 +13,12 @@ mod connection;
 mod context;
 mod demo;
 mod history;
+mod image_generation;
 mod images;
+pub use image_generation::{
+    ChatGptImageSettings, ImageGeneration, ImageGenerationListener, ImageGenerationSettings,
+    StudioSettings,
+};
 pub use images::ImageAsset;
 mod live;
 mod maintenance;
@@ -91,6 +96,7 @@ pub struct Core {
     database: Arc<storage::Database>,
     chats: Arc<chat::Chats>,
     codex: Arc<codex::Manager>,
+    image_generation: Arc<image_generation::Manager>,
 }
 
 impl Core {
@@ -104,14 +110,23 @@ impl Core {
         let codex =
             codex::Manager::new(database.clone(), data_root.clone(), Arc::downgrade(&chats));
         *database.codex.lock().expect("task manager") = Arc::downgrade(&codex);
+        let image_generation = image_generation::Manager::new(
+            database.clone(),
+            data_root.clone(),
+            Arc::downgrade(&chats),
+        );
+        *database.image_generation.lock().expect("image manager") =
+            Arc::downgrade(&image_generation);
         let core = Self {
             data_root,
             database,
             chats,
             codex,
+            image_generation,
         };
         core.workspace()?;
         core.codex.recover();
+        core.image_generation.recover();
         Ok(core)
     }
 
@@ -388,6 +403,7 @@ impl Drop for Core {
     fn drop(&mut self) {
         self.chats.cancel_all();
         self.codex.shutdown();
+        self.image_generation.shutdown();
     }
 }
 
@@ -396,7 +412,9 @@ impl Core {
         self.codex.settings()
     }
     pub fn save_codex_settings(&self, settings: &CodexSettings) -> Result<(), Error> {
-        self.codex.save_settings(settings)
+        self.codex.save_settings(settings)?;
+        self.image_generation.invalidate_availability();
+        Ok(())
     }
     pub fn codex_capabilities(&self) -> Result<CodexCapabilities, Error> {
         self.codex.capabilities()
@@ -427,5 +445,29 @@ impl Core {
     }
     pub fn retry_delegation_report(&self, id: &str) -> Result<(), Error> {
         self.codex.retry_report(id)
+    }
+}
+
+impl Core {
+    pub fn image_generation_settings(&self) -> Result<ImageGenerationSettings, Error> {
+        image_generation::settings::read(&self.data_root)
+    }
+    pub fn save_image_generation_settings(
+        &self,
+        settings: &ImageGenerationSettings,
+    ) -> Result<(), Error> {
+        self.chats
+            .serialized(|| image_generation::settings::save(&self.data_root, settings))?;
+        self.image_generation.invalidate_availability();
+        Ok(())
+    }
+    pub fn image_generations(&self) -> Result<Vec<ImageGeneration>, Error> {
+        self.database.image_generations()
+    }
+    pub fn observe_image_generations(
+        &self,
+        listener: Arc<dyn ImageGenerationListener>,
+    ) -> Result<(), Error> {
+        self.image_generation.subscribe(listener)
     }
 }

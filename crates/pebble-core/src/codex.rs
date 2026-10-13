@@ -1,6 +1,6 @@
-mod adapter;
+pub(crate) mod adapter;
 mod manager;
-mod settings;
+pub(crate) mod settings;
 pub(crate) mod tool;
 use crate::Error;
 pub use adapter::CodexCapabilities;

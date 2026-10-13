@@ -41,6 +41,8 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
             memory_tools: false,
             memory_capable: false,
             delegation_tools: false,
+            image_generation_tools: false,
+            image_generation_backends: Vec::new(),
         };
         let (_, body) = request_body(&chat, &request, 77).unwrap();
         assert_eq!(
@@ -72,5 +74,44 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
             .check_body(&request_body(&chat, &plain, 77).unwrap().1)
             .unwrap();
         assert!(estimate > body.to_string().chars().count() as u64 + 128);
+    }
+}
+
+#[test]
+fn image_generation_backend_enum_contains_only_available_choices() {
+    for api in ["chat_completions", "responses"] {
+        let chat = ChatConnection {
+            request: Default::default(),
+            model: "test".into(),
+            base_url: "https://api.example.com".into(),
+            api: api.into(),
+            api_key: None,
+            api_key_env: None,
+            responses_schema_format: None,
+            context_len: 100_000,
+            max_output_tokens: 77,
+        };
+        let mut request: ModelRequest = serde_json::from_value(json!({"call_id":"call","session_id":"session","conversation_id":"room","trigger_message_id":"trigger","event_cutoff":0,"protocol":api,"model":"test","items":[],"memory_tools":false,"memory_capable":false,"image_generation_tools":true})).unwrap();
+        for backend in ["studio", "chatgpt"] {
+            request.image_generation_backends = vec![backend.into()];
+            let (_, body) = request_body(&chat, &request, 77).unwrap();
+            let tool = body["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| {
+                    v["name"] == "generate_image" || v["function"]["name"] == "generate_image"
+                })
+                .unwrap();
+            let parameters = if api == "responses" {
+                &tool["parameters"]
+            } else {
+                &tool["function"]["parameters"]
+            };
+            assert_eq!(
+                parameters["properties"]["backend"]["enum"],
+                json!([backend])
+            );
+        }
     }
 }

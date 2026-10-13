@@ -66,6 +66,10 @@ pub struct ModelRequest {
     pub memory_capable: bool,
     #[serde(default)]
     pub delegation_tools: bool,
+    #[serde(default)]
+    pub image_generation_tools: bool,
+    #[serde(skip)]
+    pub image_generation_backends: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

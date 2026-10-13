@@ -22,6 +22,11 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_IMAGES_ONLY"] == "1" {
+                    try await checkImageGenerationRendering(window: window, model: model)
+                    app.terminate(nil)
+                    return
+                }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_CODEX_SETTINGS_ONLY"] == "1" {
                     model.showCodexSettings = true
                     try await Task.sleep(for: .milliseconds(400))
