@@ -49,6 +49,59 @@ impl Prompt {
     }
 }
 
+pub(super) fn edit_schema() -> Value {
+    let mut schema = schema();
+    let properties = schema["properties"].as_object_mut().unwrap();
+    properties.remove("subject");
+    properties.insert("instruction".into(), json!({"type":"string","description":"Required nonblank change to make to the source image."}));
+    properties.insert(
+        "preserve".into(),
+        json!({"type":["array","null"],"items":{"type":"string"}}),
+    );
+    schema["required"] = json!([
+        "instruction",
+        "preserve",
+        "style",
+        "composition",
+        "lighting",
+        "background",
+        "details",
+        "constraints"
+    ]);
+    schema
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EditPrompt {
+    instruction: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preserve: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    composition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lighting: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    constraints: Option<Vec<String>>,
+}
+impl EditPrompt {
+    pub(super) fn serialize(&self) -> Result<String, &'static str> {
+        if self.instruction.trim().is_empty() {
+            return Err("prompt.instruction must be a nonblank string.");
+        }
+        let payload = serde_json::to_string(self).map_err(|_| "Could not serialize prompt.")?;
+        if payload.len() > 16384 {
+            return Err("Serialized prompt must contain at most 16384 UTF-8 bytes.");
+        }
+        Ok(payload)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

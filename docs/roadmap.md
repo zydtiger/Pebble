@@ -203,7 +203,15 @@ Studio sizes are strict; ChatGPT preserves actual output and explains size
 mismatches. Targeted fixtures cover both protocols, queue release, failure/retry,
 uncertain submission, group fanout, membership and cancellation. See
 [image generation](image-generation.md) for the contract and verification entry
-points. Release placement and signed distribution remain separate decisions.
+points. Single-source `edit_image` shares the operation/report lifecycle and
+canonical-user-trigger deduplication, validates frozen current-room source access,
+freezes original pixels, and publishes one new immutable asset. Studio uploads
+once before `image-edit` submission; ChatGPT receives a staged `localImage`.
+Recovery never repeats upload or edit dispatch. Targeted fixtures cover source
+visibility, original preservation, successive edits, profile rejection, upload
+uncertainty and publication retries. Live editing validation is separate from
+advertised provider capability. Release placement and signed distribution remain
+separate decisions.
 
 Automatic threshold compaction, richer memory retrieval, attachment deletion,
 sync and broader distribution remain outside these increments.

@@ -16,7 +16,7 @@ characters, individually or together in a group.
   or display LaTeX math.
 - **Image sharing.** Paste, drop or select JPEG/PNG images, and chat about them
   with a vision-capable model.
-- **Image creation.** Ask a character to create an image through your configured
+- **Image creation and editing.** Ask a character to create or edit a shared image through your configured
   Studio service or local Codex with ChatGPT, then discuss it in chat.
 - **Tasks through Codex.** Let characters delegate research and other work to
   local Codex, then bring the results back into chat.

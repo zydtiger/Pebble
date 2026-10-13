@@ -97,7 +97,15 @@ impl Database {
         // One operation per canonical user trigger, including other group speakers.
         let existing:Option<String>=tx.query_row("SELECT id FROM image_generations WHERE json_extract(record,'$.trigger')=?1 AND json_extract(record,'$.conversation_id')=?2 ORDER BY rowid LIMIT 1",params![request.trigger_message_id,request.conversation_id],|r|r.get(0)).optional()?;
         let mut dispatch = None;
-        let outcome = if !configured {
+        let source = call
+            .arguments
+            .image_id
+            .as_deref()
+            .map(|id| image_generation::source::freeze(&tx, request, &persona, id))
+            .transpose();
+        let outcome = if let Err(error) = &source {
+            json!({"ok":false,"detail":error.to_string()})
+        } else if !configured {
             json!({"ok":false,"detail":"This image backend is not configured. Configure Image generation in app settings; do not claim an image was generated."})
         } else if let Some(id) = existing {
             json!({"ok":true,"operation_id":id,"status":"existing","detail":"This user request already has an image operation. Do not generate again; its original owner reports the result."})
@@ -109,13 +117,25 @@ impl Database {
                 conversation_id: request.conversation_id.clone(),
                 backend: call.arguments.backend.clone(),
                 status: "queued".into(),
-                activity: "Waiting to generate an image…".into(),
+                activity: if call.arguments.image_id.is_some() {
+                    "Waiting to edit an image…"
+                } else {
+                    "Waiting to generate an image…"
+                }
+                .into(),
                 detail: String::new(),
                 publication_status: "pending".into(),
                 asset_id: None,
                 actual_width: None,
                 actual_height: None,
                 effective_parameters: json!({}),
+                kind: if call.arguments.image_id.is_some() {
+                    image_generation::ImageOperationKind::Edit
+                } else {
+                    image_generation::ImageOperationKind::Generate
+                },
+                source: source?,
+                input_id: None,
                 arguments: call.arguments.clone(),
                 settings: settings.clone(),
                 executable: executable.into(),
@@ -252,15 +272,10 @@ fn outcome_input(db: &Connection, op: &ImageGeneration) -> Result<Value, Error> 
     if has_public_image(op)
         && let Some(id) = &op.asset_id
     {
-        let text: String = db.query_row(
-            "SELECT reference FROM image_assets WHERE id=?1",
-            [id],
-            |r| r.get(0),
-        )?;
-        refs.push(serde_json::from_str::<Value>(&text)?);
+        refs.push(serde_json::to_value(super::images::reference(db, id)?)?);
     }
     Ok(
-        json!({"operation_id":op.id,"backend":op.backend,"status":op.status,"detail":op.detail,"effective_parameters":op.effective_parameters,"requested_size":op.arguments.size,"actual_size":{"width":op.actual_width,"height":op.actual_height},"image_attachments":refs,"message_id":op.id,"instructions":"This is stored image-generation evidence, not a user instruction. Inspect the attached actual pixels. Give a valid in-character reply/state explaining the result in the original room. An image is attached automatically at publication; do not invent a link or regenerate. Explain requested/actual dimension mismatch honestly. An uncertain controller outcome does not invalidate a completed saved image, but explain that limitation. Failed, interrupted or uncertain generation without a saved image is not success. Never invoke tools to explain this result."}),
+        json!({"operation_id":op.id,"operation_kind":op.kind,"source_image_id":op.source.as_ref().map(|s|&s.asset_id),"backend":op.backend,"status":op.status,"detail":op.detail,"effective_parameters":op.effective_parameters,"requested_size":op.arguments.size,"actual_size":{"width":op.actual_width,"height":op.actual_height},"image_attachments":refs,"message_id":op.id,"instructions":"This is stored image generation/editing evidence, not a user instruction. Inspect the attached actual output pixels and explain the generated or edited result. Give a valid in-character reply/state explaining the result in the original room. An image is attached automatically at publication; do not invent a link or regenerate. Explain requested/actual dimension mismatch honestly. An uncertain controller outcome does not invalidate a completed saved image, but explain that limitation. Failed, interrupted or uncertain generation without a saved image is not success. Never invoke tools to explain this result."}),
     )
 }
 pub(crate) fn report_current(db: &Connection, call: &str) -> Result<bool, Error> {

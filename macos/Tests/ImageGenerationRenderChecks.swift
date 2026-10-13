@@ -15,11 +15,17 @@ func checkImageGenerationRendering(window: NSWindow, model: ChatModel) async thr
     model.imageGenerationStream?.cancel(); model.imageGenerationStream = Task {}
     model.imageGenerationSink?.finish(); model.imageGenerationSink = nil
     model.imageGenerations = [ImageGenerationRecord(id: "render-image", personaId: persona.id, conversationId: persona.conversationId,
-        backend: "studio", status: "loading", activity: "Loading the Studio model…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)]
+        kind: .generate, backend: "studio", status: "loading", activity: "Loading the Studio model…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)]
     try await Task.sleep(for: .milliseconds(200))
     guard model.hasPendingImages, let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton else { throw RenderError.failed("Loading image is missing its monitor or Stop") }
     button.performClick(nil)
     try await Task.sleep(for: .milliseconds(200))
     try RenderChecks.capture(window, name: "image-generation-loading-monitor")
+    model.imageGenerations[0].kind = .edit
+    model.imageGenerations[0].status = "running"
+    model.imageGenerations[0].activity = "Editing an image in Studio…"
+    guard model.monitorTasks.first?.title == "Edit image · Studio" else { throw RenderError.failed("Editing row title is incorrect") }
+    try await Task.sleep(for: .milliseconds(200))
+    try RenderChecks.capture(window, name: "image-edit-running-monitor")
     model.closeChat()
 }

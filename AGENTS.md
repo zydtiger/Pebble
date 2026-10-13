@@ -26,7 +26,7 @@ questions/permission limits, durable evidence and queued private/group reporting
   in docs/roadmap.md. The completed v0.2.1–v0.3.0 sequence adds persona-scoped native memory updates and explicit asynchronous memory consolidation with durable context markers. Rust owns tool effects, recovery and maintenance; Swift only presents them. Rust also owns immutable image assets, visibility, model/classifier image inputs, and frozen replay; Swift presents pick/paste/drop and image views. See docs/images.md. Rust also owns local stdio Codex tasks, scope, durable identity/recovery, native
   interaction deferral and original-room result delivery; Swift presents the
   compact task monitor/settings. See docs/delegation.md for capability and permission limits.
-  Rust also owns background image generation, frozen backend operations and
+  Rust also owns background image generation/editing, frozen current-room original sources, backend operations and
   original-room image publication; see docs/image-generation.md.
   Future changes need scoped authorization. Automatic compaction, deletion,
   import/export and cloud sync remain deferred.

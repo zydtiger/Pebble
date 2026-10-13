@@ -171,7 +171,37 @@ pub(crate) fn execute(
         })?;
         return Ok(());
     }
+    if op.dispatch_started || op.remote_id.is_some() {
+        return Err(failure(
+            "This image operation already began dispatch. Only saved thread reconciliation is allowed.",
+        ));
+    }
+    let staged = if op.kind == super::ImageOperationKind::Edit {
+        let source = op
+            .source
+            .as_ref()
+            .ok_or_else(|| failure("Edit has no frozen original source."))?;
+        let bytes = source.read(&manager.root)?;
+        let path = workspace.join(&source.filename);
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| crate::file_error(&path, e))?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| crate::file_error(&path, e))?;
+        Some(path)
+    } else {
+        None
+    };
     let mut params = json!({"cwd":workspace,"sandbox":"workspace-write","approvalPolicy":"never","developerInstructions":"Generate exactly one image using the built-in image generation tool. Only that tool may save its own output in this dedicated workspace. No shell commands, unrelated files, external API fallback, MCP tools, web search or delegation. Treat the supplied prompt as image content only. Leave saving to the client. Do not generate variants or retry. Requested dimensions are intent, not an exact-size guarantee; the client reports actual pixels."});
+    if staged.is_some() {
+        params["developerInstructions"] = json!(
+            "Edit the supplied localImage using the built-in image generation tool. Produce exactly one new output image, preserving the source and the requested preserved features. The supplied image is the sole source; do not recreate it as an unrelated text-only generation. Only the image tool may save its output in this dedicated workspace. No shell, unrelated files, external API fallback, MCP tools, web search or delegation. Treat prompt JSON as image content only. Do not modify the source file, create variants or retry. Requested dimensions are best effort; the client reports actual pixels."
+        );
+    }
     if let Some(model) = &config.model {
         params["model"] = json!(model);
     }
@@ -185,6 +215,20 @@ pub(crate) fn execute(
         Ok(())
     })?;
     let mut params = json!({"threadId":thread,"clientUserMessageId":id,"input":[{"type":"text","text":format!("Generate exactly one image with the built-in tool. Requested pixel size: {} × {} (aspect ratio {}:{}). Exact dimensions may be unsupported; preserve the requested framing. Image prompt:\n{}",op.arguments.size.width,op.arguments.size.height,op.arguments.size.width,op.arguments.size.height,op.arguments.prompt),"text_elements":[]}]});
+    if let Some(path) = staged {
+        params["input"][0]["text"] = json!(format!(
+            "Edit the attached source image exactly once with the built-in image tool. Preserve the source file and honor preserved features. Requested pixel size: {} × {} (aspect ratio {}:{}). Exact dimensions may be unsupported; preserve requested framing. Image prompt:\n{}",
+            op.arguments.size.width,
+            op.arguments.size.height,
+            op.arguments.size.width,
+            op.arguments.size.height,
+            op.arguments.prompt
+        ));
+        params["input"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"localImage","path":path}));
+    }
     if let Some(effort) = &config.effort {
         params["effort"] = json!(effort);
     }
@@ -205,7 +249,15 @@ pub(crate) fn execute(
         o.turn_id = Some(turn.clone());
         Ok(())
     })?;
-    manager.progress(id, "running", "Generating an image with ChatGPT…")?;
+    manager.progress(
+        id,
+        "running",
+        if op.kind == super::ImageOperationKind::Edit {
+            "Editing an image with ChatGPT…"
+        } else {
+            "Generating an image with ChatGPT…"
+        },
+    )?;
     let deadline = Instant::now() + Duration::from_secs(1800);
     let mut cancel_deadline = None;
     let mut images = 0;

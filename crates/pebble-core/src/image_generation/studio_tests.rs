@@ -1,5 +1,6 @@
 use super::{studio::*, tests::*, *};
 use crate::{Core, chat::Control};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -70,8 +71,12 @@ impl Server {
                                     .collect::<Vec<_>>()
                                     .join(" "),
                                 if size > 0 {
-                                    serde_json::from_slice(&data[index + 4..index + 4 + size])
-                                        .unwrap()
+                                    if headers.contains("multipart/form-data") {
+                                        json!({"headers":headers,"multipart":STANDARD.encode(&data[index+4..index+4+size])})
+                                    } else {
+                                        serde_json::from_slice(&data[index + 4..index + 4 + size])
+                                            .unwrap()
+                                    }
                                 } else {
                                     Value::Null
                                 },
@@ -82,7 +87,9 @@ impl Server {
                 captured.lock().unwrap().push((route.clone(), body));
                 let response=match route.as_str() {
                     "GET /api/models"=>json!({"registrations":[{"id":"model","status":"ready","profile":"qwen"}]}).to_string().into_bytes(),
-                    "GET /api/profiles"=>json!({"profiles":[{"profile_id":"qwen","dimension_multiple":32,"min_steps":1,"max_steps":100,"guidance_fixed":1.0}]}).to_string().into_bytes(),
+                    "GET /api/profiles"=>json!({"profiles":[{"profile_id":"qwen","dimension_multiple":if mode=="large-multiple"{2048}else{32},"min_steps":1,"max_steps":100,"guidance_fixed":1.0,"generation_modes":if mode=="no-edit" {vec!["text-to-image"]} else {vec!["text-to-image","image-edit"]},"max_input_images":1,"max_input_bytes":if mode=="small-input"{1}else{20971520},"max_input_pixels":16777216}]}).to_string().into_bytes(),
+                    "POST /api/inputs" if mode=="lost-input"=>{continue;},
+                    "POST /api/inputs"=>json!({"input_id":"saved-input","created_at":"now","width":256,"height":256,"size_bytes":png().len(),"url":"/api/inputs/saved-input"}).to_string().into_bytes(),
                     "POST /api/generations" if mode=="lost"=>{continue;},
                     "POST /api/generations"=>json!({"run_id":"saved-run","steps":40,"guidance":1.0,"profile":"qwen","commit_sha":"accepted-revision","gpu":{"uuid":"gpu"}}).to_string().into_bytes(),
                     "POST /api/generations/saved-run/cancel"=>{cancelled=true;json!({"status":"cancelling"}).to_string().into_bytes()},
@@ -93,7 +100,12 @@ impl Server {
                 };
                 write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    if route == "POST /api/inputs" {
+                        "201 Created"
+                    } else {
+                        "200 OK"
+                    },
                     response.len()
                 )
                 .unwrap();
@@ -353,4 +365,162 @@ fn studio_stop_has_bounded_confirmation_and_never_resumes_shared_queue() {
         );
         assert!(!requests.iter().any(|(r, _)| r.contains("queue/resume")));
     }
+}
+
+#[test]
+fn studio_edit_uploads_original_once_and_freezes_exact_edit_submission() {
+    let server = Server::new("complete");
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let (id, source) = prepare_edit(&core, "studio", &configured(&server.url), "unused");
+    let original = std::fs::read(&source.source_path).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let control = Arc::new(Control::default());
+    rt.block_on(execute(&core.image_generation, &id, false, &control))
+        .unwrap();
+    let op = core.database.image_generation(&id).unwrap();
+    assert_eq!(op.kind, ImageOperationKind::Edit);
+    assert_eq!(op.input_id.as_deref(), Some("saved-input"));
+    assert_ne!(op.asset_id.as_deref(), Some(source.id.as_str()));
+    assert_eq!(std::fs::read(&source.source_path).unwrap(), original);
+    let requests = server.requests.lock().unwrap();
+    let upload = requests
+        .iter()
+        .find(|(r, _)| r == "POST /api/inputs")
+        .unwrap();
+    let raw = STANDARD
+        .decode(upload.1["multipart"].as_str().unwrap())
+        .unwrap();
+    assert!(raw.windows(original.len()).any(|w| w == original));
+    assert_eq!(
+        (
+            op.source.as_ref().unwrap().width,
+            op.source.as_ref().unwrap().height
+        ),
+        (1024, 768)
+    );
+    assert!(String::from_utf8_lossy(&raw).contains("name=\"file\"; filename=\"source.png\""));
+    let submission = &requests
+        .iter()
+        .find(|(r, _)| r == "POST /api/generations")
+        .unwrap()
+        .1;
+    assert_eq!(submission["mode"], "image-edit");
+    assert_eq!(submission["input_image_ids"], json!(["saved-input"]));
+    assert_eq!(submission["count"], 1);
+    assert_eq!(submission["prompt"], op.arguments.prompt);
+    let count = requests.len();
+    drop(requests);
+    rt.block_on(execute(&core.image_generation, &id, true, &control))
+        .unwrap();
+    assert!(
+        rt.block_on(execute(&core.image_generation, &id, false, &control))
+            .is_err()
+    );
+    let requests = server.requests.lock().unwrap();
+    assert!(requests[count..].iter().all(|(r, _)| r.starts_with("GET ")));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(r, _)| r == "POST /api/inputs")
+            .count(),
+        1
+    );
+}
+#[test]
+fn studio_edit_profile_rejects_before_upload_and_lost_upload_or_submit_never_repeats() {
+    for mode in ["no-edit", "small-input", "lost-input", "lost"] {
+        let server = Server::new(mode);
+        let root = tempfile::tempdir().unwrap();
+        let core = Core::open(root.path()).unwrap();
+        let (id, _) = prepare_edit(&core, "studio", &configured(&server.url), "unused");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let control = Arc::new(Control::default());
+        assert!(
+            rt.block_on(execute(&core.image_generation, &id, false, &control))
+                .is_err()
+        );
+        core.database.recover_image_generations().unwrap();
+        let op = core.database.image_generation(&id).unwrap();
+        if mode.starts_with("lost") {
+            assert!(op.dispatch_started);
+            assert_eq!(op.status, "uncertain");
+            assert_eq!(op.input_id.is_some(), mode == "lost");
+            assert!(
+                rt.block_on(execute(&core.image_generation, &id, false, &control))
+                    .is_err()
+            );
+        } else {
+            assert!(!op.dispatch_started);
+        }
+        assert!(
+            rt.block_on(execute(&core.image_generation, &id, true, &control))
+                .is_err()
+        );
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|(r, _)| r == "POST /api/inputs")
+                .count(),
+            usize::from(mode.starts_with("lost"))
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|(r, _)| r == "POST /api/generations")
+                .count(),
+            usize::from(mode == "lost")
+        );
+    }
+}
+
+#[test]
+fn studio_unsupported_original_size_fails_before_upload_without_resizing() {
+    let server = Server::new("large-multiple");
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let (id, _) = prepare_edit(&core, "studio", &configured(&server.url), "unused");
+    core.database
+        .update_image_generation(&id, |o| {
+            o.arguments.size = tool::Size {
+                width: 1024,
+                height: 768,
+            };
+            Ok(())
+        })
+        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let error = rt
+        .block_on(execute(
+            &core.image_generation,
+            &id,
+            false,
+            &Arc::new(Control::default()),
+        ))
+        .unwrap_err();
+    assert!(error.to_string().contains("pixel multiple"));
+    let op = core.database.image_generation(&id).unwrap();
+    assert_eq!(
+        (op.arguments.size.width, op.arguments.size.height),
+        (1024, 768)
+    );
+    assert!(!op.dispatch_started && op.input_id.is_none() && op.remote_id.is_none());
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(r, _)| r.starts_with("GET "))
+    );
 }

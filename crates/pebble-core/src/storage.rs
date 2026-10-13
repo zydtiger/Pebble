@@ -1,6 +1,8 @@
 mod codec;
 mod contexts;
 mod delegation;
+#[cfg(test)]
+mod image_edit_tests;
 pub(crate) mod image_generation;
 #[cfg(test)]
 mod image_generation_tests;

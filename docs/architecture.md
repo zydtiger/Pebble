@@ -3,7 +3,7 @@
 v0.3.0 adds bounded persona memory tools and explicit memory consolidation to the reviewed private + group lifecycle. [Group scheduling](group-flow.md), [membership](groups.md),
 [state lifetime](state.md) and [provider contracts](providers.md) define the
 current boundaries. [Image generation](image-generation.md) adds background
-backend execution, durable assets and original-room persona publication. The version-unassigned [Codex delegation](delegation.md) increment
+backend execution, durable assets, single-source editing and original-room persona publication. The version-unassigned [Codex delegation](delegation.md) increment
 adds Rust-owned local execution and durable reporting; the [roadmap](roadmap.md) maps completion scenarios to tests.
 
 ## Boundaries
@@ -245,7 +245,12 @@ image/transport budgets. Swift owns the native picker, paste/drop conversion,
 removable room drafts and image presentation; UniFFI carries typed records.
 Schema v12 adds two tables without rewriting old native items. Schema v14 adds
 independent image-generation operations and native submission records, with frozen
-settings/remote identities and separate execution/publication status. A bounded
+settings/remote identities and separate execution/publication status. Single-source
+`edit_image` shares this lifecycle with `generate_image`, freezes a published
+current-room original asset visible in the persona's frozen input, and publishes
+one new immutable asset. Studio uploads that source once before edit submission;
+ChatGPT stages it as typed localImage input. Recovery never reuploads or
+redispatches edits; legacy operation records default to generation. A bounded
 background worker releases the persona queue, then supplies actual generated
 pixels to an original-room report in that queue. Validated text/state, attachment
 and group events publish atomically. Stop invalidates unpublished room work and

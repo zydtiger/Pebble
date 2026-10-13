@@ -1,6 +1,6 @@
 # Image generation
 
-Pebble exposes one native `generate_image` tool to configured persona contexts.
+Pebble exposes native `generate_image` and `edit_image` tools to configured persona contexts.
 All three arguments are required; extra keys, omitted dimensions, non-integer
 sizes and mixed native calls are rejected before execution:
 
@@ -50,6 +50,89 @@ Newly created/fresh contexts acquire this capability; schema 14 preserves older
 prefixes and native output without rewriting them. A persona needs function
 calling and vision to request an image and inspect its result. Classifiers only
 observe published images, using the existing image rendition and budgets.
+
+## Editing a published image
+
+`edit_image` accepts exactly one source asset ID and produces one new immutable
+asset. The original remains unchanged. Required arguments are `image_id`,
+`prompt`, `backend` and explicit `size.width`/`size.height`:
+
+```json
+{
+  "image_id": "the-published-asset-uuid",
+  "prompt": {
+    "instruction": "Change the cup from red to green",
+    "preserve": ["the cat", "rainy window", "cup shape"],
+    "style": null,
+    "composition": null,
+    "lighting": null,
+    "background": null,
+    "details": null,
+    "constraints": ["keep the existing label"]
+  },
+  "backend": "studio",
+  "size": {"width": 1024, "height": 768}
+}
+```
+
+`instruction` must be a nonblank string; `preserve` and `constraints` are
+optional string arrays, and the remaining optional fields are strings. The
+strict provider schema requires all fields with nullable optional values;
+runtime validation also accepts omitted optional fields. Unknown/duplicate
+keys and wrong types are rejected. Rust omits nulls and serializes the object
+directly to compact JSON under the same byte/Studio character limits as creation.
+Studio is the default; ChatGPT requires an explicit user request. Backend failure
+never causes a fallback.
+
+The source must be published in the current room and exposed as an actual image
+part in the persona's frozen request, with a matching durable persona event link
+inside that session boundary. Drafts, other rooms, group images from before
+joining, and future messages cannot supply edit sources. User uploads and
+previously published generated or edited images use the same check, including
+successive edits. If no source is visible or the user's reference is ambiguous,
+the persona must ask the user to identify or attach the intended image before
+calling `edit_image`; it must never guess an ID or silently choose a source.
+No arbitrary paths or URLs are accepted. The accepted operation
+freezes the original source filename and metadata, never the 768-pixel vision
+rendition, together with the operation kind, prompt and settings. Legacy records
+without these fields default to generation; no history is rewritten.
+
+Visible image metadata distinguishes `original_size` from the normalized vision
+rendition's `width`/`height`. When the user does not specify an output size, the
+persona should prefer the source's original dimensions and still supply explicit
+`size.width`/`size.height`. If those dimensions are unavailable, outside the tool's
+256–2048 range, or unsupported by the backend profile, it must explain the limit
+and ask for a supported size instead of silently resizing or changing backends.
+Older references without `original_size` still decode and replay unchanged;
+new visible inputs can obtain original dimensions from their immutable asset rows,
+without rewriting saved references or native history.
+
+Studio validates the selected profile's `image-edit` mode, input count, byte and
+pixel limits and existing output-size/settings constraints before uploading.
+It uploads the original JPEG/PNG once via multipart `POST /api/inputs`, saves the
+returned input ID, then submits `POST /api/generations` with `mode=image-edit`,
+`input_image_ids=[input_id]` and `count=1`. Even a prior Studio output is uploaded
+as the local immutable source. Upload and submission are bounded and never
+retried. Saved upload/run identities and dispatch uncertainty survive restart;
+recovery never reuploads or redispatches, and only reconciles a saved run. An
+interrupted upload or lost submit without a run ID stays uncertain and is
+explained in chat.
+
+ChatGPT copies the original into the dedicated operation workspace on initial
+dispatch and attaches it as typed `localImage` input alongside edit instructions
+and the exact prompt JSON. The controller may only use its built-in image tool;
+shell and unrelated tools remain forbidden. Output comes only from typed
+`imageGeneration` events; dimensions remain best effort. Recovery reads the
+saved thread and never stages or starts another turn. Advertised image-generation
+capability alone does not prove live editing support.
+
+Editing shares generation's canonical-user-request deduplication, monitor,
+original-room report queue, retry and cancellation/membership rules. One user
+trigger can claim only one image operation across both tools. The saved result
+includes operation kind/source identity and actual output pixels; report retry
+cannot edit again. Publication attaches only the new asset to the persona reply
+and atomically fans it out to group members. The monitor uses the typed operation kind to label creation as **Generate image**
+and editing as **Edit image**. There is no separate editor or additional settings UI.
 
 ## Configuration
 
@@ -168,7 +251,7 @@ local assets keep their IDs during reconciliation. Failed persona publication
 uses ordinary latest-reply **Retry**, with tools disabled and saved image input;
 it cannot rerun generation. Unpublished stopped work is ineligible for Retry.
 
-Reference editing, batches, variants, generation after quit, automatic duplicate
+Batches, variants, generation after quit, automatic duplicate
 submission, backend fallback and asset deletion remain outside this increment.
 
 ## Validation
@@ -176,7 +259,10 @@ submission, backend fallback and asset deletion remain outside this increment.
 `cargo test -p pebble-core --lib image_generation` covers both native protocols,
 strict structured arguments and serialized byte bounds, matching JSON-string
 payloads for both backends, legacy-prompt restart recovery, Studio's serialized
-character limit, profile constraints/default omission, HTTP and typed app-server
+character limit, edit schema/null serialization, current-room frozen source visibility,
+original-source preservation, successive edits, shared generate/edit deduplication,
+multipart upload and dispatch uncertainty without resubmission, profile
+constraints/default omission, HTTP and typed app-server
 fixtures, lost submission, identity-based recovery, pixels in persona input,
 queue release, acknowledgment/report retries, atomic group fanout, Stop and
 original membership invalidation. `just check-rust`, `just check-bridge` and
@@ -193,11 +279,25 @@ Codex. Set an absolute `PEBBLE_IMAGE_PROBE_OUTPUT_DIR` to retain original PNG
 and concise identity/dimension evidence. Run only when a real generation is
 authorized; fixture success does not prove live GPU, quota or model access.
 
-The implementation validation completed one live Studio generation at 256 × 256,
+Earlier generation-only validation completed one live Studio generation at 256 × 256,
 with the returned default steps, guidance and model revision retained. Two
 ChatGPT probes returned typed `failed` status with no image and no typed failure
 reason. The second probe's isolated controller log identified an HTTP 404 from
 the configured Responses-only proxy, which does not proxy the image endpoint.
-ChatGPT live generation therefore remains unverified in this environment; login
-and the advertised image capability do not prove endpoint access. Neither failed
-operation was automatically retried, and no user provider configuration changed.
+Those historical failures show that login and advertised image capability alone
+do not prove endpoint access. Neither failed operation was automatically retried,
+and no user provider configuration changed.
+
+Live edit validation on 2026-10-13 used the actual configured persona/chat model
+and copied configuration in an isolated data root, without copying or changing
+real app history. Three sequential native `edit_image` operations completed and
+published: Studio requested a rainy-to-sunny background edit; Studio then requested
+a blue-cup edit using that published output without reattaching it; an explicit
+ChatGPT request then edited the second output toward a gray cat. Both Studio
+outputs were 1024 × 1024. ChatGPT returned 1254 × 1254 for requested 1024 × 1024;
+Pebble retained the actual image and explained the mismatch. Native tool arguments,
+source/output IDs and hashes, Studio input/run/artifact IDs and Codex
+thread/turn/item IDs were retained. Each source matched the previous published
+output, the initial original remained unchanged, and no operation was retried or
+switched to another backend. This verifies live edit execution/publication in
+that configuration; exact ChatGPT output dimensions remain best effort.

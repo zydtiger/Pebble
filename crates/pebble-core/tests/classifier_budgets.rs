@@ -74,6 +74,15 @@ fn large_round(api: &'static str, limit: Option<u64>) -> u64 {
         })
     });
     live_support::configure(root.path(), &chat.url, "mock", api, "");
+    // Keep chat outside the classifier budget under test as native tool descriptions grow.
+    let config = root.path().join("config.toml");
+    std::fs::write(
+        &config,
+        std::fs::read_to_string(&config)
+            .unwrap()
+            .replace("context_len=65536", "context_len=131072"),
+    )
+    .unwrap();
     let checked_target = target.clone();
     let classifier = Server::handling(move |body| {
         let data = input(body, api);

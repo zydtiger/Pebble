@@ -920,7 +920,7 @@ fn generate_structured(
                         ));
                     }
                     invalid_delegations += 1;
-                    let result = crate::memory::result(&request.protocol, &id, &json!({"ok":false,"error":"invalid_arguments","detail":detail,"instruction":"Correct generate_image with exactly prompt, backend and size {width,height}. No generation was submitted."}).to_string());
+                    let result = crate::memory::result(&request.protocol, &id, &json!({"ok":false,"error":"invalid_arguments","detail":detail,"instruction":"Correct the image tool arguments: generate_image requires prompt, backend and size; edit_image also requires image_id and prompt.instruction. No operation was submitted."}).to_string());
                     control
                         .while_active(|| db.reject_delegation_arguments(request, &output, &result))
                         .ok_or_else(|| Error::Generation("Cancelled".into()))??;

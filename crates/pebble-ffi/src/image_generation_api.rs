@@ -52,11 +52,25 @@ impl From<ImageGenerationSettingsRecord> for pebble_core::ImageGenerationSetting
         }
     }
 }
+#[derive(Clone, Copy, uniffi::Enum)]
+pub enum ImageOperationKind {
+    Generate,
+    Edit,
+}
+impl From<pebble_core::ImageOperationKind> for ImageOperationKind {
+    fn from(kind: pebble_core::ImageOperationKind) -> Self {
+        match kind {
+            pebble_core::ImageOperationKind::Generate => Self::Generate,
+            pebble_core::ImageOperationKind::Edit => Self::Edit,
+        }
+    }
+}
 #[derive(Clone, uniffi::Record)]
 pub struct ImageGenerationRecord {
     pub id: String,
     pub persona_id: String,
     pub conversation_id: String,
+    pub kind: ImageOperationKind,
     pub backend: String,
     pub status: String,
     pub activity: String,
@@ -72,6 +86,7 @@ impl From<pebble_core::ImageGeneration> for ImageGenerationRecord {
             id: o.id,
             persona_id: o.persona_id,
             conversation_id: o.conversation_id,
+            kind: o.kind.into(),
             backend: o.backend,
             status: o.status,
             activity: o.activity,

@@ -113,6 +113,65 @@ fn validate_profile(
     }
     Ok(())
 }
+fn validate_edit_profile(profile: &Value, source: &super::source::Source) -> Result<(), Error> {
+    let supports_edit = profile["generation_modes"]
+        .as_array()
+        .is_some_and(|m| m.iter().any(|m| m == "image-edit"));
+    if !supports_edit || profile["max_input_images"].as_u64().unwrap_or(0) < 1 {
+        return Err(failure(
+            "Configured Studio profile does not support one-image editing. No input was uploaded.",
+        ));
+    }
+    let bytes = profile["max_input_bytes"]
+        .as_u64()
+        .ok_or_else(|| failure("Studio profile has no input byte limit."))?;
+    let pixels = profile["max_input_pixels"]
+        .as_u64()
+        .ok_or_else(|| failure("Studio profile has no input pixel limit."))?;
+    if source.bytes > bytes || u64::from(source.width) * u64::from(source.height) > pixels {
+        return Err(failure(
+            "Original source exceeds the configured Studio profile's input limits. No input was uploaded.",
+        ));
+    }
+    Ok(())
+}
+async fn upload(
+    client: &reqwest::Client,
+    base: &str,
+    source: &super::source::Source,
+    data: Vec<u8>,
+) -> Result<String, Error> {
+    let part = reqwest::multipart::Part::bytes(data)
+        .file_name(source.filename.clone())
+        .mime_str(&source.mime)
+        .map_err(|_| failure("Invalid source image MIME type."))?;
+    let mut response = client.post(url(base, "api/inputs")?)
+        .multipart(reqwest::multipart::Form::new().part("file", part))
+        .send().await.map_err(|_| failure("Studio input upload outcome is unconfirmed; it will never be repeated automatically."))?;
+    if response.status() != reqwest::StatusCode::CREATED {
+        return Err(failure(&format!(
+            "Studio input upload returned HTTP {}.",
+            response.status().as_u16()
+        )));
+    }
+    let cap = 1024 * 1024;
+    if response.content_length().is_some_and(|n| n > cap) {
+        return Err(failure("Studio input response exceeds its byte limit."));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| failure("Studio input upload response ended unexpectedly."))?
+    {
+        if body.len() + chunk.len() > cap as usize {
+            return Err(failure("Studio input response exceeds its byte limit."));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    identity(&serde_json::from_slice(&body)?, "input_id")
+}
+
 fn save_effective(manager: &Manager, id: &str, response: &Value) -> Result<(), Error> {
     manager.db.update_image_generation(id, |op| {
         if !op.effective_parameters.is_object() {
@@ -132,6 +191,8 @@ fn save_effective(manager: &Manager, id: &str, response: &Value) -> Result<(), E
             "initial_seed",
             "image_count",
             "pipeline_class",
+            "mode",
+            "input_image_ids",
         ] {
             if let Some(value) = response.get(field) {
                 op.effective_parameters[field] = value.clone();
@@ -153,6 +214,7 @@ pub(crate) async fn execute(
         .as_ref()
         .ok_or_else(|| failure("Studio is not configured."))?;
     let client = reqwest::Client::builder()
+        .retry(reqwest::retry::never())
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
@@ -164,6 +226,11 @@ pub(crate) async fn execute(
             .clone()
             .ok_or_else(|| failure("No saved Studio run ID."))?
     } else {
+        if op.dispatch_started || op.input_id.is_some() || op.remote_id.is_some() {
+            return Err(failure(
+                "This image operation already began dispatch. Reconcile saved identities; do not upload or submit again.",
+            ));
+        }
         if op.arguments.prompt.chars().count() > 8000 {
             return Err(failure("Studio prompts are limited to 8000 characters."));
         }
@@ -185,6 +252,16 @@ pub(crate) async fn execute(
             })
             .ok_or_else(|| failure("Studio model profile is unavailable."))?;
         validate_profile(profile, settings, &op.arguments.size)?;
+        let source = if op.kind == super::ImageOperationKind::Edit {
+            let source = op
+                .source
+                .as_ref()
+                .ok_or_else(|| failure("Edit has no frozen original source."))?;
+            validate_edit_profile(profile, source)?;
+            Some((source, source.read(&manager.root)?))
+        } else {
+            None
+        };
         let mut body = json!({"registration_id":settings.model_id,"gpu_uuid":settings.gpu_id,"prompt":op.arguments.prompt,"width":op.arguments.size.width,"height":op.arguments.size.height,"count":1});
         if let Some(v) = settings.steps {
             body["steps"] = json!(v);
@@ -204,6 +281,21 @@ pub(crate) async fn execute(
                 })
             })
             .ok_or_else(|| failure("Cancelled before Studio submission."))??;
+        if let Some((source, data)) = source {
+            manager.progress(id, "running", "Uploading the original image to Studio…")?;
+            let input = upload(&client, &settings.base_url, source, data).await?;
+            manager.db.update_image_generation(id, |o| {
+                o.input_id = Some(input.clone());
+                Ok(())
+            })?;
+            if control.is_cancelled() || manager.db.image_generation(id)?.invalidated {
+                return Err(failure(
+                    "Cancelled after source upload; no edit was submitted and the input will not be uploaded again.",
+                ));
+            }
+            body["mode"] = json!("image-edit");
+            body["input_image_ids"] = json!([input]);
+        }
         let response = bytes(
             &client,
             reqwest::Method::POST,
@@ -268,7 +360,15 @@ pub(crate) async fn execute(
                     manager.progress(id, "queued", "Waiting in Studio's queue…")?;
                 }
             }
-            "running" => manager.progress(id, "running", "Generating an image in Studio…")?,
+            "running" => manager.progress(
+                id,
+                "running",
+                if op.kind == super::ImageOperationKind::Edit {
+                    "Editing an image in Studio…"
+                } else {
+                    "Generating an image in Studio…"
+                },
+            )?,
             "completed" | "partial" => {
                 let completed: Vec<_> = job["images"]
                     .as_array()
