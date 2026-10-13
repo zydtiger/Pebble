@@ -12,6 +12,8 @@ characters, individually or together in a group.
   context while keeping saved conversations.
 - **Your choice of models.** Connect compatible local or hosted models, with
   app defaults and individual character settings.
+- **Formatted replies.** Read bold and italic text, code blocks, and native inline
+  or display LaTeX math.
 - **Image sharing.** Paste, drop or select JPEG/PNG images, and chat about them
   with a vision-capable model.
 - **Tasks through Codex.** Let characters delegate research and other work to
@@ -40,6 +42,7 @@ cd Pebble
 just run
 ```
 
+The first build fetches the pinned SwiftMath package and bundles its math fonts.
 This builds and opens `build/Pebble.app`. You can reopen that app directly
 without rebuilding.
 

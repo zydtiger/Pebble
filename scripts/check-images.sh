@@ -1,9 +1,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bash scripts/build-rust.sh
+source scripts/prepare-ui-checks.sh
 pebble_image_sources=()
 while IFS= read -r pebble_image_source; do pebble_image_sources+=("$pebble_image_source"); done < <(rg --files macos/Pebble -g '*.swift' -g '!PebbleApp.swift')
 mkdir -p build/ImageChecks.app/Contents/MacOS
+ditto "$pebble_swiftmath_products/SwiftMath_SwiftMath.bundle" build/ImageChecks.app/Contents/Resources/SwiftMath_SwiftMath.bundle
 cat > build/ImageChecks.app/Contents/Info.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -14,7 +15,7 @@ cat > build/ImageChecks.app/Contents/Info.plist <<'PLIST'
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 PLIST
-xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+xcrun swiftc "${pebble_swiftmath_flags[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
   -target arm64-apple-macosx14.0 -parse-as-library -I macos/Generated \
   -Xcc -fmodule-map-file=macos/Generated/PebbleCoreFFI.modulemap \
   macos/Generated/PebbleCore.swift "${pebble_image_sources[@]}" macos/Tests/ImageChecks.swift \

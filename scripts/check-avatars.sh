@@ -1,6 +1,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bash scripts/build-rust.sh
+source scripts/prepare-ui-checks.sh
 mkdir -p build/validation/persona-avatars
 pebble_ui_sources=()
 for pebble_source in macos/Pebble/*.swift; do
@@ -8,7 +8,7 @@ for pebble_source in macos/Pebble/*.swift; do
     pebble_ui_sources+=("$pebble_source")
   fi
 done
-xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors -parse-as-library \
+xcrun swiftc "${pebble_swiftmath_flags[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors -parse-as-library \
   -target arm64-apple-macosx14.0 \
   -I macos/Generated -Xcc -fmodule-map-file=macos/Generated/PebbleCoreFFI.modulemap \
   macos/Generated/PebbleCore.swift "${pebble_ui_sources[@]}" macos/Tests/AvatarChecks.swift \

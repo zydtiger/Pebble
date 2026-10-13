@@ -12,6 +12,7 @@ for local use, not signed or notarized distribution releases.
 just check          # file checks, Rust lint/tests, Swift 6 FFI integration
 just build          # native application compile and local signing
 just preview        # render actual SwiftUI views into build/previews/
+bash scripts/check-markdown.sh # reply Markdown/math checks and native rendering
 bash scripts/check-avatars.sh # targeted avatar reload and native rendering checks
 ```
 
@@ -39,6 +40,12 @@ and abrupt-process-exit recovery. The Swift executable
 checks the real generated FFI and presentation adapter under complete Swift 6
 concurrency checking. The renderer captures this app's own content without
 capturing the desktop or other applications.
+The full-view UI check scripts build the native app before linking its pinned
+SwiftMath package and copying its font resource bundle. Markdown/math checks
+retain screenshots under `build/validation/reply-markdown/` and use an isolated,
+temporary demo data root. They cover delimiter parsing, source fallback, copy,
+TextKit wrapping and equation layout at different window widths.
+
 Avatar checks retain screenshots under `build/validation/persona-avatars/` and
 remove their isolated temporary persona files when finished.
 

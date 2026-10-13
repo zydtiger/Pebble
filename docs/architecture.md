@@ -49,6 +49,22 @@ text, Enter stays with AppKit to confirm composition without sending. The surrou
 SwiftUI layout keeps that button at the lower right and lets the introduction
 scroll when an expanded composer reduces its available space.
 
+Reply bubbles use Foundation's inline Markdown parser for emphasis and AppKit
+TextKit for selectable, wrapping prose. SwiftMath 1.7.3 renders `\(...\)` inline
+math as native text attachments with ascent/descent-aware baselines. The same
+renderer uses display style for `\[...\]` equation blocks, which scroll
+horizontally when wider than the bubble. Inline formulas wrap as whole units;
+a formula wider than an entire line scales to fit that line. Copying selected
+formulas returns their original delimited LaTeX source. Unsupported or unfinished
+formulas remain literal source text. Math detection precedes Markdown parsing
+and excludes fenced code and inline code spans.
+
+Code blocks keep literal whitespace in a horizontally scrolling, unhighlighted
+monospaced view. User messages and status/error text remain plain text. This is
+presentation only: stored messages, model history and notification text retain
+the original response string. SwiftMath and its math fonts ship inside the app;
+rendering needs no WebView, network access or external TeX installation.
+
 ## Durable storage and generation
 
 Rust owns chat/history/state/membership/decision/round/memory/context/image/task records and schema migration. Visible

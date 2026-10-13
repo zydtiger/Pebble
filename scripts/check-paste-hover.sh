@@ -1,9 +1,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bash scripts/build-rust.sh
+source scripts/prepare-ui-checks.sh
 pebble_paste_sources=()
 while IFS= read -r pebble_paste_source; do pebble_paste_sources+=("$pebble_paste_source"); done < <(rg --files macos/Pebble -g '*.swift' -g '!PebbleApp.swift')
 mkdir -p build/PasteHoverChecks.app/Contents/MacOS
+ditto "$pebble_swiftmath_products/SwiftMath_SwiftMath.bundle" build/PasteHoverChecks.app/Contents/Resources/SwiftMath_SwiftMath.bundle
 cat > build/PasteHoverChecks.app/Contents/Info.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -14,7 +15,7 @@ cat > build/PasteHoverChecks.app/Contents/Info.plist <<'PLIST'
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 PLIST
-xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+xcrun swiftc "${pebble_swiftmath_flags[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
   -target arm64-apple-macosx14.0 -parse-as-library -I macos/Generated \
   -Xcc -fmodule-map-file=macos/Generated/PebbleCoreFFI.modulemap \
   macos/Generated/PebbleCore.swift "${pebble_paste_sources[@]}" macos/Tests/PasteHoverChecks.swift \

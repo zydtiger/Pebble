@@ -292,7 +292,7 @@ struct ContentView: View {
                                         Text("Typing…").font(.system(size: 12)).foregroundStyle(PebbleTheme.muted)
                                     }.padding(17)
                                 } else {
-                                    Text(bubble.status == .queued ? "Waiting for earlier reply…" : (bubble.text.isEmpty ? "No reply text." : bubble.text))
+                                    messageText(bubble)
                                         .font(.system(size: 14)).lineSpacing(6)
                                         .textSelection(.enabled)
                                         .padding(.horizontal, 18).padding(.vertical, 15)
@@ -328,6 +328,19 @@ struct ContentView: View {
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.markers.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
+        }
+    }
+
+    @ViewBuilder
+    private func messageText(_ bubble: ChatBubble) -> some View {
+        if bubble.status == .queued {
+            Text("Waiting for earlier reply…")
+        } else if bubble.text.isEmpty {
+            Text("No reply text.")
+        } else if bubble.isUser {
+            Text(verbatim: bubble.text)
+        } else {
+            ReplyMarkdown(text: bubble.text)
         }
     }
 
