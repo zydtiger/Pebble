@@ -71,6 +71,17 @@ fn typed_images_are_saved_and_recovery_uses_thread_read_without_turn_start() {
         assert_eq!(start["params"]["model"], "image-controller");
         assert_eq!(start["params"]["approvalPolicy"], "never");
         assert_eq!(start["params"]["sandbox"], "workspace-write");
+        let turn = methods
+            .iter()
+            .find(|m| m["method"] == "turn/start")
+            .unwrap();
+        let text = turn["params"]["input"][0]["text"].as_str().unwrap();
+        let payload = text.split_once("Image prompt:\n").unwrap().1;
+        assert_eq!(payload, op.arguments.prompt);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+            prompt()
+        );
     }
 }
 #[test]
@@ -265,7 +276,7 @@ fn typed_chatgpt_failure_is_durable_terminal_and_never_retried() {
 }
 
 #[test]
-fn published_uncertain_image_reconciles_after_restart_without_duplicate_group_report() {
+fn legacy_prompt_reconciles_after_restart_without_duplicate_group_report() {
     use crate::chat::memory_test_support::{Server, configure, isolated, stream, success};
     use std::time::{Duration, Instant};
     let server = Server::memory(vec![
@@ -321,7 +332,8 @@ fn published_uncertain_image_reconciles_after_restart_without_duplicate_group_re
             &tool::Call {
                 id: "recoverable-image".into(),
                 arguments: tool::Arguments {
-                    prompt: "One synthetic pebble.".into(),
+                    // A pre-structured-prompt operation keeps its frozen prose payload.
+                    prompt: "One synthetic pebble. Keep \"茶\".\nNo border.".into(),
                     backend: "chatgpt".into(),
                     size: tool::Size {
                         width: 256,
@@ -407,6 +419,7 @@ fn published_uncertain_image_reconciles_after_restart_without_duplicate_group_re
     assert_eq!(recovered.asset_id, published.asset_id);
     assert_eq!(recovered.report_call, published.report_call);
     assert_eq!(recovered.reports.len(), 1);
+    assert_eq!(recovered.arguments.prompt, published.arguments.prompt);
     assert_eq!(
         core.room_messages(&group.id).unwrap().len(),
         before_messages.len()

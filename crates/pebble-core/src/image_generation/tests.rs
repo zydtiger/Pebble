@@ -9,6 +9,17 @@ pub(super) fn png() -> Vec<u8> {
         .unwrap();
     bytes
 }
+pub(super) fn prompt() -> serde_json::Value {
+    serde_json::json!({
+        "subject":"One pebble beside a cup labeled \"茶\"",
+        "style":"watercolor",
+        "composition":"centered on the page",
+        "lighting":"soft morning light",
+        "background":"white paper",
+        "details":"a green leaf\nnext to the cup",
+        "constraints":["no border", "preserve the label"]
+    })
+}
 pub(super) fn prepare(
     core: &Core,
     backend: &str,
@@ -25,16 +36,13 @@ pub(super) fn prepare(
         .unwrap();
     let turn = core.database.activate_turn(&persona, &queued).unwrap();
     let request = core.database.request(&turn.call_id).unwrap();
-    let call = tool::Call {
-        id: "synthetic-image".into(),
-        arguments: tool::Arguments {
-            prompt: "One watercolor pebble beside tea; no text.".into(),
-            backend: backend.into(),
-            size: tool::Size {
-                width: 256,
-                height: 256,
-            },
-        },
+    let native = serde_json::json!({
+        "type":"function_call", "call_id":"synthetic-image", "name":"generate_image",
+        "arguments":serde_json::json!({"prompt":prompt(),"backend":backend,"size":{"width":256,"height":256}}).to_string()
+    });
+    let call = match tool::calls(&[native]).unwrap() {
+        tool::Parsed::Valid(call) => call,
+        _ => panic!("Expected a valid structured image prompt"),
     };
     let (_, id) = core
         .database
@@ -161,7 +169,7 @@ use crate::chat::{
     memory_responses_support as responses_support, memory_test_support as live_support,
 };
 fn native_image(api: &str) -> String {
-    let args=serde_json::json!({"prompt":"One synthetic pebble","backend":"chatgpt","size":{"width":256,"height":256}}).to_string();
+    let args=serde_json::json!({"prompt":prompt(),"backend":"chatgpt","size":{"width":256,"height":256}}).to_string();
     if api == "responses" {
         format!(
             "data: {}\n\n",

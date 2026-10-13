@@ -5,8 +5,38 @@ All three arguments are required; extra keys, omitted dimensions, non-integer
 sizes and mixed native calls are rejected before execution:
 
 ```json
-{"prompt":"One watercolor pebble beside tea","backend":"studio","size":{"width":1024,"height":768}}
+{
+  "prompt": {
+    "subject": "One pebble beside a cup of tea",
+    "style": "watercolor",
+    "composition": null,
+    "lighting": null,
+    "background": null,
+    "details": null,
+    "constraints": ["no text"]
+  },
+  "backend": "studio",
+  "size": {"width": 1024, "height": 768}
+}
 ```
+
+`prompt` is a fixed JSON object. `subject` must be a nonblank string; optional
+`style`, `composition`, `lighting`, `background` and `details` are descriptive
+strings, and optional `constraints` is an array of strings. Values are freeform.
+The strict provider schema requires every field, using `null` for unused optional
+fields. Runtime validation also accepts omitted optional fields. Unknown or
+duplicate keys and incorrect types are rejected at every object level; new
+tool calls cannot use a plain string prompt.
+
+Personas receive instructions to describe a self-contained image, preserve the
+user's specific visual requirements, use only applicable fields and avoid
+gratuitous inventions. Backend, model, path and pixel size stay outside `prompt`.
+Rust omits unused/null fields and serializes the validated object directly to
+one compact JSON string, preserving supplied text without a prose renderer or
+another model rewrite. The serialized payload, including keys and JSON escaping,
+must fit 16384 UTF-8 bytes. Studio's 8000-character bound also applies to that
+serialized payload. Studio receives it as the request's `prompt` **string**;
+ChatGPT receives the same string inside its existing image-task envelope.
 
 A call creates one image. Backend choices are restricted to configured backends;
 no URL, model, GPU, path, seed or inference override belongs in tool arguments.
@@ -70,12 +100,19 @@ It never regenerates or changes backends to obtain a different size.
 ## Execution and publication
 
 Schema 14 stores operation identity, owner/original room and membership interval,
-frozen prompt/size/settings/executable, dispatch uncertainty, Studio run/artifact
+frozen serialized prompt/size/settings/executable, dispatch uncertainty, Studio run/artifact
 or Codex thread/turn/item identities, immutable local asset ID, actual dimensions,
 and separate execution/publication states. Native call/result replay commits in
 the same transaction as the operation, before dispatch. One canonical user
 request claims one shared image operation; repeated tool calls and reply retries
 reuse that claim.
+
+The stored operation's prompt remains a string containing the exact backend
+payload. Existing operations with a plain prose string continue to load and
+reconcile their saved remote identities unchanged; startup does not parse or
+convert that string. No schema migration or rewrite of frozen native replay is
+needed. This read compatibility does not admit new plain-string tool calls or
+resubmit interrupted operations.
 
 The tool returns promptly. Generation runs outside the persona queue, with its
 own 30-minute bound; Studio queue/model loading does not spend the chat operation's
@@ -137,7 +174,9 @@ submission, backend fallback and asset deletion remain outside this increment.
 ## Validation
 
 `cargo test -p pebble-core --lib image_generation` covers both native protocols,
-strict arguments, profile constraints/default omission, HTTP and typed app-server
+strict structured arguments and serialized byte bounds, matching JSON-string
+payloads for both backends, legacy-prompt restart recovery, Studio's serialized
+character limit, profile constraints/default omission, HTTP and typed app-server
 fixtures, lost submission, identity-based recovery, pixels in persona input,
 queue release, acknowledgment/report retries, atomic group fanout, Stop and
 original membership invalidation. `just check-rust`, `just check-bridge` and

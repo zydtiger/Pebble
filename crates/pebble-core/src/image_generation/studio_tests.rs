@@ -154,6 +154,9 @@ fn studio_submits_once_omits_overrides_imports_and_recovers_by_get_only() {
         .find(|(r, _)| r == "POST /api/generations")
         .unwrap();
     assert_eq!(post.1["count"], 1);
+    let payload = post.1["prompt"].as_str().expect("Studio receives a string");
+    assert_eq!(payload, op.arguments.prompt);
+    assert_eq!(serde_json::from_str::<Value>(payload).unwrap(), prompt());
     assert!(post.1.get("steps").is_none());
     assert!(post.1.get("guidance").is_none());
     let count = requests.len();
@@ -219,6 +222,86 @@ fn lost_studio_submission_stays_uncertain_without_retry() {
             .filter(|(r, _)| r == "POST /api/generations")
             .count(),
         1
+    );
+}
+
+#[test]
+fn studio_character_limit_counts_serialized_json_before_any_http_request() {
+    let server = Server::new("complete");
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let id = prepare(&core, "studio", &configured(&server.url), "unused");
+    // The unescaped visual description fits; its JSON payload exceeds 8000 characters.
+    let prompt = json!({"subject":"\"".repeat(4000)}).to_string();
+    assert!(prompt.len() < 16384);
+    assert!(prompt.chars().count() > 8000);
+    core.database
+        .update_image_generation(&id, |o| {
+            o.arguments.prompt = prompt;
+            Ok(())
+        })
+        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let error = rt
+        .block_on(execute(
+            &core.image_generation,
+            &id,
+            false,
+            &Arc::new(Control::default()),
+        ))
+        .unwrap_err();
+    assert!(error.to_string().contains("8000 characters"));
+    assert!(
+        !core
+            .database
+            .image_generation(&id)
+            .unwrap()
+            .dispatch_started
+    );
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn legacy_studio_prompt_recovers_saved_run_without_conversion_or_resubmission() {
+    let server = Server::new("complete");
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let id = prepare(&core, "studio", &configured(&server.url), "unused");
+    let legacy = "Original watercolor pebble; keep \"茶\".\nNo border.";
+    core.database
+        .update_image_generation(&id, |o| {
+            o.arguments.prompt = legacy.into();
+            o.dispatch_started = true;
+            o.remote_id = Some("saved-run".into());
+            Ok(())
+        })
+        .unwrap();
+    core.database.recover_image_generations().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(execute(
+        &core.image_generation,
+        &id,
+        true,
+        &Arc::new(Control::default()),
+    ))
+    .unwrap();
+    let op = core.database.image_generation(&id).unwrap();
+    assert_eq!(op.status, "completed");
+    assert_eq!(op.arguments.prompt, legacy);
+    assert!(op.asset_id.is_some());
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(r, _)| r.starts_with("GET "))
     );
 }
 

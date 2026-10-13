@@ -1,6 +1,7 @@
 //! Background image execution and original-room publication.
 mod chatgpt;
 mod manager;
+mod prompt;
 pub(crate) mod settings;
 mod studio;
 pub(crate) mod tool;

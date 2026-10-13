@@ -37,7 +37,7 @@ fn prepare(core: &Core, persona: &crate::Persona, room: &str) -> (crate::history
     let call = Call {
         id: "native-image".into(),
         arguments: Arguments {
-            prompt: "synthetic pebble".into(),
+            prompt: json!({"subject":"synthetic pebble"}).to_string(),
             backend: "studio".into(),
             size: Size {
                 width: 256,
@@ -170,8 +170,11 @@ fn restart_preserves_remote_identity_frozen_config_and_marks_dispatch_uncertain(
     let persona = core.workspace().unwrap().personas.remove(0);
     let (origin, id) = prepare(&core, &persona, &persona.conversation_id);
     finish(&core, &origin, MessageStatus::Failed);
+    let legacy = "Original watercolor pebble; keep \"茶\".\nNo border.";
     core.database
         .update_image_generation(&id, |o| {
+            // Existing records contain a prose string rather than serialized prompt JSON.
+            o.arguments.prompt = legacy.into();
             o.dispatch_started = true;
             o.remote_id = Some("saved-run".into());
             Ok(())
@@ -192,6 +195,7 @@ fn restart_preserves_remote_identity_frozen_config_and_marks_dispatch_uncertain(
     let op = db.image_generation(&id).unwrap();
     assert_eq!(op.status, "uncertain");
     assert_eq!(op.remote_id.as_deref(), Some("saved-run"));
+    assert_eq!(op.arguments.prompt, legacy);
     assert_eq!(
         op.settings.studio.unwrap().base_url,
         "https://api.example.com"
@@ -241,7 +245,7 @@ fn group_publication_fans_out_pixels_and_leave_rejoin_invalidates_original_inter
         let call = Call {
             id: "group-image".into(),
             arguments: Arguments {
-                prompt: "one synthetic pebble".into(),
+                prompt: json!({"subject":"one synthetic pebble"}).to_string(),
                 backend: "studio".into(),
                 size: Size {
                     width: 256,
