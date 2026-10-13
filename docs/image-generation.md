@@ -10,6 +10,12 @@ sizes and mixed native calls are rejected before execution:
 
 A call creates one image. Backend choices are restricted to configured backends;
 no URL, model, GPU, path, seed or inference override belongs in tool arguments.
+The shared tool instructions tell personas to choose `studio` by default and
+`chatgpt` only when the user explicitly requests ChatGPT. If Studio is unavailable
+or fails, explain the limitation without switching backends automatically. This
+is a model-selection instruction; `backend` remains required and the runtime
+executes the explicitly supplied, validated backend. The current tool description
+applies to subsequent requests; existing frozen system prefixes remain unchanged.
 Newly created/fresh contexts acquire this capability; schema 14 preserves older
 prefixes and native output without rewriting them. A persona needs function
 calling and vision to request an image and inspect its result. Classifiers only
