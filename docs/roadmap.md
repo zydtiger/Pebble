@@ -43,8 +43,9 @@ private-chat flow covers:
 
 The native settings and failure/retry screens have been rendered and reviewed.
 Composer checks cover growth, scrolling, marked text, Enter to send, and the
-Command/Shift–Enter newline shortcuts. See README for the runnable checks and
-local data paths; provider, history, context, and settings docs own their details.
+Command/Shift–Enter newline shortcuts. See [development](development.md#validate) for runnable checks and
+[local data](local-data.md) for storage paths; provider, history, context, and
+settings docs own their details.
 
 No automatic retry, transcript clearing, or threshold-triggered summarization occurs. Explicit memory consolidation is described below. Drafts
 do not survive app restart. Retry is limited to the latest unsuccessful reply,

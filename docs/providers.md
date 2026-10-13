@@ -33,7 +33,7 @@ Final output array order controls persistence even if item-done events arrive in
 a different order.
 
 Ordinary tests use deterministic local servers. The opt-in tests documented in
-README use synthetic temporary characters and verify actual native replay across
+[development](development.md#validate) use synthetic temporary characters and verify actual native replay across
 two turns and restart. They never read the app's existing files or conversation.
 
 ## Structured-output constraints
