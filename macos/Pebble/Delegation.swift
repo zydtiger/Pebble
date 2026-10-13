@@ -56,7 +56,10 @@ extension ChatModel {
             for await tasks in stream {
                 guard let self, !Task.isCancelled else { break }
                 self.delegatedTasks = tasks
-                await self.refreshRoomsAfterReply()
+                // Reports have no UI-owned chat handle. Scan their original rooms even
+                // when no presentation cache exists; shared message IDs deduplicate streams.
+                let reportRooms = self.replyNotifications == nil ? Set<String>() : Set(tasks.map(\.conversationId))
+                await self.refreshRoomsAfterReply(notificationRooms: reportRooms)
             }
         }
     }

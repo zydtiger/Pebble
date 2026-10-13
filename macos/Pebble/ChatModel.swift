@@ -176,6 +176,8 @@ struct ChatBubble: Identifiable {
 final class ChatModel {
     let dataRoot: URL
     let client: CoreClient
+    let replyNotifications: ReplyNotifications?
+    private var pendingNotificationRoom: String?
     var workspace: WorkspaceRecord? { didSet { reconcileMentionChoices() } }
     var avatars: [String: NSImage] = [:]
     var selectedID: String?
@@ -203,7 +205,8 @@ final class ChatModel {
     private var rooms: [String: RoomState] = [:]
     private var selectionRevision = UUID()
 
-    init(dataRoot: URL? = nil) {
+    init(dataRoot: URL? = nil, notifications: ReplyNotifications? = nil) {
+        replyNotifications = notifications
         if let dataRoot { self.dataRoot = dataRoot }
         else if let override = ProcessInfo.processInfo.environment["PEBBLE_DATA_DIR"] {
             self.dataRoot = URL(fileURLWithPath: override, isDirectory: true)
@@ -314,6 +317,14 @@ final class ChatModel {
             guard selectionRevision == revision else { return }
             avatars = previews.mapValues { NSImage(cgImage: $0, size: .zero) }
             workspace = loaded
+            // Establish every room's history before subscribing, including rooms never opened.
+            // The initial task snapshot then catches reports accepted in the subscription gap.
+            if let replyNotifications {
+                for conversation in loaded.rooms where replyNotifications.needsBaseline(conversation.id) {
+                    let messages = try await client.history(room: conversation.id)
+                    replyNotifications.baseline(messages, room: conversation.id)
+                }
+            }
             try await startTaskObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
                 if let status = try await client.maintenanceStatus(persona: persona.id) {
@@ -335,7 +346,30 @@ final class ChatModel {
                 state.loaded = true
             }
         } catch { if selectionRevision == revision { self.error = describe(error) } }
-        if selectionRevision == revision { loading = false }
+        if selectionRevision == revision {
+            loading = false
+            openPendingNotificationRoom()
+        }
+    }
+
+    func openNotificationRoom(_ id: String) {
+        pendingNotificationRoom = id
+        openPendingNotificationRoom()
+    }
+
+    private func openPendingNotificationRoom() {
+        guard !loading, let workspace, let id = pendingNotificationRoom else { return }
+        pendingNotificationRoom = nil
+        guard workspace.rooms.contains(where: { $0.id == id }) else { return }
+        showCharacter = false; showNewCharacter = false; showNewGroup = false
+        showRenameGroup = false; showGroupMembers = false; showFreshContext = false
+        showCodexSettings = false; settingsTarget = nil; stateTarget = nil; classifierTarget = nil
+        select(id)
+    }
+
+    func notifyCompletedReplies(_ messages: [MessageRecord], room id: String) {
+        guard let conversation = workspace?.rooms.first(where: { $0.id == id }) else { return }
+        replyNotifications?.completed(messages, room: conversation, speakerName: speakerName)
     }
 
     // Presentation-only previews, refreshed by the same explicit file reload as the persona.
@@ -464,6 +498,7 @@ final class ChatModel {
         beginReply(conversation, prompt: prompt, usesDraft: usesDraft, retry: nil)
     }
     private func beginReply(_ conversation: RoomRecord, prompt: String, usesDraft: Bool, retry: (String, String)?) {
+        replyNotifications?.requestAuthorization()
         let state = room(conversation.id)
         let acceptedDraft = state.draft
         let draftRevision = state.draftRevision
@@ -535,6 +570,11 @@ final class ChatModel {
                     guard run.handles.contains(where: { $0.id() == update.runId }), update.conversationId == conversation.id,
                           run.handles.contains(where: { $0.id() == update.runId && $0.messages().last?.senderId == update.personaId }) else { continue }
                     state.consume(update, conversation: conversation.id)
+                    if update.kind == .completed {
+                        self?.notifyCompletedReplies(update.messages.filter {
+                            $0.id == update.messageId && $0.senderId == update.personaId
+                        }, room: conversation.id)
+                    }
                     if self?.selectedID == conversation.id { self?.replyRevision += 1 }
                     if update.kind == .completed || update.kind == .failed || update.kind == .cancelled {
                         run.completedIDs.insert(update.runId)
@@ -556,10 +596,14 @@ final class ChatModel {
             if !Task.isCancelled { await self?.refreshRoomsAfterReply() }
         }
     }
-    func refreshRoomsAfterReply() async {
-        for (id, state) in rooms where state.loaded {
+    func refreshRoomsAfterReply(notificationRooms: Set<String> = []) async {
+        let ids = Set(rooms.filter { $0.value.loaded }.map(\.key)).union(notificationRooms)
+        for id in ids {
             do {
                 let messages = try await client.history(room: id)
+                guard !Task.isCancelled else { return }
+                if notificationRooms.contains(id) { notifyCompletedReplies(messages, room: id) }
+                guard let state = rooms[id], state.loaded else { continue }
                 let decisions = try await client.participation(room: id)
                 state.markers = try await client.markers(room: id)
                 state.applyParticipation(decisions, conversation: id)
@@ -572,7 +616,7 @@ final class ChatModel {
                     }
                 }
             }
-            catch { state.error = describe(error) }
+            catch { rooms[id]?.error = describe(error) }
         }
     }
     func stopReply() {

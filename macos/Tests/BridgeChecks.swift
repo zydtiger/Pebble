@@ -127,6 +127,7 @@ struct BridgeChecks {
         let membershipModel = ChatModel(dataRoot: root.appendingPathComponent("membership"))
         await membershipModel.load()
         try await MembershipChecks.run(membershipModel)
+        try await ReplyNotificationChecks.run(root.appendingPathComponent("reply-notifications"))
         print("Swift 6 FFI checks passed: durable IDs/history, native records, validated Unicode replies, cancellation, listener release, UI restart and close lifecycle.")
     }
 

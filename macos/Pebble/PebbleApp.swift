@@ -3,12 +3,21 @@ import SwiftUI
 
 @main
 struct PebbleApp: App {
-    @State private var model = ChatModel()
+    @State private var model: ChatModel
+    private let notifications: NativeReplyNotificationSink
+
+    init() {
+        let notifications = NativeReplyNotificationSink()
+        let model = ChatModel(notifications: ReplyNotifications(sink: notifications))
+        self.notifications = notifications
+        _model = State(initialValue: model)
+        notifications.onOpenRoom = { [weak model] in model?.openNotificationRoom($0) }
+    }
 
     var body: some Scene {
         Window("Pebble", id: "pebble") {
             ContentView(model: model)
-                .background(WindowSetup())
+                .background(WindowSetup(notifications: notifications))
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1000, height: 730)
@@ -25,15 +34,30 @@ struct PebbleApp: App {
 }
 
 private struct WindowSetup: NSViewRepresentable {
+    @Environment(\.openWindow) private var openWindow
+    let notifications: NativeReplyNotificationSink
+
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = ChatWindowView()
+        view.notifications = notifications
         DispatchQueue.main.async {
-            view.window?.titlebarAppearsTransparent = true
-            view.window?.backgroundColor = NSColor(PebbleTheme.canvas)
-            view.window?.isMovableByWindowBackground = true
+            notifications.setWindowOpener { openWindow(id: "pebble") }
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) { }
+}
+
+private final class ChatWindowView: NSView {
+    weak var notifications: NativeReplyNotificationSink?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        notifications?.chatWindow = window
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(PebbleTheme.canvas)
+        window.isMovableByWindowBackground = true
+    }
 }

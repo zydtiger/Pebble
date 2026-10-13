@@ -27,6 +27,17 @@ The host resolves the data directory and performs native actions such as
 opening Finder. The core receives the path; it does not hard-code a Mac home
 directory. This keeps product logic reusable with another frontend.
 
+Swift owns local macOS reply notifications through UserNotifications. The first
+send requests alert/sound authorization without blocking chat. Completed persona
+events and task-snapshot room refreshes share session-only message-ID deduplication;
+initial room histories establish the baseline, including unopened rooms. Only
+nonempty accepted persona replies qualify. Chat-window focus (including attached
+sheets) suppresses delivery, with another focus check before native presentation.
+The notification delegate is installed before launch finishes, retains room
+navigation until workspace loading completes, and restores the main window on
+click. macOS preferences and Focus govern banners and sound; no background
+service or remote push registration is involved.
+
 The message composer embeds an AppKit `NSTextView` in an `NSScrollView`.
 TextKit measures the actual wrapped text, including a trailing empty line,
 to grow the editor from 33 to 160 points. Scrolling becomes available only
