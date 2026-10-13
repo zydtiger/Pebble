@@ -4,6 +4,7 @@ struct ContentView: View {
     @Bindable var model: ChatModel
     @State private var composerFocused = true
     @State private var composerHeight = ComposerScrollView.minimumHeight
+    @State private var addImagesHovered = false
     @State private var hoveredRoomID: String?
 
     var body: some View {
@@ -389,12 +390,16 @@ struct ContentView: View {
                 }.foregroundStyle(PebbleTheme.sage)
             }
             if !model.draftImages.isEmpty { ImageAttachments(images: model.draftImages, remove: model.removeImage) }
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 8) {
                 Button { model.pickImages() } label: {
                     Image(systemName: "plus").font(.system(size: 14))
-                        .frame(width: 33, height: 33).contentShape(Rectangle())
+                        .frame(width: 28, height: 33)
+                        .background(PebbleTheme.ink.opacity(addImagesHovered && !model.loading && !model.importingImages ? 0.08 : 0),
+                                    in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
                 }
                     .buttonStyle(.plain).help("Add images").accessibilityLabel("Add images").disabled(model.loading || model.importingImages)
+                    .onHover { addImagesHovered = $0 }
                 MessageEditor(text: $model.draft, height: $composerHeight,
                               isFocused: $composerFocused, isEditable: !model.loading,
                               onSubmit: { model.sendMessage() }, onImages: model.importImages,
@@ -414,7 +419,7 @@ struct ContentView: View {
                     .help(model.isReplying ? "Queue message (Enter)" : "Send message (Enter)")
                     .accessibilityLabel(model.isReplying ? "Queue message" : "Send message")
             }
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(PebbleTheme.line.opacity(0.7), lineWidth: 1))
         }
