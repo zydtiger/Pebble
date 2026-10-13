@@ -134,7 +134,7 @@ Sessions bind protocol, model, credential-free API root and history-formatting
 template parameters. The existing durable binding includes those template values;
 sampling and the verified per-request `enable_thinking` switch are excluded. A changed binding
 retires the previous context and starts after the current event frontier. Old
-transcript and model items remain intact; a persistent notice explains the fresh
+transcript and model items remain intact; character information explains the fresh
 context. SOUL/MEMORY stays frozen inside an unchanged session after file reload.
 Explicit fresh context is a cancellable Rust maintenance worker reserved in the
 same persona queue. It freezes an observation cutoff, validates the complete

@@ -76,10 +76,7 @@ struct ContentView: View {
                 PebbleMark(size: 30)
                 Text("Pebble").font(.system(size: 24, weight: .semibold, design: .rounded)).tracking(-0.8)
             }
-            .padding(.top, 45).padding(.bottom, 28)
-            Text("YOUR PEOPLE")
-                .font(.system(size: 10, weight: .semibold)).tracking(1.6)
-                .foregroundStyle(PebbleTheme.muted).padding(.bottom, 13)
+            .padding(.top, 22).padding(.bottom, 18)
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(model.workspace?.personas ?? [], id: \.id) { persona in
@@ -227,10 +224,17 @@ struct ContentView: View {
                 .help("Character state and response schema")
                 .accessibilityLabel("Character state and response schema")
                 .disabled(model.loading)
-            Text(persona.connectionLabel).font(.system(size: 9, weight: .semibold)).tracking(1.2)
-                .foregroundStyle(PebbleTheme.sage)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(PebbleTheme.sage.opacity(0.08), in: Capsule())
+            HStack(spacing: 6) {
+                if persona.model != nil {
+                    Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
+                        .accessibilityHidden(true)
+                }
+                Text(persona.model == nil ? "Local demo" : "Live")
+                    .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+            }
+            .foregroundStyle(PebbleTheme.sage)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(PebbleTheme.sage.opacity(0.08), in: Capsule())
             Button { model.showCharacter = true } label: { Image(systemName: "info.circle").font(.system(size: 17)) }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)
                 .padding(.leading, 10).help("About \(persona.displayName)")
@@ -329,26 +333,20 @@ struct ContentView: View {
 
     private func contextDividers(after sequence: Int64) -> some View {
         ForEach(model.markers.filter { $0.afterSequence == sequence }, id: \.id) { marker in
-            VStack(spacing: 5) {
-                HStack(spacing: 9) {
-                    Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
-                    Image(systemName: "diamond.fill").font(.system(size: 5)).foregroundStyle(.gray)
-                    Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
-                }
-                Text(marker.label).font(.system(size: 9)).foregroundStyle(.gray)
-            }.padding(.vertical, 5)
+            Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
+                .padding(.vertical, 5)
                 .id("\(model.selectedID ?? ""):\(marker.id)")
-                .help("Only this character started fresh. Other characters may still finish earlier replies.")
+                .help("\(marker.label). Only this character started fresh. Other characters may still finish earlier replies.")
                 .accessibilityLabel(marker.label)
         }
     }
     private var composer: some View {
         VStack(alignment: .leading, spacing: 11) {
-            if let detail = model.maintenanceDetail {
+            if model.isMaintaining, let detail = model.maintenanceDetail {
                 HStack(spacing: 8) {
-                    if model.isMaintaining { ProgressView().controlSize(.small) }
+                    ProgressView().controlSize(.small)
                     Text(detail).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
-                    if model.isMaintaining { Button("Cancel") { model.cancelMaintenance() }.font(.system(size: 11)) }
+                    Button("Cancel") { model.cancelMaintenance() }.font(.system(size: 11))
                 }.accessibilityIdentifier("memory-maintenance")
             }
             if let group = model.selectedConversation, group.kind == "group" {
@@ -406,9 +404,6 @@ struct ContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(PebbleTheme.line.opacity(0.7), lineWidth: 1))
-            if let notice = model.selected?.contextNotice, !notice.isEmpty {
-                Text(notice).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
-            }
         }
         .padding(.horizontal, 30).padding(.bottom, 22).padding(.top, 12)
     }
@@ -475,6 +470,9 @@ private struct CharacterSheet: View {
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
             Text("With a chat model connected, useful details can be saved during chats and reviewed when you start fresh. You can also edit SOUL.md and MEMORY.md in the character folder, then reload.")
                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+            if !persona.contextNotice.isEmpty {
+                Text(persona.contextNotice).font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+            }
             HStack {
                 Text(persona.connectionLabel)
                     .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
