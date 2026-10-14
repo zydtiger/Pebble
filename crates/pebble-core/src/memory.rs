@@ -6,7 +6,7 @@ pub(crate) const MEMORY_CAP: usize = 8192;
 // Six bytes per escaped ASCII control character, plus {"content":""}.
 pub(crate) const ARGUMENT_CAP: usize = MEMORY_CAP * 6 + 14;
 pub(crate) const NATIVE_CAP: usize = 131_072;
-pub(crate) const INSTRUCTIONS: &str = "update_memory replaces your own MEMORY.md with a complete revised document. Preserve useful old memory, correct outdated facts, distinguish fictional and real-world context, and never duplicate current affinity/mood state. Call only when useful; unchanged content is a successful no-op. Never claim a save without a successful tool result. No other tools or file paths are allowed. Maximum MEMORY size is 8192 UTF-8 bytes.";
+pub(crate) const INSTRUCTIONS: &str = "update_memory replaces your own MEMORY.md with a complete revised document. Preserve useful old memory, correct outdated facts, distinguish fictional and real-world context, and never duplicate current affinity/mood state. Call only when useful; unchanged content is a successful no-op. Never claim a save without a successful tool result. Only this tool writes MEMORY; no arbitrary file paths are allowed. Maximum MEMORY size is 8192 UTF-8 bytes.";
 
 pub(crate) fn declaration(protocol: &str) -> Value {
     let parameters = json!({"type":"object","properties":{"content":{"type":"string","description":"Complete revised MEMORY.md, preserving useful existing knowledge."}},"required":["content"],"additionalProperties":false});

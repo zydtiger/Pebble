@@ -1,4 +1,4 @@
-# Persona memory and explicit consolidation
+# Persona memory and consolidation
 
 Memory belongs to one character across private and group rooms. New supported
 contexts expose the native memory tool `update_memory`, whose sole argument `content`
@@ -63,10 +63,10 @@ fail. If the file was saved but result bookkeeping failed, the partial outcome i
 immediately and that persona is blocked until restart recovery.
 Snapshots/results remain durable in SQLite, independently of final reply/state.
 
-One chat permits at most one native memory call and four HTTP requests: the auto
-tool/direct-final phase plus at most three final candidates after a tool call.
-All share a 180-second operation deadline and the configured per-request output
-cap, so the total requested output is at most four times that cap. Memory-capable
+One chat permits at most four native history lookups, one optional native effect,
+two effect-argument corrections and three final candidates (at most ten HTTP
+requests). At most one native memory write is permitted. All requests share a
+180-second operation deadline and the configured per-request output cap. Memory-capable
 sessions also bound each response's decoded model output to 128 KiB, including
 reply/refusal text, reasoning, opaque native fields and tool arguments. SSE
 framing and repeated metadata do not consume this output allowance; Responses
@@ -116,21 +116,30 @@ through typed FFI snapshots and native recovery text. A successful context has o
 marker; failed/cancelled operations have none. Corrupt, unreadable or oversized
 sources fail rather than silently empty-resetting or truncating knowledge.
 
-## Visible boundaries
+## Automatic review and presentation
 
-Rust projects a successful persona marker into its private room and groups with
-an active membership interval at publication. Removal during maintenance excludes
-that group; later joins do not backfill old markers. The tooltip and accessibility label identify
-only the affected character. Each projection stores its current last allocated
-message sequence as a display anchor. This is independent from the frozen persona
-event cutoff and membership publication order. Other speakers' pending placeholders
-may appear before the line and complete later; the marker never implies a group
-reset or that those later public observations were summarized. Swift renders a
-thin gray horizontal line outside bubbles, with attribution in its tooltip and
-accessibility label.
-The marker is never a model input or received/sent event.
+[Automatic rollover](context.md#automatic-rollover) uses the same chat model,
+8192-byte replacement cap, journal and publication recovery as explicit review.
+It runs after accepted output while retaining the persona's queue reservation;
+priority review can precede queued work. The frozen source contains only native
+knowledge, including any retained recent message references. Successful automatic
+publication retains up to ten already-consumed complete visible messages by ID,
+subject to the fresh-context budget; explicit fresh context does not. See
+[recent-message carry](context.md#recent-messages-after-automatic-review).
+Unseen queued inputs and silent observations remain eligible in the
+successor, even when their event sequence precedes the latest sent reply.
+`summarized_events` inherits exact represented event IDs instead of inferring
+coverage from a maximum sequence. Later joins, removals and delayed result reports
+retain their original visibility and routing rules. Failure/cancellation/restart
+preserves the old context and committed memory effects. The unchanged native
+source is not retried automatically; Start fresh context offers explicit recovery.
 
-See [context](context.md#maintenance-headroom) for conservative reserve arithmetic,
-[providers](providers.md#native-memory-tools) for protocol contracts, and
-[history](history.md) for schema 11 storage. This memory subsystem includes no threshold rollover or retrieval.
-[Images](images.md) and [delegation](delegation.md) have separate contracts.
+Internal successful markers and their private/current-group room projections stay
+saved for diagnostics and API compatibility. They are never chat messages or model
+inputs. Swift renders no context dividers and markers do not suppress empty states
+or trigger scrolling. Automatic success is silent. Explicit success has brief
+transient confirmation; failures remain actionable through native error/recovery
+text. The manual operation's persisted detail remains available for diagnostics.
+
+See [context](context.md#maintenance-headroom), [providers](providers.md#native-memory-tools),
+[history](history.md), and [history tools](history-tools.md).

@@ -235,6 +235,7 @@ fn collect(envelope: &Value, refs: &mut Vec<(String, ImageReference)>) -> Result
     let events = [
         "events",
         "eligible_observations",
+        "recent_history",
         "recent_persona_events",
         "recent_group_transcript",
         "recent_real_user_transcript",

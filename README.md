@@ -8,8 +8,9 @@ characters, individually or together in a group.
 - **Private and group chats.** Talk to one character or create a group with any
   combination. Characters can decide when to join in; `@Name` requests a reply.
 - **Personalities and memory.** Customize each character's personality and
-  memories, shared across their private and group conversations. Start a fresh
-  context while keeping saved conversations.
+  memories, shared across their private and group conversations. Characters review
+  memory as context fills, keep up to ten recent messages in view, and can recall
+  conversations they have seen. You can also start a fresh context while keeping saved conversations.
 - **Your choice of models.** Connect compatible local or hosted models, with
   app defaults and individual character settings.
 - **Formatted replies.** Read bold and italic text, code blocks, and native inline

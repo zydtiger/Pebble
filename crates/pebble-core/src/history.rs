@@ -59,9 +59,16 @@ pub struct ModelRequest {
     pub protocol: String,
     pub model: String,
     pub items: Vec<ModelItem>,
+    /// Rehydrated from the frozen session's message references; never archived as copied text.
+    #[serde(skip)]
+    pub recent_history: Option<ModelItem>,
     /// None identifies a preserved v0.1.0 session, never reinterpreted as structured.
     pub response_schema: Option<serde_json::Value>,
     pub state_before: Option<serde_json::Value>,
+    #[serde(default)]
+    pub history_tools: bool,
+    #[serde(default)]
+    pub history_cutoff: i64,
     pub memory_tools: bool,
     pub memory_capable: bool,
     #[serde(default)]

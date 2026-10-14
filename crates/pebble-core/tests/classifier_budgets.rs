@@ -74,6 +74,14 @@ fn large_round(api: &'static str, limit: Option<u64>) -> u64 {
         })
     });
     live_support::configure(root.path(), &chat.url, "mock", api, "");
+    // This fixture measures classifier predecessor budgets, not the ordinary chat
+    // ceiling (whose native tool declarations also consume context).
+    let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        config.replace("context_len=65536", "context_len=131072"),
+    )
+    .unwrap();
     let checked_target = target.clone();
     let classifier = Server::handling(move |body| {
         let data = input(body, api);
@@ -135,7 +143,15 @@ fn large_round(api: &'static str, limit: Option<u64>) -> u64 {
         .filter(|m| m.sender_kind == "persona")
         .collect();
     assert_eq!(replies.len(), 10);
-    assert!(replies.iter().all(|reply| reply.content.len() > 500));
+    assert!(
+        replies.iter().all(|reply| reply.content.len() > 500),
+        "{:?}",
+        replies
+            .iter()
+            .filter(|reply| reply.content.len() <= 500)
+            .map(|reply| (&reply.status, &reply.failure_detail))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(core.response_settings(&target).unwrap(), before);
     assert_eq!(counts(), before_counts);
     assert_eq!(

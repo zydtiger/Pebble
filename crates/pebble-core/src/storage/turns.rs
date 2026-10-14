@@ -6,6 +6,24 @@ use uuid::Uuid;
 
 impl Database {
     pub(crate) fn activate_turn(&self, persona: &Persona, pending: &Turn) -> Result<Turn, Error> {
+        Ok(self.prepare_turn(persona, pending, false)?.0)
+    }
+    pub(crate) fn preview_turn(
+        &self,
+        persona: &Persona,
+        pending: &Turn,
+    ) -> Result<crate::ModelRequest, Error> {
+        Ok(self
+            .prepare_turn(persona, pending, true)?
+            .1
+            .expect("projected request"))
+    }
+    fn prepare_turn(
+        &self,
+        persona: &Persona,
+        pending: &Turn,
+        preview: bool,
+    ) -> Result<(Turn, Option<crate::ModelRequest>), Error> {
         self.ensure_memory_resolved(&persona.id)?;
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
@@ -65,8 +83,14 @@ impl Database {
                 let mut turn = pending.clone();
                 turn.session_id = session_id;
                 turn.reply = message(&tx, &pending.reply.id)?;
-                tx.commit()?;
-                return Ok(turn);
+                tx.execute("WITH RECURSIVE attempts(id,retry_of,history_cutoff,depth) AS (SELECT id,retry_of,history_cutoff,0 FROM model_calls WHERE id=?2 UNION ALL SELECT c.id,c.retry_of,c.history_cutoff,a.depth+1 FROM model_calls c JOIN attempts a ON c.id=a.retry_of) UPDATE model_calls SET history_cutoff=(SELECT history_cutoff FROM attempts WHERE history_cutoff IS NOT NULL ORDER BY depth LIMIT 1) WHERE id=?1", params![pending.call_id,original])?;
+                let request = preview
+                    .then(|| super::items::request(&tx, &self.root, &pending.call_id, false))
+                    .transpose()?;
+                if !preview {
+                    tx.commit()?;
+                }
+                return Ok((turn, request));
             }
         }
         let user_id = pending.user.id.clone();
@@ -84,8 +108,9 @@ impl Database {
             let mut query = tx.prepare(
                 "SELECT e.id, e.sequence, e.conversation_id, e.message_id, m.sender_kind, m.sender_id, m.content, COALESCE((SELECT display_name FROM personas WHERE id=m.sender_id),'You')
                  FROM persona_events e JOIN messages m ON m.id = e.message_id
-                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND (e.sequence <= ?5 OR EXISTS(SELECT 1 FROM model_calls current JOIN group_reply_slots own ON own.id=current.slot_id JOIN group_reply_slots previous ON previous.round_id=own.round_id AND previous.ordinal<own.ordinal JOIN model_calls accepted ON accepted.slot_id=previous.id WHERE current.id=?8 AND previous.status='completed' AND accepted.reply_message_id=e.message_id))
+                 WHERE e.persona_id = ?1 AND e.sequence <= ?2 AND (e.sequence > ?4 OR (?6 AND e.message_id=?7)) AND e.kind = 'received' AND ((?6 AND e.message_id=?7) OR NOT EXISTS(SELECT 1 FROM summarized_events z WHERE z.session_id=?3 AND z.event_id=e.id)) AND (e.sequence <= ?5 OR EXISTS(SELECT 1 FROM model_calls current JOIN group_reply_slots own ON own.id=current.slot_id JOIN group_reply_slots previous ON previous.round_id=own.round_id AND previous.ordinal<own.ordinal JOIN model_calls accepted ON accepted.slot_id=previous.id WHERE current.id=?8 AND previous.status='completed' AND accepted.reply_message_id=e.message_id))
                  AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming'))))
+                 AND NOT EXISTS (SELECT 1 FROM session_recent_messages recent WHERE recent.session_id=?3 AND recent.message_id=e.message_id)
                  AND NOT EXISTS (
                      SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                      WHERE x.event_id = e.id AND i.session_id = ?3)
@@ -206,8 +231,14 @@ impl Database {
             reply: message(&tx, &reply_id)?,
             retry_of: pending.retry_of.clone(),
         };
-        tx.commit()?;
-        Ok(turn)
+        tx.execute("WITH RECURSIVE attempts(id,retry_of,history_cutoff,depth) AS (SELECT id,retry_of,history_cutoff,0 FROM model_calls WHERE id=?1 UNION ALL SELECT c.id,c.retry_of,c.history_cutoff,a.depth+1 FROM model_calls c JOIN attempts a ON c.id=a.retry_of) UPDATE model_calls SET history_cutoff=COALESCE((SELECT history_cutoff FROM attempts WHERE history_cutoff IS NOT NULL ORDER BY depth LIMIT 1),(SELECT COALESCE(MAX(sequence),0) FROM persona_events WHERE persona_id=?2)) WHERE id=?1",params![pending.call_id,persona.id])?;
+        let request = preview
+            .then(|| super::items::request(&tx, &self.root, &pending.call_id, false))
+            .transpose()?;
+        if !preview {
+            tx.commit()?;
+        }
+        Ok((turn, request))
     }
 
     pub(crate) fn checkpoint(&self, turn: &Turn, content: &str) -> Result<(), Error> {
@@ -449,7 +480,7 @@ fn link(db: &Connection, item: &str, event: &str) -> Result<(), Error> {
 fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
     db.execute(
         "UPDATE model_sessions SET covered_event_sequence = COALESCE(
-            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (
+            (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS(SELECT 1 FROM summarized_events z WHERE z.session_id=?1 AND z.event_id=e.id) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (
                 SELECT 1 FROM model_item_events x JOIN model_items i ON i.id = x.item_id
                 WHERE x.event_id = e.id AND i.session_id = ?1)),
             (SELECT COALESCE(MAX(sequence), 0) FROM persona_events WHERE persona_id = ?2)) WHERE id = ?1",

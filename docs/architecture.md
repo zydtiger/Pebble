@@ -178,7 +178,7 @@ zstd items decode into the exact saved JSON bytes under a fixed 8 MiB context
 bound; zstd window and output reads have independent bounds. A conservative
 byte-based input estimate plus configured output reserve is checked before the
 adapter starts. Budget edits alone leave the session and prefix unchanged.
-See [context and encoding](context.md). There is no always-running background service or threshold-triggered rollover. Persona memory tools and explicit consolidation are defined in [memory](memory.md).
+See [context and encoding](context.md). Automatic persona rollover runs inside the current queue reservation after successful publication, or before an unstarted call whose projected request reaches the priority threshold. It uses the same memory consolidation pipeline; no separate background service runs. Precise summarized-event IDs preserve unseen queued input across the boundary. Automatic successors retain up to ten budget-admitted visible messages through ordered IDs and frozen display metadata; request-time hydration reads original text/assets, without copying native tool chains or consuming events again. See [memory](memory.md) and [native history tools](history-tools.md).
 
 ## Delegation boundary
 

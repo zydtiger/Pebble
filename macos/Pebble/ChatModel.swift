@@ -201,6 +201,9 @@ final class ChatModel {
     var classifierTarget: SettingsTarget?
     var replyRevision = 0
     private var maintenanceHandles: [String: MaintenanceHandle] = [:]
+    private var maintenanceObservation: Task<Void, Never>?
+    private var observedMaintenance: [String: String] = [:]
+    var contextFeedback: String?
     var maintenanceDetails: [String: String] = [:]
     var isMaintaining: Bool { selected.map { maintenanceHandles[$0.id] != nil } ?? false }
     var maintenanceDetail: String? { selected.flatMap { maintenanceDetails[$0.id] } }
@@ -329,6 +332,7 @@ final class ChatModel {
                     replyNotifications.baseline(messages, room: conversation.id)
                 }
             }
+            startMaintenanceObservation()
             try await startTaskObservation()
             try await startImageObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
@@ -463,6 +467,11 @@ final class ChatModel {
                     await refreshRoomsAfterReply()
                     if status.status != "completed" { state.error = status.detail; return false }
                     state.error = nil
+                    contextFeedback = status.memoryReviewed ? "Memory reviewed. Fresh context started." : "Fresh context started."
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(3))
+                        self?.contextFeedback = nil
+                    }
                     return true
                 }
                 try await Task.sleep(for: .milliseconds(100))
@@ -638,7 +647,29 @@ final class ChatModel {
             if let handle = run.handles.first(where: { $0.messages().last?.id == messageID }) { handle.cancel(); return }
         }
     }
+    private func startMaintenanceObservation() {
+        guard maintenanceObservation == nil else { return }
+        maintenanceObservation = Task { @MainActor [weak self, client] in
+            while !Task.isCancelled {
+                let personas = self?.workspace?.personas ?? []
+                for persona in personas {
+                    guard let status = try? await client.maintenanceStatus(persona: persona.id) else { continue }
+                    let revision = "\(status.id):\(status.status)"
+                    guard self?.observedMaintenance[persona.id] != revision else { continue }
+                    self?.observedMaintenance[persona.id] = revision
+                    if ["failed", "cancelled", "interrupted"].contains(status.status) {
+                        self?.room(persona.conversationId).error = status.detail
+                        if self?.selectedConversation?.members.contains(where: { $0.personaId == persona.id }) == true {
+                            self?.selectedRoom?.error = status.detail
+                        }
+                    }
+                }
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
     func closeChat() {
+        maintenanceObservation?.cancel(); maintenanceObservation = nil
         imageGenerationStream?.cancel(); imageGenerationStream = nil; imageGenerationSink?.finish(); imageGenerationSink = nil
         delegationStream?.cancel(); delegationStream = nil; delegationSink?.finish(); delegationSink = nil
         selectionRevision = UUID()

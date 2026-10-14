@@ -28,7 +28,10 @@ questions/permission limits, durable evidence and queued private/group reporting
   compact task monitor/settings. See docs/delegation.md for capability and permission limits.
   Rust also owns background image generation, frozen backend operations and
   original-room image publication; see docs/image-generation.md.
-  Future changes need scoped authorization. Automatic compaction, deletion,
+  Rust also owns automatic memory rollover and bounded read-only retrieval of persona-visible
+  history; see docs/memory.md and docs/history-tools.md. Swift keeps successful
+  automatic transitions silent and does not render context divider messages.
+  Future changes need scoped authorization. Deletion,
   import/export and cloud sync remain deferred.
 
 ## Development and validation

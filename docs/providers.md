@@ -141,3 +141,18 @@ memory consolidation use the same adapter boundary. Endpoint rejection is a
 visible failure. [Image input](images.md) records the immutable-reference format,
 768-pixel limit, separate vision reserve, selected-service measurements and
 synthetic visual-control checks.
+
+## Native history tools
+
+New contexts declare Rust-owned `search_history` and `read_history` in both API
+formats. Each operation admits one native call at a time, with at most four
+read-only lookups followed by one optional existing memory/delegation/image effect
+and the final structured response. Lookup allowance belongs to the current call
+and its retry ancestors, not earlier successful turns. The dispatcher validates
+and routes history calls before effect-specific parsers. Results and source
+calls persist in native order before continuing; retries replay frozen evidence.
+Readonly results count in the request budget and never stuff the full transcript
+into the prefix. Final/repair requests disable tools and retain declarations needed
+for native replay. Maintenance exposes only update_memory, including when reviewing
+history lookup evidence. Preserved contexts retain their capability until an
+supported fresh boundary. See [tool contracts](history-tools.md).

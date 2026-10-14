@@ -19,6 +19,7 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
         };
         let request = ModelRequest {
             image_root: Default::default(),
+            recent_history: None,
             call_id: String::new(),
             session_id: String::new(),
             conversation_id: String::new(),
@@ -38,6 +39,8 @@ fn complete_body_budget_includes_utf8_schema_native_state_and_both_dialects() {
                 json!({"type":"object","description":"模式".repeat(200),"properties":{"reply":{"type":"string"}}}),
             ),
             state_before: None,
+            history_tools: false,
+            history_cutoff: 0,
             memory_tools: false,
             memory_capable: false,
             delegation_tools: false,
@@ -113,5 +116,40 @@ fn image_generation_backend_enum_contains_only_available_choices() {
                 json!([backend])
             );
         }
+    }
+}
+
+#[test]
+fn maintenance_exposes_only_memory_while_replaying_all_native_tool_evidence() {
+    for api in ["chat_completions", "responses"] {
+        let chat = ChatConnection {
+            request: Default::default(),
+            model: "test".into(),
+            base_url: "http://127.0.0.1:9/v1".into(),
+            api: api.into(),
+            api_key: None,
+            api_key_env: None,
+            responses_schema_format: None,
+            context_len: 100000,
+            max_output_tokens: 512,
+        };
+        let mut request:ModelRequest=serde_json::from_value(json!({"call_id":"maintenance","session_id":"session","conversation_id":"room","trigger_message_id":"","event_cutoff":0,"protocol":api,"model":"test","items":[],"memory_tools":true,"memory_capable":true})).unwrap();
+        for name in [
+            "generate_image",
+            "delegate_task",
+            "search_history",
+            "read_history",
+        ] {
+            let call = if api == "responses" {
+                json!({"type":"function_call","call_id":name,"name":name,"arguments":"{}"})
+            } else {
+                json!({"role":"assistant","content":null,"tool_calls":[{"id":name,"type":"function","function":{"name":name,"arguments":"{}"}}]})
+            };
+            let result = crate::memory::result(api, name, "{\"ok\":true}");
+            crate::memory::append(&mut request, &[call, result]).unwrap();
+        }
+        let body = request_body(&chat, &request, 512).unwrap().1;
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tool_choice"], "required");
     }
 }

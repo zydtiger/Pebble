@@ -24,7 +24,10 @@ only ready slots into the persona queues. Native persona memory and explicit con
 | `group_reply_slots` | Round/decision identity and fixed ordinal, required/optional/followup/fallback kind, pending/admitted/terminal status; no model call before readiness |
 | `memory_operations` | Persona/owner/native-call identity, complete arguments, old/new memory snapshots, prepared/committed/failed status and durable native result link |
 | `context_maintenance` | Frozen source session/cutoff/state/request, native maintenance output/result, lifecycle and persisted recovery detail |
-| `context_markers` | Exactly one ordered successful transition per new session; outside native model inputs |
+| `context_markers` | Exactly one ordered successful transition per new session; internal diagnostics outside native model inputs and transcript rendering |
+| `summarized_events` | Exact event IDs represented by prior automatic reviews, inherited into a successor without swallowing unseen receipt holes |
+| `session_recent_messages` | Frozen ordered message IDs and speaker/room display metadata for at most ten budget-admitted automatic-rollover messages; original bodies/assets remain referenced |
+| `automatic_rollovers` | Attempt latch keyed by source session and last native item sequence; unchanged failed/interrupted source is not automatically retried |
 | `context_marker_rooms` | Durable private/current-group projections with display anchor; independent from consumed-event cutoff |
 | `image_assets` | Imported immutable UUID, source/model metadata and versioned frozen rendition reference; files remain under the runtime root |
 | `message_images` | Message/asset association with explicit unique position and per-message unique asset |
@@ -54,7 +57,12 @@ state, reviews current MEMORY with outgoing knowledge, then atomically publishes
 the new context and marker. A committed memory effect survives reply/boundary
 failure. Native call/result checkpoints remain in order and advance a failed
 chat's frozen retry boundary, so explicit retry does not execute them again.
-See [memory](memory.md) for journal stages and recovery.
+Automatic boundaries additionally retain a budget-bounded recent-message list by
+ID. Runtime request hydration uses that call's original session, places historical
+participant evidence after its prefix, and does not add consumed events or native
+effect chains. Archived maintenance recovery rehydrates the frozen source session
+rather than the currently active session. See [context](context.md#recent-messages-after-automatic-review)
+and [memory](memory.md) for storage and recovery semantics.
 
 Image-input schema v12 is additive. New multimodal user items store typed
 `pebble_image_v1` references; request-time materialization verifies and loads the
@@ -227,3 +235,16 @@ replaced inode, including late writes through an external editor's older file
 descriptor; it is not automatically removed or rolled back. A failed staging
 attempt can also leave its evidence there. See [memory publication and recovery](memory.md#durable-effects-and-native-replay)
 for conflict guarantees and manual resolution.
+
+## Schema 15 and native recall
+
+Schema 15 adds `model_sessions.history_tools` (false for preserved sessions),
+`model_calls.history_cutoff`, the automatic-maintenance flag and the two rollover
+bookkeeping tables above. Existing IDs, native bytes, timestamps, membership
+intervals, state and files remain intact. New contexts enable bounded read-only
+[history tools](history-tools.md). Every activation freezes a persona event frontier;
+read results are saved as balanced native tool exchanges and the retry boundary
+advances atomically, preserving evidence after failure/restart. Neither query
+accesses internal reasoning, system prompts, work logs or another persona's private
+messages. Automatic publication inherits represented event IDs while keeping unseen
+receipts eligible regardless of their sequence relative to an accepted reply.

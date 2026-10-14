@@ -472,6 +472,50 @@ impl Chats {
             group.cancel();
         }
     }
+    fn maintain_automatically(
+        &self,
+        db: &Arc<Database>,
+        persona: &Persona,
+        pending: Option<&Turn>,
+    ) {
+        // Register cancellation atomically with admission and the idle/priority decision.
+        // This persona's current reservation still owns execution during HTTP.
+        let preparation = {
+            let queues = self.queues.lock().expect("generation queues lock");
+            db.automatic_rollover(persona, pending).map(|job| {
+                job.map(|job| {
+                    let control = Arc::new(Control::default());
+                    let reservation = queues
+                        .get(&persona.id)
+                        .map(|q| q.reserve(&job.id, &control));
+                    (job, control, reservation)
+                })
+            })
+        };
+        if let Err(error) = &preparation {
+            let _ = db.record_rollover_failure(persona, error);
+        }
+        if let Ok(Some((job, control, reservation))) = preparation {
+            let latest = Arc::new(Mutex::new(crate::MaintenanceStatus {
+                id: job.id.clone(),
+                persona_id: persona.id.clone(),
+                status: "running".into(),
+                detail: "Reviewing memory…".into(),
+                memory_saved: false,
+                memory_reviewed: false,
+            }));
+            crate::maintenance::worker(
+                db.clone(),
+                db.root_path(),
+                persona.clone(),
+                job,
+                control,
+                latest,
+            );
+            drop(reservation);
+        }
+    }
+
     fn launch(
         self: &Arc<Self>,
         db: Arc<Database>,
@@ -518,6 +562,9 @@ impl Chats {
                         None,
                     );
                 } else {
+                    if let Some(chats) = wake.upgrade() {
+                        chats.maintain_automatically(&worker_db, &persona, Some(&worker_turn));
+                    }
                     let ready = reassess_queued(&worker_db, &persona, &worker_turn, &control);
                     let skipped = matches!(ready, Ok(false));
                     match ready.and_then(|allowed| {
@@ -529,7 +576,13 @@ impl Chats {
                             ))
                         }
                     }) {
-                        Ok(turn) => run(worker_db, turn, control, listener, persona),
+                        Ok(turn) => {
+                            let completed =
+                                run(worker_db.clone(), turn, control, listener, persona.clone());
+                            if completed && let Some(chats) = wake.upgrade() {
+                                chats.maintain_automatically(&worker_db, &persona, None);
+                            }
+                        }
                         Err(error) => finish_pending(
                             &worker_db,
                             &worker_turn,
@@ -608,7 +661,7 @@ fn run(
     control: Arc<Control>,
     listener: Arc<dyn ChatListener>,
     persona: Persona,
-) {
+) -> bool {
     let chat = persona.chat.clone();
     let budget = persona.context;
     let emit = |sequence, kind, text, messages| {
@@ -743,9 +796,11 @@ fn run(
         }
     };
     // The queue releases this slot after durable terminal publication.
+    let completed = kind == ChatEventKind::Completed;
     if connected {
         let _ = emit(sequence + 1, kind, error, messages);
     }
+    completed
 }
 
 fn memory_failure(db: &Database, owner: &str, detail: Option<String>) -> Option<String> {
@@ -841,7 +896,11 @@ fn generate_structured(
         && chat.is_some()
         && unused_tool_phase
         && !base_request.image_generation_backends.is_empty();
-    let mut tool_phase = base_request.memory_tools
+    let mut history_calls = db.history_calls(request)?;
+    base_request.history_tools =
+        request.history_tools && chat.is_some() && unused_tool_phase && history_calls < 4;
+    let mut tool_phase = base_request.history_tools
+        || base_request.memory_tools
         || base_request.delegation_tools
         || base_request.image_generation_tools;
     let mut candidate_count = 0;
@@ -877,9 +936,11 @@ fn generate_structured(
         if let Some(chat) = chat {
             let body =
                 crate::live::request_body(chat, &candidate_request, budget.max_output_tokens)?.1;
-            if candidate_request.memory_tools
-                || candidate_request.delegation_tools
-                || candidate_request.image_generation_tools
+            if history_calls == 0
+                && (candidate_request.history_tools
+                    || candidate_request.memory_tools
+                    || candidate_request.delegation_tools
+                    || candidate_request.image_generation_tools)
             {
                 budget.check_chat_start(&body)?;
             } else {
@@ -911,6 +972,31 @@ fn generate_structured(
         if tool_phase {
             crate::live::output_text(&output)?; // Refusals are never argument-repair candidates.
             db.archive_tool_output(&request.call_id, &output)?;
+            if let Some(call) = crate::retrieval::call(&output)? {
+                if !base_request.history_tools {
+                    return Err(crate::retrieval::invalid(
+                        "History tools are unavailable for this reply.",
+                    ));
+                }
+                let evidence = match db.retrieve_history(request, &call) {
+                    Ok(result) => result,
+                    Err(error) => json!({"ok":false,"detail":error.to_string()}),
+                };
+                let result =
+                    crate::memory::result(&request.protocol, &call.id, &evidence.to_string());
+                control
+                    .while_active(|| db.reject_delegation_arguments(request, &output, &result))
+                    .ok_or_else(|| Error::Generation("Cancelled".into()))??;
+                crate::memory::append(&mut base_request, &output)?;
+                crate::memory::append(&mut base_request, &[result])?;
+                history_calls += 1;
+                base_request.history_tools = history_calls < 4;
+                tool_phase = base_request.history_tools
+                    || base_request.memory_tools
+                    || base_request.delegation_tools
+                    || base_request.image_generation_tools;
+                continue;
+            }
             match crate::image_generation::tool::calls(&output)? {
                 crate::image_generation::tool::Parsed::None => {}
                 crate::image_generation::tool::Parsed::Invalid { id, detail } => {
@@ -964,6 +1050,7 @@ fn generate_structured(
                     manager.notify();
                     crate::memory::append(&mut base_request, &output)?;
                     crate::memory::append(&mut base_request, &[result])?;
+                    base_request.history_tools = false;
                     base_request.image_generation_tools = false;
                     base_request.memory_tools = false;
                     base_request.delegation_tools = false;
@@ -1020,6 +1107,7 @@ fn generate_structured(
                 manager.notify();
                 crate::memory::append(&mut base_request, &output)?;
                 crate::memory::append(&mut base_request, &[result])?;
+                base_request.history_tools = false;
                 base_request.image_generation_tools = false;
                 base_request.delegation_tools = false;
                 base_request.memory_tools = false;
@@ -1028,6 +1116,7 @@ fn generate_structured(
             }
             let calls = crate::memory::calls(&output)?;
             tool_phase = false;
+            base_request.history_tools = false;
             base_request.memory_tools = false;
             base_request.image_generation_tools = false;
             base_request.delegation_tools = false;
@@ -1181,3 +1270,11 @@ mod memory_failure_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "chat/history_tests.rs"]
+mod history_tests;
+
+#[cfg(test)]
+#[path = "chat/rollover_tests.rs"]
+mod rollover_tests;

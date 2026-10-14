@@ -13,8 +13,11 @@ pub(crate) mod maintenance;
 mod membership;
 pub(crate) mod memory;
 mod participation;
+mod recent;
 mod response_settings;
+mod retrieval;
 mod retry;
+mod rollover;
 mod rooms;
 pub(crate) mod rounds;
 mod state;
@@ -38,6 +41,9 @@ pub(crate) struct Database {
 }
 
 impl Database {
+    pub(crate) fn root_path(&self) -> std::path::PathBuf {
+        self.root.clone()
+    }
     pub(crate) fn open(root: &Path) -> Result<Self, Error> {
         let data = root.join("data");
         std::fs::create_dir_all(&data).map_err(|error| file_error(&data, error))?;
@@ -61,7 +67,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 14 {
+        if version > 15 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -129,6 +135,9 @@ impl Database {
         if version < 14 {
             tx.execute_batch(include_str!("storage/image-generation-migration.sql"))?;
         }
+        if version < 15 {
+            tx.execute_batch(include_str!("storage/rollover-migration.sql"))?;
+        }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
@@ -186,6 +195,7 @@ impl Database {
                 [&persona.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
                 .optional()?;
             persona.context_notice = match prior {
+                Some((_, _, _, _, reason, _)) if reason == "automatic" => String::new(),
                 Some((_, _, _, _, _, None)) =>
                     "Legacy model context: structured replies and persistent state require Start fresh context. Existing context stays unchanged until then.".into(),
                 Some((_, _, _, _, reason, _)) if reason == "manual" =>
@@ -274,3 +284,11 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         images: Vec::new(),
     })
 }
+
+#[cfg(test)]
+mod retrieval_tests;
+#[cfg(test)]
+mod rollover_tests;
+
+#[cfg(test)]
+mod recent_tests;

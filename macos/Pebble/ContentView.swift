@@ -18,7 +18,7 @@ struct ContentView: View {
                     if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
                     ZStack(alignment: .topTrailing) {
-                        if model.bubbles.isEmpty && model.markers.isEmpty {
+                        if model.bubbles.isEmpty {
                             GeometryReader { geometry in
                                 ScrollView {
                                     Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
@@ -278,7 +278,6 @@ struct ContentView: View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
-                    contextDividers(after: 0)
                     ForEach(model.bubbles) { bubble in
                         HStack(alignment: .top, spacing: 10) {
                             if bubble.isUser { Spacer(minLength: 60) }
@@ -320,7 +319,6 @@ struct ContentView: View {
                             }
                             if !bubble.isUser { Spacer(minLength: 28) }
                         }
-                        contextDividers(after: bubble.sequence)
                     }
                     Color.clear.frame(height: 1).id("latest")
                 }
@@ -329,7 +327,6 @@ struct ContentView: View {
             }
             .onAppear { reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.bubbles.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
-            .onChange(of: model.markers.count) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
             .onChange(of: model.replyRevision) { _, _ in reader.scrollTo("latest", anchor: .bottom) }
         }
     }
@@ -347,17 +344,12 @@ struct ContentView: View {
         }
     }
 
-    private func contextDividers(after sequence: Int64) -> some View {
-        ForEach(model.markers.filter { $0.afterSequence == sequence }, id: \.id) { marker in
-            Rectangle().fill(Color.gray.opacity(0.35)).frame(height: 0.5)
-                .padding(.vertical, 5)
-                .id("\(model.selectedID ?? ""):\(marker.id)")
-                .help("\(marker.label). Only this character started fresh. Other characters may still finish earlier replies.")
-                .accessibilityLabel(marker.label)
-        }
-    }
     private var composer: some View {
         VStack(alignment: .leading, spacing: 11) {
+            if let feedback = model.contextFeedback {
+                Text(feedback).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
+                    .accessibilityIdentifier("context-feedback")
+            }
             if model.isMaintaining, let detail = model.maintenanceDetail {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

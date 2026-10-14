@@ -47,7 +47,7 @@ Command/Shift–Enter newline shortcuts. See [development](development.md#valida
 [local data](local-data.md) for storage paths; provider, history, context, and
 settings docs own their details.
 
-No automatic retry, transcript clearing, or threshold-triggered summarization occurs. Explicit memory consolidation is described below. Drafts
+No automatic retry or transcript clearing occurs. Automatic threshold review and explicit memory consolidation are described below. Drafts
 do not survive app restart. Retry is limited to the latest unsuccessful reply,
 settings saves are atomic per file, and context estimates are not exact provider
 token usage. These limits are explicit parts of the first local milestone.
@@ -101,8 +101,7 @@ member controls, typed/chosen mentions, speaker attribution, participation,
 private navigation, recovery and per-room drafts. Composer checks retain native
 marked text, Enter send and Command/Shift–Enter newline behavior.
 
-After v0.3.0: memory retrieval, automatic threshold compaction,
-proactive conversations outside a user-started
+After v0.3.0, proactive conversations outside a user-started
 group round, separate roleplay worlds, richer relationships, search/cold
 archives/exports/deletion, sync, notarization, and broader platform validation
 remain separately scoped. The local app remains ad-hoc signed for Apple Silicon;
@@ -205,5 +204,20 @@ uncertain submission, group fanout, membership and cancellation. See
 [image generation](image-generation.md) for the contract and verification entry
 points. Release placement and signed distribution remain separate decisions.
 
-Automatic threshold compaction, richer memory retrieval, attachment deletion,
-sync and broader distribution remain outside these increments.
+### Automatic memory and native recall
+
+The version-unassigned automatic-memory increment adds same-chat-model rollover
+at soft/priority context thresholds, exact inherited event coverage, durable
+unchanged-source attempt suppression, and quiet success without transcript dividers.
+Automatic successors retain up to ten already-consumed visible messages through
+frozen ID references, with whole-message budget reduction; explicit fresh contexts
+keep their clean-prefix behavior.
+Rust-owned search_history/read_history offer literal content/local-date filtering
+and visible neighborhoods within a frozen persona receipt scope. Bounded native
+search/read/memory/final flows replay on both protocols. Targeted tests cover queue
+ownership, unseen private/group holes, restart/partial review recovery, visibility,
+Unicode, local DST dates, bounds and native evidence. See [context](context.md),
+[memory](memory.md), and [history tools](history-tools.md).
+
+Richer retrieval, attachment deletion, sync and broader distribution remain
+outside these increments.

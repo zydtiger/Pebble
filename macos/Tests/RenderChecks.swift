@@ -22,6 +22,12 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_MEMORY_ONLY"] == "1" {
+                    try await checkMemoryPresentation(window: window, model: model)
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_IMAGES_ONLY"] == "1" {
                     try await checkImageGenerationRendering(window: window, model: model)
                     app.terminate(nil)
@@ -327,6 +333,45 @@ struct RenderChecks {
         guard button.responds(to: selector) else { return false }
         typealias Press = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(button.method(for: selector), to: Press.self)(button, selector)
+    }
+
+    @MainActor
+    static func checkMemoryPresentation(window: NSWindow, model: ChatModel) async throws {
+        var classifier = try await model.readClassifierSettings(nil)
+        classifier.connection.enabled = false
+        try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)
+        let personaID = model.selected!.id
+        guard await model.startFreshContext(), model.bubbles.isEmpty, model.markers.count == 1 else {
+            throw RenderError.failed("Empty private context lost its internal transition")
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        try capture(window, name: "memory-private-empty")
+        guard model.contextFeedback != nil else { throw RenderError.failed("Manual success confirmation missing") }
+        model.draft = "Remember the river walk and the little blue stone."
+        model.sendMessage()
+        for _ in 0..<500 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        let ids = model.bubbles.map(\.id)
+        guard await model.startFreshContext(), model.bubbles.map(\.id) == ids else { throw RenderError.failed("Private review changed transcript") }
+        try await Task.sleep(for: .seconds(3.2))
+        guard model.contextFeedback == nil else { throw RenderError.failed("Manual success feedback did not expire") }
+        try capture(window, name: "memory-private-history")
+        guard await model.createGroup("River friends", members: [personaID]) else { throw RenderError.failed("Group creation failed") }
+        for _ in 0..<100 where model.loading { try await Task.sleep(for: .milliseconds(10)) }
+        let groupID = model.selectedID!
+        model.mentionedIDs = [personaID]
+        model.draft = "Tell everyone one thing you noticed on the walk."
+        model.sendMessage()
+        for _ in 0..<500 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
+        let groupIDs = model.bubbles.map(\.id)
+        model.select(personaID)
+        await model.load()
+        guard await model.startFreshContext() else { throw RenderError.failed("Group review failed") }
+        model.select(groupID)
+        await model.load()
+        guard model.bubbles.map(\.id) == groupIDs, !model.markers.isEmpty else { throw RenderError.failed("Group review changed transcript or internal projection") }
+        try await Task.sleep(for: .seconds(3.2))
+        try capture(window, name: "memory-group-history")
+        print("Memory presentation passed: empty-state, unchanged private/group transcripts, internal markers and transient manual feedback.")
     }
 
     @MainActor

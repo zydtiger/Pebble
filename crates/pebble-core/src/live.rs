@@ -66,12 +66,16 @@ pub(crate) async fn generate(
     }
     let mut framing = sse::Framing::default();
     let mut completion = chat_completions::Stream::default();
-    completion.allow_tools =
-        request.memory_tools || request.delegation_tools || request.image_generation_tools;
+    completion.allow_tools = request.history_tools
+        || request.memory_tools
+        || request.delegation_tools
+        || request.image_generation_tools;
     completion.bound.enabled = request.memory_capable;
     let mut responses = responses::Stream::default();
-    responses.allow_tools =
-        request.memory_tools || request.delegation_tools || request.image_generation_tools;
+    responses.allow_tools = request.history_tools
+        || request.memory_tools
+        || request.delegation_tools
+        || request.image_generation_tools;
     responses.bound.enabled = request.memory_capable;
     loop {
         let chunk = tokio::time::timeout(Duration::from_secs(45), response.chunk())
@@ -138,12 +142,34 @@ pub(crate) fn request_body(
     request: &ModelRequest,
     output_tokens: u64,
 ) -> Result<(&'static str, Value), Error> {
+    build_request_body(chat, request, output_tokens, true)
+}
+
+/// Carry admission counts references before allocating image transport bytes.
+pub(crate) fn carry_budget_body(
+    chat: &ChatConnection,
+    request: &ModelRequest,
+    output_tokens: u64,
+) -> Result<Value, Error> {
+    Ok(build_request_body(chat, request, output_tokens, false)?.1)
+}
+fn build_request_body(
+    chat: &ChatConnection,
+    request: &ModelRequest,
+    output_tokens: u64,
+    materialize: bool,
+) -> Result<(&'static str, Value), Error> {
     let mut messages = request
         .items
         .iter()
+        .take(1)
+        .chain(request.recent_history.iter())
+        .chain(request.items.iter().skip(1))
         .map(|item| serde_json::from_slice::<Value>(&item.payload))
         .collect::<Result<Vec<_>, _>>()?;
-    crate::images::materialize(&request.image_root, &mut messages)?;
+    if materialize {
+        crate::images::materialize(&request.image_root, &mut messages)?;
+    }
     let (route, mut body) = match chat.api.as_str() {
         "chat_completions" => (
             "chat/completions",
@@ -161,7 +187,8 @@ pub(crate) fn request_body(
             || item["role"] == "tool"
             || item["type"] == "function_call_output"
     });
-    if request.memory_tools
+    if request.history_tools
+        || request.memory_tools
         || request.delegation_tools
         || request.image_generation_tools
         || replay_tools
@@ -181,12 +208,13 @@ pub(crate) fn request_body(
             tools.push(crate::codex::tool::declaration(&request.protocol));
         }
         if request.image_generation_tools
-            || messages.iter().any(|v| {
-                v["name"] == "generate_image"
-                    || v["tool_calls"].as_array().is_some_and(|c| {
-                        c.iter().any(|v| v["function"]["name"] == "generate_image")
-                    })
-            })
+            || (request.response_schema.is_some()
+                && messages.iter().any(|v| {
+                    v["name"] == "generate_image"
+                        || v["tool_calls"].as_array().is_some_and(|c| {
+                            c.iter().any(|v| v["function"]["name"] == "generate_image")
+                        })
+                }))
         {
             let mut declaration = crate::image_generation::tool::declaration(&request.protocol);
             if request.image_generation_tools {
@@ -200,9 +228,25 @@ pub(crate) fn request_body(
             }
             tools.push(declaration);
         }
+        if request.history_tools
+            || (request.response_schema.is_some()
+                && messages.iter().any(|v| {
+                    v["name"] == "search_history"
+                        || v["name"] == "read_history"
+                        || v["tool_calls"].as_array().is_some_and(|calls| {
+                            calls.iter().any(|c| {
+                                c["function"]["name"] == "search_history"
+                                    || c["function"]["name"] == "read_history"
+                            })
+                        })
+                }))
+        {
+            tools.extend(crate::retrieval::declarations(&request.protocol));
+        }
         body["tools"] = json!(tools);
         body["parallel_tool_calls"] = json!(false);
-        body["tool_choice"] = json!(if request.memory_tools
+        body["tool_choice"] = json!(if request.history_tools
+            || request.memory_tools
             || request.delegation_tools
             || request.image_generation_tools
         {
@@ -215,7 +259,8 @@ pub(crate) fn request_body(
             "none"
         });
     }
-    if !request.memory_tools
+    if !request.history_tools
+        && !request.memory_tools
         && !request.delegation_tools
         && !request.image_generation_tools
         && let Some(schema) = &request.response_schema
@@ -229,7 +274,9 @@ pub(crate) fn request_body(
         }
     }
     crate::request_parameters::apply(&chat.request, &mut body);
-    crate::images::check_transport(&body)?;
+    if materialize {
+        crate::images::check_transport(&body)?;
+    }
     Ok((route, body))
 }
 

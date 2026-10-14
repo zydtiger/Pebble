@@ -7,6 +7,7 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 #[derive(Clone)]
 pub(crate) struct Job {
+    pub automatic: bool,
     pub id: String,
     pub source: Option<String>,
     pub cutoff: i64,
@@ -27,11 +28,27 @@ struct SavedBoundary {
 }
 impl Database {
     pub(crate) fn begin_maintenance(&self, persona: &Persona) -> Result<Job, Error> {
+        self.begin_context_maintenance(persona, false)
+    }
+    pub(crate) fn begin_context_maintenance(
+        &self,
+        persona: &Persona,
+        automatic: bool,
+    ) -> Result<Job, Error> {
         self.ensure_memory_resolved(&persona.id)?;
-        self.ensure_idle(Some(&persona.id))?;
-        self.ensure_decisions_idle(Some(&persona.id))?;
+        if !automatic {
+            self.ensure_idle(Some(&persona.id))?;
+            self.ensure_decisions_idle(Some(&persona.id))?;
+        }
         let mut db = self.connection.lock().expect("database lock");
         let tx = db.transaction()?;
+        if tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status='streaming')",
+            [&persona.id],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Err(Error::Busy);
+        }
         let binding = crate::connection::identity(persona.chat.as_ref());
         let cutoff: i64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence),0) FROM persona_events WHERE persona_id=?1",
@@ -57,7 +74,11 @@ impl Database {
         let state = super::state::current(&tx, &persona.id)?;
         let memory =
             super::memory::read(&std::path::Path::new(&persona.directory).join("MEMORY.md"))?;
-        let recovery = tx.query_row("SELECT j.id,j.source_session,j.event_cutoff,j.state_before,o.content,j.request,j.binding FROM context_maintenance j JOIN memory_operations o ON o.owner_id=j.id WHERE j.persona_id=?1 AND j.status IN ('failed','cancelled','interrupted') AND o.status='committed' ORDER BY j.rowid DESC LIMIT 1",[&persona.id],|r|Ok(SavedBoundary { id:r.get(0)?,source:r.get(1)?,cutoff:r.get(2)?,state:r.get(3)?,memory:r.get(4)?,request:r.get(5)?,binding:r.get(6)? })).optional()?;
+        let recovery = if automatic {
+            None
+        } else {
+            tx.query_row("SELECT j.id,j.source_session,j.event_cutoff,j.state_before,o.content,j.request,j.binding FROM context_maintenance j JOIN memory_operations o ON o.owner_id=j.id WHERE j.persona_id=?1 AND j.status IN ('failed','cancelled','interrupted') AND o.status='committed' ORDER BY j.rowid DESC LIMIT 1",[&persona.id],|r|Ok(SavedBoundary { id:r.get(0)?,source:r.get(1)?,cutoff:r.get(2)?,state:r.get(3)?,memory:r.get(4)?,request:r.get(5)?,binding:r.get(6)? })).optional()?
+        };
         let id = new_id();
         let (session, start, protocol, model) = source.clone().map_or_else(
             || {
@@ -122,6 +143,8 @@ impl Database {
             let old_state: Value = serde_json::from_str(&old_state)?;
             let mut request: ModelRequest = serde_json::from_str(&frozen)?;
             request.image_root = self.root.clone();
+            request.recent_history =
+                super::recent::hydrate(&tx, &request.session_id, &request.protocol)?;
             let same_native = old_source == source.as_ref().map(|s| s.0.clone())
                 && (old_source.is_none()
                     || (request.items.len() == items.len() + 1
@@ -136,8 +159,14 @@ impl Database {
                     "UPDATE context_maintenance SET status='running',detail='' WHERE id=?1",
                     [&old_id],
                 )?;
+                let automatic: bool = tx.query_row(
+                    "SELECT automatic FROM context_maintenance WHERE id=?1",
+                    [&old_id],
+                    |r| r.get(0),
+                )?;
                 tx.commit()?;
                 return Ok(Job {
+                    automatic,
                     id: old_id,
                     source: old_source,
                     cutoff: old_cutoff,
@@ -153,8 +182,8 @@ impl Database {
             tx.execute("UPDATE context_maintenance SET status='superseded',detail=detail || ' Saved memory retained; a newer explicit review superseded this unfinished boundary.' WHERE id=?1",[old_id])?;
         }
         let mut events = Vec::new();
-        {
-            let mut q=tx.prepare("SELECT e.id,e.sequence,e.conversation_id,m.sender_kind,m.sender_id,m.content,COALESCE(p.display_name,'You'),m.id FROM persona_events e JOIN messages m ON m.id=e.message_id LEFT JOIN personas p ON p.id=m.sender_id WHERE e.persona_id=?1 AND e.sequence>?2 AND e.sequence<=?3 AND e.kind='received' AND NOT EXISTS(SELECT 1 FROM model_item_events x JOIN model_items i ON i.id=x.item_id WHERE x.event_id=e.id AND i.session_id=?4) AND NOT EXISTS(SELECT 1 FROM model_calls c WHERE c.trigger_message_id=e.message_id AND c.persona_id=e.persona_id AND c.session_id IS NULL AND c.status IN ('cancelled','interrupted','failed') AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct') ORDER BY e.sequence")?;
+        if !automatic {
+            let mut q=tx.prepare("SELECT e.id,e.sequence,e.conversation_id,m.sender_kind,m.sender_id,m.content,COALESCE(p.display_name,'You'),m.id FROM persona_events e JOIN messages m ON m.id=e.message_id LEFT JOIN personas p ON p.id=m.sender_id WHERE e.persona_id=?1 AND e.sequence>?2 AND e.sequence<=?3 AND e.kind='received' AND NOT EXISTS(SELECT 1 FROM summarized_events z WHERE z.session_id=?4 AND z.event_id=e.id) AND NOT EXISTS(SELECT 1 FROM model_item_events x JOIN model_items i ON i.id=x.item_id WHERE x.event_id=e.id AND i.session_id=?4) AND NOT EXISTS(SELECT 1 FROM model_calls c WHERE c.trigger_message_id=e.message_id AND c.persona_id=e.persona_id AND c.session_id IS NULL AND c.status IN ('cancelled','interrupted','failed') AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct') ORDER BY e.sequence")?;
             for row in q.query_map(params![persona.id,start,cutoff,session],|r|Ok(json!({"message_id":r.get::<_,String>(7)?,"event_id":r.get::<_,String>(0)?,"sequence":r.get::<_,i64>(1)?,"conversation_id":r.get::<_,String>(2)?,"speaker":{"kind":r.get::<_,String>(3)?,"id":r.get::<_,String>(4)?,"name":r.get::<_,String>(6)?},"text":r.get::<_,String>(5)?})))? {let mut event=row?;event["image_attachments"]=json!(super::images::references(&tx,event["message_id"].as_str().unwrap())?);events.push(event);}
         }
         has_knowledge |= !events.is_empty();
@@ -185,17 +214,22 @@ impl Database {
             protocol,
             model,
             items,
+            recent_history: super::recent::hydrate(&tx, &session, &binding.0)?,
             response_schema: None,
             state_before: Some(state.clone()),
+            history_tools: false,
+            history_cutoff: 0,
             memory_tools: true,
             memory_capable: true,
             delegation_tools: false,
             image_generation_tools: false,
             image_generation_backends: Vec::new(),
         };
-        tx.execute("INSERT INTO context_maintenance(id,persona_id,source_session,event_cutoff,state_before,status,request,binding) VALUES(?1,?2,?3,?4,?5,'running',?6,?7)",params![id,persona.id,source.as_ref().map(|s|&s.0),cutoff,state.to_string(),serde_json::to_string(&request)?,serde_json::to_string(&binding)?])?;
+        has_knowledge |= request.recent_history.is_some();
+        tx.execute("INSERT INTO context_maintenance(id,persona_id,source_session,event_cutoff,state_before,status,request,binding,automatic) VALUES(?1,?2,?3,?4,?5,'running',?6,?7,?8)",params![id,persona.id,source.as_ref().map(|s|&s.0),cutoff,state.to_string(),serde_json::to_string(&request)?,serde_json::to_string(&binding)?,automatic])?;
         tx.commit()?;
         Ok(Job {
+            automatic,
             id,
             source: source.map(|s| s.0),
             cutoff,
@@ -249,7 +283,27 @@ impl Database {
                     .into(),
             ));
         }
-        let session = super::contexts::create_session(&tx, persona, job.cutoff, "memory")?;
+        // Automatic review includes native knowledge only. Keep every unseen receipt,
+        // including holes before the last sent event, eligible in the successor.
+        let start = if job.automatic {
+            tx.query_row(
+                "SELECT event_start_sequence FROM model_sessions WHERE id=?1",
+                [&job.source],
+                |r| r.get(0),
+            )?
+        } else {
+            job.cutoff
+        };
+        let session = super::contexts::create_session(
+            &tx,
+            persona,
+            start,
+            if job.automatic { "automatic" } else { "memory" },
+        )?;
+        if job.automatic {
+            super::recent::freeze(&tx, &self.root, persona, job, &session)?;
+            tx.execute("INSERT INTO summarized_events(session_id,event_id) SELECT ?1,event_id FROM summarized_events WHERE session_id=?2 UNION SELECT ?1,x.event_id FROM model_item_events x JOIN model_items i ON i.id=x.item_id WHERE i.session_id=?2",params![session,job.source])?;
+        }
         let marker = new_id();
         tx.execute(
             "INSERT INTO context_markers(id,persona_id,session_id) VALUES(?1,?2,?3)",

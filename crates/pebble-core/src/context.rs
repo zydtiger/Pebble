@@ -19,6 +19,15 @@ impl ContextBudget {
     pub fn maintenance_headroom(&self) -> u64 {
         98_304.min(self.context_len / 3)
     }
+    pub(crate) fn chat_ceiling(&self) -> u64 {
+        self.context_len
+            .saturating_sub(self.max_output_tokens)
+            .saturating_sub(self.maintenance_headroom())
+    }
+    pub(crate) fn rollover_due(&self, estimate: u64, busy: bool) -> bool {
+        estimate >= self.chat_ceiling() * 9 / 10
+            || (!busy && estimate >= self.chat_ceiling() * 8 / 10)
+    }
     pub(crate) fn check_chat_start(&self, body: &Value) -> Result<(), Error> {
         let estimate = crate::images::estimate(body)?;
         let ceiling = self
@@ -27,7 +36,7 @@ impl ContextBudget {
             .saturating_sub(self.maintenance_headroom());
         if estimate > ceiling {
             return Err(Error::ContextLimit(format!(
-                "Chat context is full: conservative input estimate {estimate} UTF-8 bytes exceeds the ordinary-chat ceiling {ceiling}, which reserves {} bytes for explicit memory maintenance within configured context_len {}. Start fresh context to consolidate memory, or increase this connection's limits. No automatic rollover occurs.",
+                "Chat context is full: conservative input estimate {estimate} UTF-8 bytes exceeds the ordinary-chat ceiling {ceiling}, which reserves {} bytes for explicit memory maintenance within configured context_len {}. Start fresh context to consolidate memory, or increase this connection's limits. Automatic memory maintenance may help accumulated history; oversized inputs still need smaller content or larger limits.",
                 self.maintenance_headroom(),
                 self.context_len
             )));

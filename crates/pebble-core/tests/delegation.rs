@@ -84,7 +84,26 @@ fn both_protocols_delegate_promptly_preserve_native_replay_and_report_stored_evi
                     .1
             })
             .collect::<Vec<_>>();
-        assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), 2);
+        let names = bodies[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| {
+                tool["name"]
+                    .as_str()
+                    .or(tool["function"]["name"].as_str())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "update_memory",
+                "delegate_task",
+                "search_history",
+                "read_history"
+            ]
+        );
         let continuation = bodies[1].to_string();
         assert!(continuation.contains(&task.id));
         assert!(continuation.contains("delegate_task"));
@@ -467,7 +486,7 @@ fn schema_twelve_upgrade_preserves_native_prefix_and_requires_explicit_capabilit
             |r| r.get(0),
         )
         .unwrap();
-    db.execute_batch("DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs;DROP TABLE delegation_submissions;DROP TABLE delegated_tasks;DROP TABLE delegation_assignments;ALTER TABLE model_sessions DROP COLUMN delegation_tools;ALTER TABLE messages DROP COLUMN separate_delegations;PRAGMA user_version=12;").unwrap();
+    db.execute_batch("DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs;DROP TABLE delegation_submissions;DROP TABLE delegated_tasks;DROP TABLE delegation_assignments;ALTER TABLE model_sessions DROP COLUMN delegation_tools;ALTER TABLE messages DROP COLUMN separate_delegations;PRAGMA user_version=12;").unwrap();
     drop(db);
     let core = Core::open(root.path()).unwrap();
     let persona = core.workspace().unwrap().personas.remove(0);

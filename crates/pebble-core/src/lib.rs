@@ -27,6 +27,7 @@ mod participation;
 mod personas;
 mod request_parameters;
 mod response_settings;
+mod retrieval;
 mod rooms;
 mod settings;
 mod storage;

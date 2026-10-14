@@ -29,6 +29,7 @@ fn restart_keeps_identity_and_state_table() {
     assert_eq!(
         tables,
         [
+            "automatic_rollovers",
             "context_maintenance",
             "context_marker_rooms",
             "context_markers",
@@ -54,7 +55,9 @@ fn restart_keeps_identity_and_state_table() {
             "participation_decisions",
             "persona_events",
             "persona_states",
-            "personas"
+            "personas",
+            "session_recent_messages",
+            "summarized_events"
         ]
     );
 }

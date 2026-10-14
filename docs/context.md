@@ -77,7 +77,7 @@ New live memory-capable sessions reserve `min(98304, context_len / 3)` bytes
 (integer division) below the ordinary chat input ceiling. An initial chat request
 must satisfy `estimated_input <= context_len - max_output_tokens - reserve`.
 For 262144/4096, reserve is 87381 and the initial ceiling is 170667 bytes.
-Tool continuation and final repair use the full `context_len - max_output_tokens`
+Bounded history-tool continuation and final repair use the full `context_len - max_output_tokens`
 ceiling. Existing frozen contexts retain their earlier accounting until an
 explicit supported transition. Classifier and demo accounting is unchanged.
 
@@ -114,3 +114,64 @@ Provider changes and schema/state resets retain their distinct existing
 boundaries. Maintenance refuses a changed provider binding before sending any
 old native history; a normal chat first establishes that connection's context.
 See [memory semantics and durability](memory.md).
+
+## Automatic rollover
+
+Supported live memory-capable structured contexts enable automatic review without
+additional settings. Let `C = context_len - max_output_tokens - min(98304,
+floor(context_len/3))`. After a successful ordinary, image-result, or delegated-result
+reply publishes, Rust estimates the complete outgoing native context. At
+`floor(0.8*C)`, it reviews memory when no same-persona queued call, decision or
+reply slot remains. At `floor(0.9*C)`, it reviews before the next unstarted call
+even with a backlog. A known next request projected at or above the priority
+threshold also triggers review. Between thresholds queued work can proceed if
+its existing hard request guard permits, then the publication is reevaluated.
+
+The current queue owner holds its reservation through review. New input remains
+accepted and visible, awaiting only that persona; other personas and background
+tasks keep running. Review never interrupts a native tool sequence. A separate
+cancellation control prevents disposal of the completed reply handle from stopping
+maintenance; closing the core cancels it through the queue.
+
+Automatic review includes only existing native knowledge, not all receipts up to
+the latest assistant event. The successor inherits exact summarized event IDs and
+the old start boundary, preserving holes, room identity and queued report routing.
+A failed or interrupted attempt is durably suppressed for the unchanged native
+source. A fixed prefix already at the soft threshold cannot benefit from rollover
+and is left to the existing budget failure. Oversized new input still fails before
+HTTP. No recursive rollover or automatic retry of a failed model call occurs.
+Manual Start fresh context can recover a committed partial review as described in
+[memory](memory.md); transcripts, state and original native items remain saved.
+
+### Recent messages after automatic review
+
+Automatic publication also freezes an ordered list of up to ten complete visible
+user/character messages already represented in the outgoing persona context.
+The list spans private and group rooms in persona event order. Unseen or queued
+receipts are excluded even when their sequence precedes a published reply.
+Successive rollovers consider inherited covered messages and newly consumed
+messages together, without reinjecting those messages as new events.
+
+`session_recent_messages` stores message IDs, positions, and frozen speaker/room
+display metadata. It stores neither message bodies nor native model items.
+Requests read the original immutable message text and attachment references and
+place a separately attributed `recent_history` envelope after the frozen system
+prefix. No reasoning, state snapshot or native tool exchange is carried; old tool
+effects are not replayed. Original speaker/message/room IDs and UTC timestamps
+remain attached. Names and list membership never drift with later renames or input.
+
+Ten is an upper bound. Admission drops complete oldest messages until the fresh
+prefix plus carry fits a conservative target of half the ordinary ceiling `C`,
+including tool declarations, image cost and transport bounds. It never truncates a
+message to claim it was kept whole. If even the newest complete message cannot
+fit, carry is empty. A fixed prefix already above that target is not shrunk;
+no messages are added and the existing fixed-prefix/hard-budget guards remain.
+This leaves room below the automatic soft threshold for upcoming work.
+
+Carry is reconstructed from the request's saved session, including archived
+maintenance recovery and retries after restart; runtime assembled text is not
+serialized into an extra native archive. Full outgoing knowledge, including its
+previous carry, still goes through the existing 8192-byte MEMORY review.
+Explicit Start fresh context continues to publish a clean prefix without carry;
+recovering a previously committed automatic review retains that review's original
+automatic boundary semantics.
