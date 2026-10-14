@@ -15,13 +15,13 @@ func exerciseImageGenerationBridge(_ root: URL) async throws {
     let persona = model.selected?.id ?? ""
     let queued = ImageGenerationRecord(id: "synthetic-image", personaId: persona, conversationId: room, backend: "studio", status: "queued", activity: "Waiting in Studio's queue…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)
     model.imageGenerations = [queued]
-    try require(model.hasPendingImages && model.monitorTasks.count == 1, "Queued image is hidden or Stop is unreachable after acknowledgement")
+    try require(model.monitorTasks.count == 1, "Queued image is hidden after acknowledgement")
     var terminal = queued
     terminal.status = "completed"; terminal.publicationStatus = "queued"
     terminal.assetId = "immutable-image"; terminal.actualWidth = 1254; terminal.actualHeight = 1254
     model.imageGenerations = [terminal]
-    try require(model.monitorTasks.isEmpty && model.hasPendingImages, "Terminal generation monitor or queued publication Stop is incorrect")
+    try require(model.monitorTasks.isEmpty, "Terminal generation monitor or queued publication status is incorrect")
     terminal.publicationStatus = "completed"; model.imageGenerations = [terminal]
-    try require(!model.hasPendingImages && model.monitorTasks.isEmpty, "Completed image work remains active")
+    try require(model.monitorTasks.isEmpty, "Completed image work remains active")
     model.closeChat()
 }

@@ -15,6 +15,7 @@ final class RoomRun {
     var acceptingPersonaIDs: Set<String> = []
     var task: Task<Void, Never>?
     var sink: AsyncStream<ChatUpdate>.Continuation?
+    var superseded = false
     var cancelRequested = false
     func cancel() { cancelRequested = true; group?.cancel(); handles.forEach { $0.cancel() } }
 }
@@ -37,6 +38,7 @@ final class RoomState {
     var error: String?
     var loaded = false
     var runs: [RoomRun] = []
+    var latestReceiptSequence: Int64 = 0
 
     func applyParticipation(_ records: [ParticipationRecord], conversation: String) {
         for record in records where record.conversationId == conversation {

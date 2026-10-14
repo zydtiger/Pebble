@@ -83,6 +83,7 @@ pub(crate) struct RoomInput<'a> {
     pub mentions: &'a [String],
     pub images: &'a [String],
     pub separate_tasks: bool,
+    pub steer: bool,
 }
 
 pub struct ChatSubmission {
@@ -313,14 +314,11 @@ impl Chats {
     ) -> Result<ChatSubmission, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
-        let (message, turns, decisions) = db.enqueue_room_assigned_images(
-            input.room,
-            input.text,
-            input.mentions,
-            &workspace.personas,
-            input.images,
-            input.separate_tasks,
-        )?;
+        let (message, turns, decisions) = db.enqueue_input(&workspace.personas, input)?;
+        let superseded = db.steered_calls(&message.id)?;
+        for queue in queues.values() {
+            queue.cancel_calls(&superseded);
+        }
         let mut tasks = Vec::new();
         for turn in turns {
             let persona = workspace
@@ -352,6 +350,7 @@ impl Chats {
             }
         }
         drop(queues);
+        self.wake_groups();
         let participation = decisions.iter().map(|w| w.decision.clone()).collect();
         let group = crate::participation::start(
             self.clone(),

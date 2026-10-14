@@ -66,8 +66,8 @@ and receives focused review before the next stage.
 | **v0.1.2 — State and schema controls** | Inspect current state, edit schema/initial values, and deliberately reset state. Schema changes require an explicit context boundary and compatible-state/reset decision; preserve old contracts. Initially affinity names the user as subject. |
 | **v0.1.3 — Groups with manual responses** | Create/name groups of existing characters, switch rooms, and `@` stable member IDs to request replies. Membership intervals and durable public-message fan-out preserve private → group → private continuity; silent members observe. One session/state/queue belongs to each persona across rooms. Implemented with native creation/rename, typed/picked mentions, publication intervals, persona-wide retry, and populated private-data migration. |
 | **v0.1.4 — Selective participation** | App-default/per-persona classifier connections decide separately on user messages. Supply persona-scoped room/state/memory context; `@` bypasses inference. Classifier reads change neither chat history coverage nor state. Failures remain visible and manual mentions usable. Implemented with independent native settings, strict two-protocol validation, durable single-admission decisions and dynamic speaker observers; bounded bot triggering follows in v0.1.5. |
-| **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. Implemented with durable ready-only slots, deterministic required/optional order, queued reassessment, N+2 budget, two-pass fallback, all-room Stop and selective predecessor coverage. |
-| **v0.1.6 — Reliable daily group use** | Add/remove/rejoin members; room-scoped Stop/Cancel/Retry, per-speaker pending/errors, drafts, and restart recovery. No duplicate acceptance/fan-out/state change or silent chain resume. Retry eligibility spans the persona's whole cross-room history. Implemented with native member management, future publication intervals, old-interval cancellation/retry exclusion, edit-revision draft preservation and both-protocol crash recovery. |
+| **v0.1.5 — Group conversation flow** | Order room replies alongside global persona queues. Each generation sees accepted predecessors/current state; reassess optional slots, protect mentions, bound automatic reply chains, and allow one fallback for an explicit whole-group question when nobody volunteers. Fan-out contains only visible `reply`. Implemented with durable ready-only slots, deterministic required/optional order, queued reassessment, N+2 budget, two-pass fallback, core room cancellation and selective predecessor coverage. |
+| **v0.1.6 — Reliable daily group use** | Add/remove/rejoin members; room-scoped Cancel/Retry, per-speaker pending/errors, drafts, and restart recovery. No duplicate acceptance/fan-out/state change or silent chain resume. Retry eligibility spans the persona's whole cross-room history. Implemented with native member management, future publication intervals, old-interval cancellation/retry exclusion, edit-revision draft preservation and both-protocol crash recovery. |
 | **v0.2.0 — Group-chat milestone** | Consolidate private + group chat, persistent personas, selective participation, state lifetime, membership visibility, scheduling limits, and supported provider behavior. Implemented without a new subsystem, with the five completion scenarios below, frozen-label live integration accounting and current native renders. |
 
 ### Group boundaries and completion scenarios
@@ -197,7 +197,7 @@ integration gates remain necessary before treating these stage labels as a relea
 G1–G6 provide strict native arguments and independent backend settings, durable
 execution/publication, direct Studio HTTP, typed local Codex ChatGPT images,
 actual-pixel persona delivery and original-room atomic publication. Generation
-runs in the background; Stop cancels unpublished room work. Saved assets survive
+runs in the background; lifecycle cancellation invalidates unpublished work. Saved assets survive
 reply failure, and saved remote identities only permit read-only reconciliation.
 Studio sizes are strict; ChatGPT preserves actual output and explains size
 mismatches. Targeted fixtures cover both protocols, queue release, failure/retry,
@@ -207,3 +207,14 @@ points. Release placement and signed distribution remain separate decisions.
 
 Automatic threshold compaction, richer memory retrieval, attachment deletion,
 sync and broader distribution remain outside these increments.
+
+## Message steering
+
+Native sends interrupt and replace unfinished ordinary replies in the selected
+room, incorporating all intervening user messages. Group steering carries
+unfinished requested speakers forward. User messages appear immediately above the
+single current reply per speaker; there is no Stop button or queued-message label.
+Schema 15 preserves supersession across restart without deleting frozen model
+history, tool effects or user messages. Other rooms and independent background
+result delivery remain isolated. `tests/steering.rs`, native bridge checks and
+`PEBBLE_RENDER_STEERING_ONLY=1 just preview` cover this behavior.

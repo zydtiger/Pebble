@@ -69,7 +69,7 @@ struct StateSheet: View {
                 Text("Fresh context · keep compatible accepted state").tag("keep")
                 Text("Fresh context · reset state to these initial defaults").tag("reset")
             }
-            Text(choice == "defaults" ? "Schema edits require one of the fresh-context choices. Finish or stop this character’s pending replies before applying." : "Earlier messages and native history stay saved, but are excluded from the new context. The current SOUL and MEMORY are loaded again.")
+            Text(choice == "defaults" ? "Schema edits require one of the fresh-context choices. Wait for this character’s pending replies to finish before applying." : "Earlier messages and native history stay saved, but are excluded from the new context. The current SOUL and MEMORY are loaded again.")
                 .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
             HStack {
                 Button("Reload saved") { Task { await load() } }.disabled(saving)

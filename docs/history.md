@@ -28,6 +28,7 @@ only ready slots into the persona queues. Native persona memory and explicit con
 | `context_marker_rooms` | Durable private/current-group projections with display anchor; independent from consumed-event cutoff |
 | `image_assets` | Imported immutable UUID, source/model metadata and versioned frozen rendition reference; files remain under the runtime root |
 | `message_images` | Message/asset association with explicit unique position and per-message unique asset |
+| `steered_calls` | Schema 15: obsolete call → newer user receipt; suppresses obsolete bubbles without deleting frozen history or losing unactivated user input |
 | `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional originating slot and retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;

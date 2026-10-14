@@ -35,10 +35,35 @@ impl Database {
         images: &[String],
         separate_tasks: bool,
     ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
+        self.enqueue_input(
+            personas,
+            crate::chat::RoomInput {
+                room: room_id,
+                text: prompt,
+                mentions: picked,
+                images,
+                separate_tasks,
+                steer: false,
+            },
+        )
+    }
+    pub(crate) fn enqueue_input(
+        &self,
+        personas: &[Persona],
+        input: crate::chat::RoomInput<'_>,
+    ) -> Result<(Message, Vec<Turn>, Vec<crate::participation::DecisionWork>), Error> {
+        let crate::chat::RoomInput {
+            room: room_id,
+            text: prompt,
+            mentions: picked,
+            images,
+            separate_tasks,
+            steer,
+        } = input;
         let mut connection = self.connection.lock().expect("database lock");
         let tx = connection.transaction()?;
         let room = super::rooms::room(&tx, room_id)?;
-        let (text, selected) = if room.kind == "direct" {
+        let (text, mut selected) = if room.kind == "direct" {
             if !picked.is_empty() {
                 return Err(crate::rooms::invalid("Use mentions in a group chat."));
             }
@@ -61,6 +86,9 @@ impl Database {
             MessageStatus::Complete,
         )?;
         super::images::attach(&tx, &user, images)?;
+        if steer {
+            super::steering::supersede(&tx, room_id, &user, &mut selected)?;
+        }
         super::rooms::publish(&tx, room_id, &user, None)?;
         if let Some(persona) = room.persona_id.as_ref() {
             super::turns::insert_event_for(&tx, persona, room_id, &user, "received")?;

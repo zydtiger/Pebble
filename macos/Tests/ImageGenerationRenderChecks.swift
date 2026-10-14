@@ -17,7 +17,7 @@ func checkImageGenerationRendering(window: NSWindow, model: ChatModel) async thr
     model.imageGenerations = [ImageGenerationRecord(id: "render-image", personaId: persona.id, conversationId: persona.conversationId,
         backend: "studio", status: "loading", activity: "Loading the Studio model…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)]
     try await Task.sleep(for: .milliseconds(200))
-    guard model.hasPendingImages, let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton else { throw RenderError.failed("Loading image is missing its monitor or Stop") }
+    guard let button = RenderChecks.findAccessible(window.contentView!, identifier: "task-monitor-button") as? NSButton else { throw RenderError.failed("Loading image is missing its monitor") }
     button.performClick(nil)
     try await Task.sleep(for: .milliseconds(200))
     try RenderChecks.capture(window, name: "image-generation-loading-monitor")

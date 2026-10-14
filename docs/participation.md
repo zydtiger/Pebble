@@ -107,9 +107,10 @@ diagnostic, elapsed time and admitted call link, not copied classifier inputs.
 Schema 10 adds rounds/slots and decision generations; each admission remains unique.
 Optional decisions can be re-evaluated when accepted predecessors or current
 persona knowledge/state change, including while an admitted call waits behind a
-private predecessor. Generation checks reject late classifier callbacks. New
-user posts cancel old automatic decisions/calls while protecting outstanding
-required mentions. Stop checking, room Stop, listener disconnect and closing
+private predecessor. Generation checks reject late classifier callbacks. Native
+user posts replace old rounds and carry unfinished requested speakers into the
+new round in slot order. Lower-level enqueues cancel old automatic decisions/calls
+while protecting outstanding required mentions. Stop checking, listener disconnect and closing
 cancel work while preserving public observations. Restart interrupts unfinished
 work and never resends. Native observers remain open across waiting slots,
 followups, fallback phases and every dynamically admitted speaker. Silent and

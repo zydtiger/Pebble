@@ -54,7 +54,8 @@ fn restart_keeps_identity_and_state_table() {
             "participation_decisions",
             "persona_events",
             "persona_states",
-            "personas"
+            "personas",
+            "steered_calls"
         ]
     );
 }
