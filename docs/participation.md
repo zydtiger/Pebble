@@ -53,7 +53,7 @@ remain explicit across protocol switches, with incompatible values rejected.
 
 Rust independently rejects invalid JSON, absent/nonboolean/duplicate/extra fields,
 refusal, empty text, unsupported tools/content, and incomplete/truncated outcomes.
-A classifier failure is visible, never silently converted to false or retried
+A classifier failure is recorded explicitly, never silently converted to false or retried
 through the chat/larger model. HTTP has a 10-second connect and 30-second total
 deadline, disabled redirects and a 1 MiB response limit. Diagnostics omit raw
 provider response bodies, credentials and model reasoning.
@@ -107,10 +107,13 @@ diagnostic, elapsed time and admitted call link, not copied classifier inputs.
 Schema 10 adds rounds/slots and decision generations; each admission remains unique.
 Optional decisions can be re-evaluated when accepted predecessors or current
 persona knowledge/state change, including while an admitted call waits behind a
-private predecessor. Generation checks reject late classifier callbacks. New
-user posts cancel old automatic decisions/calls while protecting outstanding
-required mentions. Stop checking, room Stop, listener disconnect and closing
-cancel work while preserving public observations. Restart interrupts unfinished
+private predecessor. Generation checks reject late classifier callbacks. Native
+user posts replace old rounds and carry unfinished requested speakers into the
+new round in slot order. Lower-level enqueues cancel old automatic decisions/calls
+while protecting outstanding required mentions. Explicit lower-level cancellation,
+listener disconnect and closing cancel work while preserving public observations.
+The native chat does not display participation statuses or cancellation controls;
+users can request a reply directly with a mention. Restart interrupts unfinished
 work and never resends. Native observers remain open across waiting slots,
 followups, fallback phases and every dynamically admitted speaker. Silent and
 failed checks stay outside replayable chat history.
@@ -136,7 +139,8 @@ Deterministic Rust checks cover both protocols/dialects, strict parsing,
 privacy/nonconsumption, settings inheritance/credentials/protocol switches,
 mention plus volunteer, cancellation/stale callback/restart, populated migration,
 and actual newer cross-room prefix/state inheritance. Native bridge/render checks
-exercise real Deciding/Listening/error/Stop/manual recovery and dynamic replies.
+exercise participation lifecycle records, cancellation APIs, manual mention
+recovery and dynamic replies. Group UI previews cover the panel-free presentation.
 Synthetic fixtures use local deterministic servers and never contact a live
 model service.
 

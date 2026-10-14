@@ -63,6 +63,7 @@ without rebuilding.
    Codex login; Studio uses your selected service, model and GPU.
 
 Press **Enter** to send; **Shift–Enter** or **Command–Enter** inserts a newline.
-The first send requests notification permission.
+The first send requests notification permission. Sending again during a reply
+immediately steers it: the unfinished reply restarts with all your messages.
 
 [Developer documentation](docs/development.md) · [MIT License](LICENSE)

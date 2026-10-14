@@ -109,7 +109,6 @@ extension ImageGenerationRecord {
     var active: Bool { ["queued", "loading", "running", "cancelling"].contains(status) }
 }
 extension ChatModel {
-    var hasPendingImages: Bool { imageGenerations.contains { $0.conversationId == selectedID && ($0.active || $0.publicationStatus == "queued") } }
     func startImageObservation() async throws {
         guard imageGenerationStream == nil else { return }
         let (stream, sink) = AsyncStream<[ImageGenerationRecord]>.makeStream(bufferingPolicy: .bufferingNewest(1))

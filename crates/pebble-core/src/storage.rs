@@ -20,6 +20,9 @@ mod retry;
 mod rooms;
 pub(crate) mod rounds;
 mod state;
+mod steering;
+#[cfg(test)]
+mod steering_tests;
 mod turns;
 pub(crate) use turns::input_message;
 
@@ -63,7 +66,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 14 {
+        if version > 15 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -130,6 +133,9 @@ impl Database {
         }
         if version < 14 {
             tx.execute_batch(include_str!("storage/image-generation-migration.sql"))?;
+        }
+        if version < 15 {
+            tx.execute_batch("CREATE TABLE steered_calls(call_id TEXT PRIMARY KEY REFERENCES model_calls(id), user_id TEXT NOT NULL REFERENCES messages(id)); PRAGMA user_version=15;")?;
         }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
@@ -234,7 +240,7 @@ impl Database {
                   AND (NOT EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=j.id OR EXISTS(SELECT 1 FROM json_each(task.record,'$.reports') r WHERE json_extract(r.value,'$.call')=j.id)) OR EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=j.id AND json_extract(task.record,'$.report_state')='failed')) AND NOT EXISTS(SELECT 1 FROM image_generations image WHERE EXISTS(SELECT 1 FROM json_each(image.record,'$.reports') r WHERE json_extract(r.value,'$.call')=j.id) AND (json_extract(image.record,'$.invalidated') OR json_extract(image.record,'$.report_call') IS NOT j.id OR json_extract(image.record,'$.publication_status')!='failed')) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
                   AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=j.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
-                WHERE m.conversation_id = ?1 ORDER BY m.sequence"
+                WHERE m.conversation_id = ?1 AND NOT EXISTS(SELECT 1 FROM steered_calls s WHERE s.call_id=j.id) ORDER BY m.sequence"
         )?;
         let mut messages: Vec<Message> = query
             .query_map([conversation_id], |row| {

@@ -93,17 +93,30 @@ actor bridge keeps blocking core calls off the UI thread, and listeners only
 enqueue events. A bounded, disconnected subscription cancels generation.
 
 Each persona has one ordered execution queue; different personas can generate
-concurrently. Accepted user messages and received events are durable before any call; a
-group reply placeholder is created only when its room slot is admitted. A queued call has no session or frozen input yet.
-Activation builds its request after the predecessor publishes accepted output,
-while limiting incoming events to that call's receipt cutoff. Thus an earlier
-call cannot consume later queued inputs, and a followup sees its predecessor's
-native assistant output even when that output event was recorded later.
+concurrently. The native send path uses `send_room_assigned_images` to steer:
+accepting another user message atomically cancels unfinished ordinary replies and
+rounds in that room, saves every user receipt, and starts replacement work with
+the latest cutoff. Pending required group speakers and admitted speakers carry
+forward. Rejected input cannot interrupt the earlier reply. Other rooms, background
+task/image execution and their independent result-delivery calls retain their lifecycles.
+
+Schema 15 records `steered_calls` links from obsolete calls to the newer user
+receipt. Obsolete bubbles are excluded from transcript snapshots, including after
+restart; their frozen requests and committed tool effects remain durable. Even
+unactivated superseded inputs remain eligible for the replacement context. Old
+workers are cancelled after the acceptance transaction and cannot publish late
+results. Swift ignores obsolete stream updates and places unfinished replies
+below all user messages, without a queued-message label or cancellation control.
+
+The lower-level enqueue APIs still serve independent persona scheduling and
+explicit retry. Activation freezes each request after the predecessor settles,
+using its receipt cutoff and actual accepted native history. A group placeholder
+is created only when its room slot is admitted. These internal reservations do
+not create a separate reply for each rapid native send.
 
 Swift keeps a presentation cache, draft, mention selection, and run handles per room. Room switching
 changes the displayed cache without disconnecting other streams. Drafts, output,
-errors, and Stop belong to that room. Queued bubbles expose individual cancel;
-Stop cancels all unfinished rounds, decisions and calls in the selected room. Closing the view
+and errors belong to that room. There is no conversation-wide Stop control. Closing the view
 cancels every retained handle/subscription; dropping the core cancels its queues and participation workers.
 Early cancellation is retained until handles arrive. A group observer adopts dynamically admitted speaker handles and remains open until every participation decision and selected call terminates; one character finishing cannot disconnect another. Startup marks both queued
 and active calls interrupted, with no accepted partial output or hidden resubmit.
@@ -119,6 +132,17 @@ on workspace load/reload and keeps one presentation image per stable persona ID.
 The native view crops it to a circle; missing/unreadable files use the existing
 placeholder. Replacing/removing a picture is reflected by explicit file reload,
 without altering TOML, SQLite, persona state or frozen model context.
+The sidebar combines private and group rooms in one list, ordered by the newest
+durable message creation timestamp. Empty rooms follow rooms with messages; ties
+preserve workspace order. Swift derives this ordering from existing history and
+message updates, including background reports, and rebuilds it on launch.
+Opening a room or changing its settings does not move it to the top.
+Group avatars compose up to seven current members’ circular portraits in a stable,
+compact staggered layout, shared by the sidebar, header and empty conversation.
+Missing portraits keep the character placeholder; empty groups use a group symbol.
+Group chats omit the participation status panel and settings shortcuts; reply
+progress remains beside the corresponding message. Participation decisions and
+room scheduling are unchanged.
 Header avatars and image attachments share an independent AppKit preview window.
 Swift owns its lifetime, fit/zoom/pan presentation and temporary floating-window
 pin state. NSScrollView handles trackpad magnification; opening a preview never
@@ -232,7 +256,7 @@ transcript cards. The first public Codex commentary supplies a bounded descripti
 for each run, with the persona title retained until it arrives. Ordinary latest
 failed-reply Retry can requeue a saved outcome explanation with tools disabled;
 it cannot re-execute Codex. Swift never reconstructs task history, executes work
-or polls the persona. Conversation Stop affects conversation generation.
+or polls the persona.
 Closing Pebble stops its managed children; restart reconciles
 saved threads rather than promising execution after quit. See
 [delegation lifecycle, scope and measured limits](delegation.md).
@@ -253,7 +277,7 @@ ChatGPT stages it as typed localImage input. Recovery never reuploads or
 redispatches edits; legacy operation records default to generation. A bounded
 background worker releases the persona queue, then supplies actual generated
 pixels to an original-room report in that queue. Validated text/state, attachment
-and group events publish atomically. Stop invalidates unpublished room work and
+and group events publish atomically. Lifecycle cancellation invalidates unpublished work and
 requests backend cancellation. Startup reconciles saved remote identities with
 read-only requests, never replacement generation or shared Studio queue resume. All chat,
 classifier and maintenance adapters use the same 768-pixel model rendition.
@@ -367,11 +391,12 @@ admit twice or revive cancelled work.
 Each member gets at most one initial admission and the whole round at most two
 bot followups, excluding the immediately previous speaker. Admission spends the
 budget transactionally; failure/cancel does not refund it and format repair stays
-inside one call. New user posts invalidate old automatic work while protecting
-unfinished required mentions with their original root/destination/cutoff. All-room
-Stop and admission serialize through the persona acceptance gate; final reply,
+inside one call. Native user posts steer unfinished work into the latest room
+round, carrying unfinished requested speakers forward. Low-level enqueues retain
+their original required-slot cutoffs. Room
+cancellation and admission serialize through the persona acceptance gate; final reply,
 state, native output and fanout publication checks the durable slot/round/interval
-inside the same SQLite transaction. An earlier Stop prevents late acceptance.
+inside the same SQLite transaction. Earlier cancellation prevents late acceptance.
 
 Actual accepted cross-room prefix/state remains current. New observations use
 the root cutoff plus explicit accepted same-round earlier public replies; exact

@@ -74,10 +74,9 @@ Retry requires the character's latest failed/stopped/interrupted call across all
 rooms and no queued/active call, pending decision or still-admittable slot for that character. It reuses the original user,
 room, membership and compatible frozen request; another character replying in
 the same room does not supersede it. Fresh context/state/schema/connection edits
-also respect persona-wide busy checks. Group Stop cancels every unfinished round,
-decision and call in the selected room; queued replies can be cancelled individually.
-Shared personas' other-room/private calls continue. New user input cancels old
-automatic work while protecting outstanding required mentions. Restart interrupts
+also respect persona-wide busy checks. Native sends steer unfinished replies into a new round with the latest input.
+Shared personas' other-room/private calls continue. Native steering carries outstanding required speakers forward; lower-level
+enqueues preserve their original required slots. Restart interrupts
 unfinished calls/decisions/slots/rounds, preserving observations and accepted
 output without automatic resubmission. Explicit Retry never restarts a chain.
 

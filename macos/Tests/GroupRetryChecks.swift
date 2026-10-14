@@ -20,13 +20,24 @@ enum GroupRetryChecks {
 
         // Real demo calls keep B's persona queue occupied while A cancels and retries.
         model.select(b)
-        for index in 0..<8 { model.sendMessage("B private predecessor \(index)") }
+        var predecessors: [ChatHandle] = []
+        var predecessorStreams: [AsyncStream<ChatUpdate>] = []
+        defer {
+            predecessors.forEach { $0.cancel() }
+            withExtendedLifetime(predecessorStreams) {}
+        }
+        for index in 0..<8 {
+            // Exercise independent persona reservations; native sends now steer one reply.
+            let (stream, sink) = AsyncStream<ChatUpdate>.makeStream()
+            predecessorStreams.append(stream)
+            predecessors.append(try await model.client.send(persona: b, prompt: "B private predecessor \(index)", observer: StreamObserver(sink)))
+        }
         model.select(group)
         model.mentionedIDs = [a, b]
         model.draft = "Both characters may answer"; model.sendMessage()
         try await wait { model.bubbles.contains { !$0.isUser && $0.senderID == a } }
         let firstA = model.bubbles.first { !$0.isUser && $0.senderID == a }!.id
-        model.cancelReply(firstA)
+        model.selectedRoom?.runs.flatMap(\.handles).first { $0.messages().last?.id == firstA }?.cancel()
         try await wait { model.bubbles.contains { !$0.isUser && $0.senderID == b } }
         let firstB = model.bubbles.first { !$0.isUser && $0.senderID == b }!.id
         try await wait { model.bubbles.first { $0.id == firstA }.map { model.canRetry($0) } == true }
@@ -48,7 +59,7 @@ enum GroupRetryChecks {
         model.draft = "Cancel A again before its private call"; model.sendMessage()
         try await wait { model.bubbles.last?.senderID == a }
         let secondA = model.bubbles.last!.id
-        model.cancelReply(secondA)
+        model.selectedRoom?.runs.flatMap(\.handles).first { $0.messages().last?.id == secondA }?.cancel()
         try await wait { model.bubbles.first { $0.id == secondA }?.canRetry == true }
         model.select(a)
         model.sendMessage("A now has work in another room")

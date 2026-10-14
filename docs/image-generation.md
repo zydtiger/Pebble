@@ -227,11 +227,10 @@ the original interval, so leaving and rejoining never revives an old image.
 Report snapshots remain frozen; a reconciled outcome supersedes an older pending
 report rather than changing its stored model input.
 
-## Stop, quit and recovery
+## Cancellation, quit and recovery
 
-Conversation **Stop** stays available while an image or its queued publication is
-pending. It invalidates every unpublished image initiated in that room and
-requests backend cancellation. Member removal does the same for that owner.
+There is no conversation-wide Stop control. Member removal invalidates unpublished
+images initiated by that owner in the room and requests backend cancellation.
 Late bytes may be retained as evidence but cannot publish. Cancellation
 acknowledgement alone never proves remote work stopped: Studio receives one
 cancel request and a bounded outcome check; Codex receives an interrupt with a
@@ -264,10 +263,10 @@ original-source preservation, successive edits, shared generate/edit deduplicati
 multipart upload and dispatch uncertainty without resubmission, profile
 constraints/default omission, HTTP and typed app-server
 fixtures, lost submission, identity-based recovery, pixels in persona input,
-queue release, acknowledgment/report retries, atomic group fanout, Stop and
+queue release, acknowledgment/report retries, atomic group fanout, lifecycle cancellation and
 original membership invalidation. `just check-rust`, `just check-bridge` and
 `just build` are required integration gates. Native bridge checks cover typed
-settings and queued-image Stop/monitor visibility. Render the focused settings
+settings and queued-image status/monitor visibility. Render the focused settings
 and loading monitor with `PEBBLE_RENDER_IMAGES_ONLY=1 bash scripts/render-preview.sh`.
 
 An ignored `live_image_generation_probe` test uses an isolated temporary data

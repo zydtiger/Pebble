@@ -189,6 +189,7 @@ impl Core {
                 mentions,
                 images: &[],
                 separate_tasks: false,
+                steer: false,
             },
             listener,
         )
@@ -221,6 +222,7 @@ impl Core {
                 mentions,
                 images,
                 separate_tasks: false,
+                steer: false,
             },
             listener,
         )
@@ -247,6 +249,7 @@ impl Core {
                 mentions,
                 images,
                 separate_tasks,
+                steer: true,
             },
             listener,
         )

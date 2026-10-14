@@ -15,13 +15,12 @@ struct ContentView: View {
                 if let conversation = model.selectedConversation {
                     if let persona = model.selected { chatHeader(persona) } else { groupHeader(conversation) }
                     Rectangle().fill(PebbleTheme.line.opacity(0.55)).frame(height: 1)
-                    if conversation.kind == "group" { ParticipationPanel(model: model) }
                     if let error = model.error { errorBanner(error) }
                     ZStack(alignment: .topTrailing) {
                         if model.bubbles.isEmpty && model.markers.isEmpty {
                             GeometryReader { geometry in
                                 ScrollView {
-                                    Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction } }
+                                    Group { if let persona = model.selected { introduction(persona) } else { groupIntroduction(conversation) } }
                                         .frame(maxWidth: .infinity)
                                         .frame(minHeight: geometry.size.height)
                                 }
@@ -81,54 +80,33 @@ struct ContentView: View {
             .padding(.top, 22).padding(.bottom, 18)
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(model.workspace?.personas ?? [], id: \.id) { persona in
-                        Button { model.select(persona.id) } label: {
+                    ForEach(model.sidebarRooms, id: \.id) { conversation in
+                        Button { model.select(conversation.id) } label: {
                             HStack(spacing: 11) {
-                                CharacterAvatar(size: 38, image: model.avatars[persona.id])
+                                if conversation.kind == "group" {
+                                    groupAvatar(conversation, size: 38)
+                                } else {
+                                    CharacterAvatar(size: 38, image: model.avatars[conversation.personaId ?? ""])
+                                }
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(persona.displayName).font(.system(size: 13, weight: .semibold))
-                                    Text(model.pendingCount(persona.id) > 0 ? "\(model.pendingCount(persona.id)) pending" : "Private chat").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
+                                    Text(conversation.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                    Text(model.pendingCount(conversation.id) > 0
+                                         ? "\(model.pendingCount(conversation.id)) pending"
+                                         : conversation.kind == "group" ? "\(conversation.members.count) characters" : "Private chat")
+                                        .font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
                                 }
                                 Spacer(minLength: 0)
-                                if model.taskActivity(persona.conversationId) { Image(systemName: "bolt.horizontal.circle").font(.system(size: 11)).foregroundStyle(PebbleTheme.sage) }
-                                if persona.conversationId == model.selectedID {
-                                    Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5)
-                                }
+                                if model.taskActivity(conversation.id) { Image(systemName: "bolt.horizontal.circle").font(.system(size: 11)).foregroundStyle(PebbleTheme.sage) }
+                                if conversation.id == model.selectedID { Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5) }
                             }
                             .padding(11)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .background(sidebarRowBackground(persona.conversationId),
-                                        in: RoundedRectangle(cornerRadius: 14))
+                            .background(sidebarRowBackground(conversation.id), in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(.plain)
-                        .onHover { hovering in hoveredRoomID = hovering ? persona.conversationId : nil }
-                        .accessibilityIdentifier("persona-\(persona.displayName)")
-                    }
-                    if let groups = model.workspace?.rooms.filter({ $0.kind == "group" }), !groups.isEmpty {
-                        Text("GROUP CHATS").font(.system(size: 10, weight: .semibold)).tracking(1.6)
-                            .foregroundStyle(PebbleTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 24).padding(.bottom, 9)
-                        ForEach(groups, id: \.id) { group in
-                            Button { model.select(group.id) } label: {
-                                HStack(spacing: 11) {
-                                    Image(systemName: "person.2").font(.system(size: 19)).foregroundStyle(PebbleTheme.sage).frame(width: 38, height: 38)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(group.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                                        Text(model.pendingCount(group.id) > 0 ? "\(model.pendingCount(group.id)) pending" : "\(group.members.count) characters").font(.system(size: 10)).foregroundStyle(PebbleTheme.muted)
-                                    }
-                                    Spacer(minLength: 0)
-                                    if model.taskActivity(group.id) { Image(systemName: "bolt.horizontal.circle").font(.system(size: 11)).foregroundStyle(PebbleTheme.sage) }
-                                    if group.id == model.selectedID { Circle().fill(PebbleTheme.sage).frame(width: 5, height: 5) }
-                                }
-                                .padding(11)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                                .background(sidebarRowBackground(group.id), in: RoundedRectangle(cornerRadius: 14))
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hovering in hoveredRoomID = hovering ? group.id : nil }
-                            .accessibilityIdentifier("group-\(group.title)")
-                        }
+                        .onHover { hovering in hoveredRoomID = hovering ? conversation.id : nil }
+                        .accessibilityIdentifier("\(conversation.kind == "group" ? "group" : "persona")-\(conversation.title)")
                     }
                 }
             }.scrollIndicators(.hidden)
@@ -171,7 +149,7 @@ struct ContentView: View {
 
     private func groupHeader(_ group: RoomRecord) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "person.2").font(.system(size: 25)).foregroundStyle(PebbleTheme.sage)
+            groupAvatar(group, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 Text(group.title).font(.system(size: 14, weight: .semibold))
                 Text(group.members.isEmpty ? "No current members" : group.members.map(\.displayName).joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(PebbleTheme.muted).lineLimit(2)
@@ -188,8 +166,12 @@ struct ContentView: View {
                 .buttonStyle(.plain).help("Rename group")
         }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 20)
     }
-    private var groupIntroduction: some View {
-        Image(systemName: "person.2").font(.system(size: 48, weight: .light)).foregroundStyle(PebbleTheme.sage)
+    private func groupAvatar(_ group: RoomRecord, size: CGFloat) -> some View {
+        GroupAvatar(memberIDs: group.members.map(\.personaId), images: model.avatars, size: size)
+    }
+
+    private func groupIntroduction(_ group: RoomRecord) -> some View {
+        groupAvatar(group, size: 128)
             .frame(maxWidth: .infinity, minHeight: 300).padding(30)
     }
 
@@ -289,7 +271,7 @@ struct ContentView: View {
                                     .foregroundStyle(PebbleTheme.muted)
                                 if !bubble.images.isEmpty { ImageAttachments(images: bubble.images) }
                                 if bubble.text.isEmpty && !bubble.images.isEmpty { EmptyView() }
-                                else if bubble.text.isEmpty && bubble.status == .streaming {
+                                else if bubble.text.isEmpty && (bubble.status == .streaming || bubble.status == .queued) {
                                     HStack(spacing: 9) {
                                         ProgressView().controlSize(.small)
                                         Text("Typing…").font(.system(size: 12)).foregroundStyle(PebbleTheme.muted)
@@ -314,7 +296,6 @@ struct ContentView: View {
                                                 .font(.system(size: 10)).buttonStyle(.plain)
                                                 .accessibilityIdentifier("retry-\(bubble.id)")
                                         }
-                                        if bubble.status == .queued { Button("Cancel") { model.cancelReply(bubble.id) }.font(.system(size: 10)).buttonStyle(.plain) }
                                     }
                                 }
                             }
@@ -337,7 +318,7 @@ struct ContentView: View {
     @ViewBuilder
     private func messageText(_ bubble: ChatBubble) -> some View {
         if bubble.status == .queued {
-            Text("Waiting for earlier reply…")
+            Text("Typing…")
         } else if bubble.text.isEmpty {
             Text("No reply text.")
         } else if bubble.isUser {
@@ -407,19 +388,14 @@ struct ContentView: View {
                               onSubmit: { model.sendMessage() }, onImages: model.importImages,
                               onImageError: { model.error = $0 })
                     .frame(height: composerHeight)
-                if model.isReplying || model.hasPendingImages {
-                    Button { model.stopReply() } label: { Image(systemName: "stop.fill").font(.system(size: 12)) }
-                        .buttonStyle(.plain).foregroundStyle(PebbleTheme.sage)
-                        .help("Stop replies, checks and unpublished image generation in this chat").accessibilityLabel("Stop reply")
-                }
                 Button { model.sendMessage() } label: {
                     Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white).frame(width: 33, height: 33)
                         .background(PebbleTheme.sage, in: Circle())
                 }.buttonStyle(.plain)
                     .disabled(model.loading || model.importingImages || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.mentionedIDs.isEmpty && model.draftImages.isEmpty))
-                    .help(model.isReplying ? "Queue message (Enter)" : "Send message (Enter)")
-                    .accessibilityLabel(model.isReplying ? "Queue message" : "Send message")
+                    .help(model.isReplying ? "Update reply (Enter)" : "Send message (Enter)")
+                    .accessibilityLabel(model.isReplying ? "Update reply" : "Send message")
             }
             .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 12)
             .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 17))

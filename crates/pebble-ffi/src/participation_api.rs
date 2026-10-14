@@ -113,9 +113,6 @@ impl From<CredentialUpdate> for pebble_core::CredentialChange {
 }
 #[uniffi::export]
 impl PebbleBackend {
-    pub fn stop_room(&self, room_id: String) -> Result<(), BackendError> {
-        Ok(self.core.stop_room(&room_id)?)
-    }
     pub fn participation(&self, room_id: String) -> Result<Vec<ParticipationRecord>, BackendError> {
         Ok(self
             .core

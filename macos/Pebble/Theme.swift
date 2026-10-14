@@ -46,6 +46,51 @@ struct CharacterAvatar: View {
     }
 }
 
+struct GroupAvatar: View {
+    let memberIDs: [String]
+    let images: [String: NSImage]
+    var size: CGFloat = 38
+
+    // Coordinates are in portrait diameters, with staggered rows spaced by sqrt(3)/2.
+    private var centers: [CGPoint] {
+        switch min(memberIDs.count, 7) {
+        case 0: []
+        case 1: [.zero]
+        case 2: [CGPoint(x: -0.32, y: -0.32), CGPoint(x: 0.32, y: 0.32)]
+        case 3: [CGPoint(x: 0, y: -0.433), CGPoint(x: -0.5, y: 0.433), CGPoint(x: 0.5, y: 0.433)]
+        case 4: [CGPoint(x: -0.75, y: -0.433), CGPoint(x: 0.25, y: -0.433),
+                 CGPoint(x: -0.25, y: 0.433), CGPoint(x: 0.75, y: 0.433)]
+        case 5: [CGPoint(x: -0.5, y: -0.433), CGPoint(x: 0.5, y: -0.433),
+                 CGPoint(x: -1, y: 0.433), CGPoint(x: 0, y: 0.433), CGPoint(x: 1, y: 0.433)]
+        case 6: [CGPoint(x: -0.5, y: -0.866), CGPoint(x: 0.5, y: -0.866),
+                 CGPoint(x: -1, y: 0), CGPoint(x: 1, y: 0),
+                 CGPoint(x: -0.5, y: 0.866), CGPoint(x: 0.5, y: 0.866)]
+        default: [.zero, CGPoint(x: -0.5, y: -0.866), CGPoint(x: 0.5, y: -0.866),
+                  CGPoint(x: 1, y: 0), CGPoint(x: 0.5, y: 0.866),
+                  CGPoint(x: -0.5, y: 0.866), CGPoint(x: -1, y: 0)]
+        }
+    }
+
+    var body: some View {
+        let points = centers
+        let extent = max(points.map { abs($0.x) }.max() ?? 0, points.map { abs($0.y) }.max() ?? 0)
+        let diameter = size / (extent * 2 + 1)
+        ZStack {
+            if memberIDs.isEmpty {
+                Image(systemName: "person.2")
+                    .font(.system(size: size * 0.6, weight: .light))
+                    .foregroundStyle(PebbleTheme.sage)
+            }
+            ForEach(Array(memberIDs.prefix(7).enumerated()), id: \.element) { index, id in
+                CharacterAvatar(size: diameter, image: images[id])
+                    .offset(x: points[index].x * diameter, y: points[index].y * diameter)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 struct SoftButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
