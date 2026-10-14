@@ -44,7 +44,7 @@ extension ChatModel {
             [.running, .cancellationRequested].contains($0.state) && $0.request == nil
         }.map { MonitorTask(id: $0.id, title: $0.title, personaId: $0.personaId, status: $0.state.label) }
         let images = imageGenerations.reversed().filter { $0.active }.map {
-            MonitorTask(id: $0.id, title: "Generate image · \($0.backend == "chatgpt" ? "ChatGPT" : "Studio")", personaId: $0.personaId, status: $0.activity.isEmpty ? $0.status.capitalized : $0.activity)
+            MonitorTask(id: $0.id, title: "\($0.kind == .edit ? "Edit image" : "Generate image") · \($0.backend == "chatgpt" ? "ChatGPT" : "Studio")", personaId: $0.personaId, status: $0.activity.isEmpty ? $0.status.capitalized : $0.activity)
         }
         return codex + images
     }
@@ -109,7 +109,6 @@ extension ImageGenerationRecord {
     var active: Bool { ["queued", "loading", "running", "cancelling"].contains(status) }
 }
 extension ChatModel {
-    var hasPendingImages: Bool { imageGenerations.contains { $0.conversationId == selectedID && ($0.active || $0.publicationStatus == "queued") } }
     func startImageObservation() async throws {
         guard imageGenerationStream == nil else { return }
         let (stream, sink) = AsyncStream<[ImageGenerationRecord]>.makeStream(bufferingPolicy: .bufferingNewest(1))

@@ -32,7 +32,11 @@ context, without reopening the chain. The model still produces the reply under
 the normal validated response schema; brevity is instructed, not a separate
 semantic guarantee enforced by that schema.
 
-New same-room user input cancels old optional/automatic work, including admitted
+Native sends replace unfinished room work, carrying pending required speakers
+and admitted ordinary speakers forward in their original slot order. Independent
+background result reports do not become requested speakers.
+
+Lower-level enqueue APIs cancel old optional/automatic work, including admitted
 calls, while preserving unfinished required user mentions. Those old slots keep
 their original root, room, member interval and observation cutoff. The next room
 round waits for protected older work to drain, without occupying future persona
@@ -49,13 +53,16 @@ and a later call sees U2 exactly once. If A actually completed a private call P
 that consumed U2 first, delayed A retains P's entire native prefix/state and does
 not inject U2 again. Both protocols exercise these paired cases.
 
-Admission, Stop/new-input invalidation and settings publication share the persona
+Admission, cancellation/new-input invalidation and settings publication share the persona
 acceptance gate. Final completion checks active slot/round/member interval in the
-same transaction as reply/state/native output/sent event/public fanout. If Stop
-wins, a late network result has no acceptance effects. Room Stop reaches every
+same transaction as reply/state/native output/sent event/public fanout. If cancellation
+wins, a late network result has no acceptance effects. Core room cancellation reaches every
 unfinished round and classifier/call in that room, including protected old @
-slots, and preserves shared personas' private/other-room work. Individual Stop
-waiting cancels an unadmitted slot; bubble Cancel stops its admitted call.
+slots, and preserves shared personas' private/other-room work. The lower-level
+participation cancellation API can cancel an unadmitted slot; the native chat
+has no participation cancellation controls. Native sends use the steering contract in
+[architecture](architecture.md#durable-storage-and-generation); lower-level
+enqueue tests also exercise the original required-slot isolation.
 
 Observers remain alive until their durable round and dynamically admitted calls
 settle. Waiting slots and intent/permission phases are presentation statuses,

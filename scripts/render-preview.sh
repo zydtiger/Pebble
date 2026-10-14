@@ -11,3 +11,6 @@ xcrun swiftc "${pebble_swiftmath_flags[@]}" -swift-version 6 -strict-concurrency
   target/debug/libpebble_ffi.a -liconv -o build/render-preview
 pebble_preview_root=$(mktemp -d "$PWD/build/render-data.XXXXXX")
 PEBBLE_DATA_DIR="$pebble_preview_root" build/render-preview
+if [[ "${PEBBLE_RENDER_GROUP_UI_ONLY:-}" == "1" ]]; then
+  PEBBLE_DATA_DIR="$pebble_preview_root" PEBBLE_RENDER_GROUP_REOPEN=1 build/render-preview
+fi

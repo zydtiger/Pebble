@@ -48,10 +48,6 @@ actor CoreClient {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.saveClassifierSettings(personaId: persona, update: update, credential: credential)
     }
-    func stopRoom(_ room: String) throws {
-        guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
-        try backend.stopRoom(roomId: room)
-    }
     func participation(room: String) throws -> [ParticipationRecord] {
         guard let backend else { throw BackendError.Storage(detail: "Open Pebble first.") }
         return try backend.participation(roomId: room)
@@ -165,7 +161,7 @@ struct ChatBubble: Identifiable {
         case .cancelled: return "Stopped"
         case .interrupted: return "Interrupted"
         case .failed: return "Failed"
-        case .queued: return "Queued"
+        case .queued: return nil
         case .complete, .streaming: return nil
         }
     }
@@ -224,6 +220,23 @@ final class ChatModel {
         client = CoreClient(root: self.dataRoot.path)
     }
 
+    private var latestMessageTimes: [String: String] = [:]
+
+    var sidebarRooms: [RoomRecord] {
+        (workspace?.rooms ?? []).enumerated().sorted { lhs, rhs in
+            let left = latestMessageTimes[lhs.element.id] ?? ""
+            let right = latestMessageTimes[rhs.element.id] ?? ""
+            return left == right ? lhs.offset < rhs.offset : left > right
+        }.map(\.element)
+    }
+
+    private func observeMessageTimes(_ messages: [MessageRecord]) {
+        for message in messages {
+            latestMessageTimes[message.conversationId] = max(
+                latestMessageTimes[message.conversationId] ?? "", message.createdAt)
+        }
+    }
+
     var selectedConversation: RoomRecord? { workspace?.rooms.first { $0.id == selectedID } }
     var selected: PersonaRecord? { workspace?.personas.first { $0.id == selectedConversation?.personaId } }
     var mentionedIDs: [String] { get { selectedRoom?.mentions ?? [] } set { selectedRoom?.mentions = newValue } }
@@ -236,7 +249,7 @@ final class ChatModel {
         if mentionedIDs.contains(id) { mentionedIDs.removeAll { $0 == id } } else { mentionedIDs.append(id) }
     }
     private func conversationID(_ id: String) -> String { workspace?.personas.first { $0.id == id }?.conversationId ?? id }
-    private var selectedRoom: RoomState? { selectedID.map { room($0) } }
+    var selectedRoom: RoomState? { selectedID.map { room($0) } }
     var separateTasks: Bool {
         get { selectedRoom?.separateTasks ?? false }
         set { selectedRoom?.separateTasks = newValue }
@@ -268,7 +281,14 @@ final class ChatModel {
             } catch { state.error = describe(error) }
         }
     }
-    var bubbles: [ChatBubble] { selectedRoom?.bubbles ?? [] }
+    var bubbles: [ChatBubble] {
+        (selectedRoom?.bubbles ?? []).sorted {
+            let lhsActive = !$0.isUser && ($0.status == .streaming || $0.status == .queued)
+            let rhsActive = !$1.isUser && ($1.status == .streaming || $1.status == .queued)
+            if lhsActive != rhsActive { return !lhsActive }
+            return $0.sequence < $1.sequence
+        }
+    }
     var participation: [ParticipationRecord] {
         guard let latest = bubbles.last(where: { $0.isUser }) else { return [] }
         let records = selectedRoom?.participation ?? []
@@ -326,10 +346,14 @@ final class ChatModel {
             workspace = loaded
             // Establish every room's history before subscribing, including rooms never opened.
             // The initial task snapshot then catches reports accepted in the subscription gap.
-            if let replyNotifications {
-                for conversation in loaded.rooms where replyNotifications.needsBaseline(conversation.id) {
+            for conversation in loaded.rooms {
+                let needsHistory = latestMessageTimes[conversation.id] == nil
+                    || replyNotifications?.needsBaseline(conversation.id) == true
+                if needsHistory {
                     let messages = try await client.history(room: conversation.id)
-                    replyNotifications.baseline(messages, room: conversation.id)
+                    observeMessageTimes(messages)
+                    latestMessageTimes[conversation.id] = latestMessageTimes[conversation.id] ?? ""
+                    replyNotifications?.baseline(messages, room: conversation.id)
                 }
             }
             startMaintenanceObservation()
@@ -348,6 +372,7 @@ final class ChatModel {
                 let state = room(id)
                 if state.runs.isEmpty {
                     let messages = try await client.history(room: id)
+                    observeMessageTimes(messages)
                     let decisions = try await client.participation(room: id)
                     guard selectionRevision == revision else { return }
                     if state.runs.isEmpty { state.bubbles = messages.map(ChatBubble.init); state.participation = decisions; state.markers = try await client.markers(room: id) }
@@ -411,6 +436,7 @@ final class ChatModel {
             Task {
                 do {
                     let messages = try await client.history(room: id)
+                    observeMessageTimes(messages)
                     let decisions = try await client.participation(room: id)
                     guard selectionRevision == revision, state.runs.isEmpty else { return }
                     state.bubbles = messages.map(ChatBubble.init)
@@ -538,11 +564,23 @@ final class ChatModel {
                 if let retry { handles = [try await client.retry(persona: retry.0, reply: retry.1, observer: observer)] }
                 else {
                     let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, images: images, separateTasks: separate, observer: observer)
-                    state.apply([submission.message], conversation: conversation.id)
+                    self?.observeMessageTimes([submission.message])
+                    if submission.message.sequence >= state.latestReceiptSequence {
+                        state.latestReceiptSequence = submission.message.sequence
+                        for previous in state.runs where previous.id != run.id && !previous.accepting { previous.superseded = true }
+                    } else { run.superseded = true }
                     handles = submission.handles
                     run.group = submission.group; run.classifying = submission.group != nil
                     run.decisionIDs = Set(submission.participation.filter { $0.slotStatus == "pending" }.map(\.id))
-                    state.applyParticipation(submission.participation, conversation: conversation.id)
+                    if !run.superseded { state.applyParticipation(submission.participation, conversation: conversation.id) }
+                    let messages = try await client.history(room: conversation.id)
+                    self?.observeMessageTimes(messages)
+                    let decisions = try await client.participation(room: conversation.id)
+                    if submission.message.sequence < state.latestReceiptSequence { run.superseded = true }
+                    if !run.superseded {
+                        state.bubbles = messages.map(ChatBubble.init)
+                        state.participation = decisions
+                    }
                 }
                 guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { handles.forEach { $0.cancel() }; sink.finish(); return }
                 run.handles = handles; run.accepting = false; run.pendingIDs = Set(handles.map { $0.id() })
@@ -552,12 +590,13 @@ final class ChatModel {
                         state.mentions = []; state.images = []; state.separateTasks = false
                     }
                 }
-                for handle in handles { state.apply(handle.messages(), conversation: conversation.id) }
+                if !run.superseded { for handle in handles { state.apply(handle.messages(), conversation: conversation.id) } }
                 if run.cancelRequested { run.cancel() }
                 if handles.isEmpty && !run.classifying { sink.finish() }
                 for await update in stream {
                     guard !Task.isCancelled, state.runs.contains(where: { $0.id == run.id }) else { break }
                     guard update.conversationId == conversation.id else { continue }
+                    if !run.superseded { self?.observeMessageTimes(update.messages) }
                     if update.kind == .participation || update.kind == .admitted || update.kind == .groupSettled {
                         guard let group = run.group else { continue }
                         if update.kind == .groupSettled {
@@ -565,7 +604,7 @@ final class ChatModel {
                             run.classifying = false; run.decisionIDs = []
                         } else {
                             guard update.participation.allSatisfy({ $0.messageId == group.id() && $0.conversationId == conversation.id }) else { continue }
-                            state.applyParticipation(update.participation, conversation: conversation.id)
+                            if !run.superseded { state.applyParticipation(update.participation, conversation: conversation.id) }
                             for record in update.participation {
                                 if record.slotStatus == "pending" { run.decisionIDs.insert(record.id) }
                                 else { run.decisionIDs.remove(record.id) }
@@ -575,7 +614,7 @@ final class ChatModel {
                                     run.handles.append(handle)
                                     if !run.completedIDs.contains(handle.id()) { run.pendingIDs.insert(handle.id()) }
                                 }
-                                state.apply(update.messages, conversation: conversation.id)
+                                if !run.superseded { state.apply(update.messages, conversation: conversation.id) }
                             }
                         }
                         if !run.classifying && run.pendingIDs.isEmpty { sink.finish() }
@@ -583,8 +622,8 @@ final class ChatModel {
                     }
                     guard run.handles.contains(where: { $0.id() == update.runId }), update.conversationId == conversation.id,
                           run.handles.contains(where: { $0.id() == update.runId && $0.messages().last?.senderId == update.personaId }) else { continue }
-                    state.consume(update, conversation: conversation.id)
-                    if update.kind == .completed {
+                    if !run.superseded { state.consume(update, conversation: conversation.id) }
+                    if !run.superseded && update.kind == .completed {
                         self?.notifyCompletedReplies(update.messages.filter {
                             $0.id == update.messageId && $0.senderId == update.personaId
                         }, room: conversation.id)
@@ -598,11 +637,12 @@ final class ChatModel {
                 }
                 if !Task.isCancelled, state.runs.count == 1, state.runs.first?.id == run.id {
                     let messages = try await client.history(room: conversation.id)
+                    self?.observeMessageTimes(messages)
                     if state.runs.count == 1, state.runs.first?.id == run.id { state.bubbles = messages.map(ChatBubble.init) }
                 }
             } catch {
                 sink.finish()
-                if !Task.isCancelled { state.error = self?.describe(error) }
+                if !Task.isCancelled && !run.superseded { state.error = self?.describe(error) }
             }
             state.runs.removeAll { $0.id == run.id }
             run.handles = []; run.group = nil; run.sink = nil; run.task = nil
@@ -616,6 +656,7 @@ final class ChatModel {
             do {
                 let messages = try await client.history(room: id)
                 guard !Task.isCancelled else { return }
+                observeMessageTimes(messages)
                 if notificationRooms.contains(id) { notifyCompletedReplies(messages, room: id) }
                 guard let state = rooms[id], state.loaded else { continue }
                 let decisions = try await client.participation(room: id)
@@ -631,20 +672,6 @@ final class ChatModel {
                 }
             }
             catch { rooms[id]?.error = describe(error) }
-        }
-    }
-    func stopReply() {
-        guard let id = selectedID else { return }
-        // Cancel accepting submissions too; the Rust room transaction stops every durable round.
-        selectedRoom?.runs.forEach { $0.cancel() }
-        Task { [weak self, client] in
-            do { try await client.stopRoom(id) }
-            catch { self?.rooms[id]?.error = self?.describe(error) }
-        }
-    }
-    func cancelReply(_ messageID: String) {
-        for run in selectedRoom?.runs ?? [] {
-            if let handle = run.handles.first(where: { $0.messages().last?.id == messageID }) { handle.cancel(); return }
         }
     }
     private func startMaintenanceObservation() {
@@ -692,7 +719,7 @@ final class ChatModel {
         case let .ContextLimit(detail): return detail
         case let .Settings(detail): return detail
         case let .RetryUnavailable(detail): return detail
-        case .Busy: return "Finish or stop pending replies and participation checks first."
+        case .Busy: return "Wait for pending replies and participation checks to finish first."
         case .UnknownPersona: return "This character is no longer available. Reload the character files."
         case .EmptyMessage: return "Write something before sending."
         case let .Generation(detail): return "Couldn't start the reply. \(detail)"

@@ -28,6 +28,42 @@ struct RenderChecks {
                     app.terminate(nil)
                     return
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_GROUP_REOPEN"] == "1" {
+                    let expected = try JSONDecoder().decode([String].self,
+                        from: Data(contentsOf: model.dataRoot.appendingPathComponent("sidebar-order.json")))
+                    guard model.sidebarRooms.map(\.id) == expected else {
+                        throw RenderError.failed("Sidebar order did not survive reopening")
+                    }
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_GROUP_UI_ONLY"] == "1" {
+                    try await checkGroupAvatars(window: window, model: model)
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_STEERING_ONLY"] == "1" {
+                    model.sendMessage("Help me plan a long weekend in the mountains with walks and quiet places to read.")
+                    try await ClassifierChecks.wait(model, until: { model.bubbles.count == 2 })
+                    model.sendMessage("Keep the walks short, please.")
+                    model.sendMessage("And leave Sunday afternoon free.")
+                    try await ClassifierChecks.wait(model, until: { model.bubbles.filter(\.isUser).count == 3 })
+                    try await Task.sleep(for: .milliseconds(100))
+                    guard model.bubbles.prefix(3).allSatisfy(\.isUser), model.bubbles.count == 4 else {
+                        throw RenderError.failed("Steering did not put all inputs above the single reply")
+                    }
+                    try capture(window, name: "composer-steering")
+                    try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+                    guard model.bubbles.count == 4, model.bubbles.last?.status == .complete else {
+                        throw RenderError.failed("Steering did not finish one reply")
+                    }
+                    try capture(window, name: "composer-steering-complete")
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_IMAGES_ONLY"] == "1" {
                     try await checkImageGenerationRendering(window: window, model: model)
                     app.terminate(nil)
@@ -372,6 +408,87 @@ struct RenderChecks {
         try await Task.sleep(for: .seconds(3.2))
         try capture(window, name: "memory-group-history")
         print("Memory presentation passed: empty-state, unchanged private/group transcripts, internal markers and transient manual feedback.")
+    }
+
+    @MainActor
+    static func checkGroupAvatars(window: NSWindow, model: ChatModel) async throws {
+        for name in ["Kai", "June", "Alex", "Robin", "Sam", "Rae"] {
+            guard await model.createCharacter(name) else { throw RenderError.failed("Could not create avatar fixture") }
+        }
+        let personas = model.workspace!.personas
+        let ids = personas.map(\.id)
+        for (index, persona) in personas.enumerated() {
+            let image = NSImage(size: NSSize(width: 80, height: 80))
+            image.lockFocus()
+            NSColor(calibratedHue: CGFloat(index) / 7, saturation: 0.35, brightness: 0.8, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 80, height: 80)).fill()
+            (String(persona.displayName.prefix(1)) as NSString).draw(at: NSPoint(x: 24, y: 17),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 38), .foregroundColor: NSColor.white])
+            image.unlockFocus()
+            model.avatars[persona.id] = image
+        }
+        let portraits = model.avatars
+        let samples = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 390),
+                               styleMask: [.titled], backing: .buffered, defer: false)
+        samples.isReleasedWhenClosed = false
+        samples.contentView = NSHostingView(rootView:
+            VStack(spacing: 25) {
+                ForEach([false, true], id: \.self) { selected in
+                    HStack(spacing: 18) {
+                        ForEach(0..<9) { count in
+                            VStack(spacing: 12) {
+                                GroupAvatar(memberIDs: Array((ids + ["missing"]).prefix(count)), images: portraits, size: 38)
+                                GroupAvatar(memberIDs: Array((ids + ["missing"]).prefix(count)), images: portraits, size: 64)
+                                Text("\(count) members").font(.system(size: 10))
+                            }
+                        }
+                    }.padding(12).background(selected ? Color.white : PebbleTheme.sidebar)
+                }
+            }.padding(20).background(PebbleTheme.canvas))
+        samples.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(200))
+        try capture(samples, name: "group-avatar-layouts")
+        samples.close()
+        guard await model.createGroup("Weekend plans", members: Array(ids.prefix(3))) else {
+            throw RenderError.failed("Could not create preview group")
+        }
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        // Workspace reloads intentionally refresh the image cache.
+        model.avatars = portraits
+        model.avatars.removeValue(forKey: ids[1])
+        try await Task.sleep(for: .milliseconds(200))
+        try capture(window, name: "group-avatar-empty")
+        model.mentionedIDs = [ids[0]]
+        model.draft = "What should we do this weekend?"
+        model.sendMessage()
+        try await ClassifierChecks.wait(model, until: { model.bubbles.count >= 2 })
+        model.avatars = portraits
+        model.avatars.removeValue(forKey: ids[1])
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(window, name: "group-avatar-typing")
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+        try capture(window, name: "group-avatar-conversation")
+        let groupID = model.selectedID!
+        guard model.sidebarRooms.first?.id == groupID else { throw RenderError.failed("Group message did not move its room first") }
+        model.select(ids[2])
+        try await ClassifierChecks.wait(model, until: { !model.loading })
+        model.sendMessage("A newer private message")
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies && model.bubbles.count >= 2 })
+        let privateID = model.selectedID!
+        guard model.sidebarRooms.first?.id == privateID else { throw RenderError.failed("Private message did not move ahead of the group") }
+        model.select(groupID)
+        try await Task.sleep(for: .milliseconds(100))
+        guard model.sidebarRooms.first?.id == privateID else { throw RenderError.failed("Opening a room changed recency") }
+        model.mentionedIDs = [ids[0]]
+        model.draft = "A newer group message"
+        model.sendMessage()
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies && model.bubbles.count >= 4 })
+        guard model.sidebarRooms.first?.id == groupID else { throw RenderError.failed("New group message did not restore first position") }
+        model.avatars = portraits
+        try await Task.sleep(for: .milliseconds(100))
+        try capture(window, name: "unified-chat-list")
+        try JSONEncoder().encode(model.sidebarRooms.map(\.id))
+            .write(to: model.dataRoot.appendingPathComponent("sidebar-order.json"))
     }
 
     @MainActor

@@ -57,6 +57,7 @@ fn restart_keeps_identity_and_state_table() {
             "persona_states",
             "personas",
             "session_recent_messages",
+            "steered_calls",
             "summarized_events"
         ]
     );

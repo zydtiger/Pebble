@@ -161,7 +161,7 @@ and scoped artifact links remain in durable evidence for explanation through cha
 Citation control markers are removed from display, and missing URLs are never
 fabricated. Original user messages and frozen persona history are not rewritten.
 
-**Stop** affects conversation generation. The core retains explicit task cancellation
+The core retains explicit task cancellation
 for lifecycle control, but the monitor exposes no Codex actions. Interruption only
 becomes confirmed after the actual turn outcome; an acknowledged interrupt without
 confirmation becomes uncertain after five seconds and cannot be blindly resubmitted.

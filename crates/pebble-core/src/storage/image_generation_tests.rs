@@ -7,14 +7,14 @@ use crate::{
 };
 use image::{ImageFormat, RgbImage};
 use std::io::Cursor;
-fn png() -> Vec<u8> {
+pub(super) fn png() -> Vec<u8> {
     let mut bytes = Vec::new();
     RgbImage::new(256, 256)
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
         .unwrap();
     bytes
 }
-fn settings() -> ImageGenerationSettings {
+pub(super) fn settings() -> ImageGenerationSettings {
     ImageGenerationSettings {
         studio: Some(StudioSettings {
             base_url: "https://api.example.com".into(),
@@ -26,7 +26,11 @@ fn settings() -> ImageGenerationSettings {
         chatgpt: None,
     }
 }
-fn prepare(core: &Core, persona: &crate::Persona, room: &str) -> (crate::history::Turn, String) {
+pub(super) fn prepare(
+    core: &Core,
+    persona: &crate::Persona,
+    room: &str,
+) -> (crate::history::Turn, String) {
     assert_eq!(room, persona.conversation_id);
     let turn = core
         .database
@@ -37,6 +41,7 @@ fn prepare(core: &Core, persona: &crate::Persona, room: &str) -> (crate::history
     let call = Call {
         id: "native-image".into(),
         arguments: Arguments {
+            image_id: None,
             prompt: json!({"subject":"synthetic pebble"}).to_string(),
             backend: "studio".into(),
             size: Size {
@@ -51,7 +56,11 @@ fn prepare(core: &Core, persona: &crate::Persona, room: &str) -> (crate::history
         .unwrap();
     (turn, id.unwrap())
 }
-fn finish(core: &Core, turn: &crate::history::Turn, status: MessageStatus) -> crate::Message {
+pub(super) fn finish(
+    core: &Core,
+    turn: &crate::history::Turn,
+    status: MessageStatus,
+) -> crate::Message {
     let request = core.database.request(&turn.call_id).unwrap();
     let output = [
         json!({"role":"assistant","content":json!({"reply":"A synthetic image.","state":request.state_before}).to_string()}),
@@ -245,6 +254,7 @@ fn group_publication_fans_out_pixels_and_leave_rejoin_invalidates_original_inter
         let call = Call {
             id: "group-image".into(),
             arguments: Arguments {
+                image_id: None,
                 prompt: json!({"subject":"one synthetic pebble"}).to_string(),
                 backend: "studio".into(),
                 size: Size {

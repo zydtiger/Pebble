@@ -1,7 +1,7 @@
 use super::Database;
 use crate::{
     Error, ImageAsset,
-    images::{self, ImageReference},
+    images::{self, ImageReference, OriginalSize},
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -18,11 +18,33 @@ pub(crate) fn root(db: &Connection) -> Result<PathBuf, Error> {
         .map(Path::to_path_buf)
         .ok_or_else(|| images::invalid("Asset directory is unavailable."))
 }
+fn with_original_size(text: &str, width: u32, height: u32) -> Result<ImageReference, Error> {
+    let mut reference: ImageReference = serde_json::from_str(text)?;
+    reference.original_size = Some(OriginalSize { width, height });
+    Ok(reference)
+}
+pub(crate) fn reference(db: &Connection, id: &str) -> Result<ImageReference, Error> {
+    let (text, width, height): (String, u32, u32) = db.query_row(
+        "SELECT reference,width,height FROM image_assets WHERE id=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    with_original_size(&text, width, height)
+}
 pub(crate) fn references(db: &Connection, message: &str) -> Result<Vec<ImageReference>, Error> {
-    let mut q=db.prepare("SELECT a.reference FROM message_images m JOIN image_assets a ON a.id=m.asset_id WHERE m.message_id=?1 ORDER BY m.position")?;
-    q.query_map([message], |r| r.get::<_, String>(0))?
-        .map(|r| Ok(serde_json::from_str(&r?)?))
-        .collect()
+    let mut q=db.prepare("SELECT a.reference,a.width,a.height FROM message_images m JOIN image_assets a ON a.id=m.asset_id WHERE m.message_id=?1 ORDER BY m.position")?;
+    q.query_map([message], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, u32>(1)?,
+            r.get::<_, u32>(2)?,
+        ))
+    })?
+    .map(|r| {
+        let (text, width, height) = r?;
+        with_original_size(&text, width, height)
+    })
+    .collect()
 }
 pub(crate) fn assets(db: &Connection, message: &str) -> Result<Vec<ImageAsset>, Error> {
     let root = root(db)?;

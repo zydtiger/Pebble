@@ -171,7 +171,7 @@ struct BridgeChecks {
         try require(model.mentionedIDs == [a] && model.draft == "Keep chosen target while editing text", "Room switching lost mention selection")
         model.sendMessage()
         for _ in 0..<100 where model.bubbles.count < 6 { try await Task.sleep(for: .milliseconds(10)) }
-        model.stopReply()
+        model.selectedRoom?.runs.forEach { $0.cancel() }
         for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.last?.status == .cancelled && model.bubbles.last?.canRetry == true, "Group cancellation/retry metadata failed: bubbles=\(model.bubbles.map { "\($0.status):\($0.canRetry)" }), error=\(model.error ?? "none"), replying=\(model.isReplying)")
         model.retryReply(model.bubbles.last!.id)
@@ -191,7 +191,7 @@ struct BridgeChecks {
         try await ClassifierChecks.wait(model, until: { !model.loading })
         let b = model.selected!.id
         model.sendMessage("Cancelled unrelated reply")
-        model.stopReply()
+        model.selectedRoom?.runs.forEach { $0.cancel() }
         try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
         let other = model.bubbles.last!
         try require(model.canRetry(other), "Unrelated cancelled reply was not retryable")
@@ -245,7 +245,7 @@ struct BridgeChecks {
         try await model.saveSettings(id, update: SettingsUpdateRecord(chat: chat, credential: .clear, persona: settings.persona))
         model.sendMessage("Remember before Stop")
         try await ClassifierChecks.wait(model, until: { FileManager.default.fileExists(atPath: marker.path) })
-        model.stopReply()
+        model.selectedRoom?.runs.forEach { $0.cancel() }
         try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
         let reply = model.bubbles.last!
         try require(reply.status == .cancelled && reply.text.isEmpty && reply.failureDetail.contains("Memory was saved"),
@@ -254,7 +254,7 @@ struct BridgeChecks {
         try require(model.bubbles.last?.failureDetail == reply.failureDetail,
                     "Reload lost the cancelled bubble's committed-memory explanation")
         model.closeChat()
-        print("Native room Stop passed: cancelled bubble retains committed-memory detail through FFI and reload.")
+        print("Native listener cancellation passed: cancelled bubble retains committed-memory detail through FFI and reload.")
         return id
     }
 
@@ -271,7 +271,7 @@ struct BridgeChecks {
         try await model.saveSettings(id, update: update)
         try require(model.selected?.displayName == "Edited name", "Settings did not refresh the native persona")
         model.sendMessage("Retry one user message")
-        model.stopReply()
+        model.selectedRoom?.runs.forEach { $0.cancel() }
         for _ in 0..<200 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.count == 2 && model.bubbles[1].canRetry, "Cancelled latest reply did not expose Retry")
         let userID = model.bubbles[0].id
@@ -326,23 +326,19 @@ struct BridgeChecks {
         try require(model.pendingCount(mira) == 1 && model.pendingCount(kai) == 1, "Personas did not remain independently active")
         model.select(mira)
         model.sendMessage("Mira followup")
-        model.sendMessage("Cancel queued Mira input")
-        for _ in 0..<100 where model.bubbles.count < 6 { try await Task.sleep(for: .milliseconds(5)) }
-        try require(model.bubbles.count == 6 && model.bubbles.last?.status == .queued, "Queued bubble was not visible")
-        let resetWhileQueued = await model.startFreshContext()
-        try require(!resetWhileQueued, "Fresh context accepted outstanding queued work")
-        model.cancelReply(model.bubbles.last!.id)
+        model.sendMessage("Mira final constraint")
+        try await ClassifierChecks.wait(model, until: { model.bubbles.filter(\.isUser).count == 3 })
+        try require(model.bubbles.prefix(3).allSatisfy(\.isUser), "New input appeared below an unfinished reply")
+        try require(model.bubbles.filter { !$0.isUser }.count <= 1, "Steering kept obsolete reply bubbles")
+        let resetWhileBusy = await model.startFreshContext()
+        try require(!resetWhileBusy, "Fresh context accepted outstanding work")
         model.select(kai)
-        model.stopReply()
-        for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
-        try require(!model.hasActiveReplies, "Concurrent rooms did not terminate")
-        try require(model.bubbles.count == 2 && model.bubbles.last?.status == .cancelled, "Stop did not cancel selected Kai room")
+        try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+        try require(model.bubbles.count == 2 && model.bubbles.last?.status == .complete, "Steering Mira interrupted Kai")
         try require(model.bubbles.first?.text == "Kai private input", "Mira output leaked into Kai room")
         model.select(mira)
-        try require(model.bubbles[1].status == .complete && model.bubbles[3].status == .complete,
-                    "Stopping Kai cancelled Mira or lost queued followup")
-        try require(model.bubbles[5].status == .cancelled, "Queued cancel was lost")
-        try require(model.bubbles[3].text.contains("Mira first private input"), "Followup did not use predecessor history")
+        try require(model.bubbles.count == 4 && model.bubbles.last?.status == .complete, "Steering did not converge to one reply")
+        try require(model.bubbles.last!.text.contains("Turn 3") && model.bubbles.last!.text.contains("Mira followup") && model.bubbles.last!.text.contains("Mira final constraint"), "Steering lost cumulative input")
         try require(!model.bubbles.contains { $0.text.contains("Kai private input") }, "Kai output leaked into Mira room")
         try require(model.draft == "Mira's unsent draft", "Background stream cleared another draft")
         let saved = model.bubbles.map(\.id)
@@ -419,7 +415,7 @@ struct BridgeChecks {
         try require(model.selected != nil, "Presentation did not load a character")
         model.draft = "hello"
         model.sendMessage()
-        model.stopReply()
+        model.selectedRoom?.runs.forEach { $0.cancel() }
         for _ in 0..<100 where model.isReplying { try await Task.sleep(for: .milliseconds(20)) }
         try require(!model.isReplying && model.bubbles.last?.status == .cancelled, "Early UI cancellation was lost")
         try require(model.draft.isEmpty, "Accepted draft was not cleared")

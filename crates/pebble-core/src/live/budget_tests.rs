@@ -98,23 +98,23 @@ fn image_generation_backend_enum_contains_only_available_choices() {
         for backend in ["studio", "chatgpt"] {
             request.image_generation_backends = vec![backend.into()];
             let (_, body) = request_body(&chat, &request, 77).unwrap();
-            let tool = body["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|v| {
-                    v["name"] == "generate_image" || v["function"]["name"] == "generate_image"
-                })
-                .unwrap();
-            let parameters = if api == "responses" {
-                &tool["parameters"]
-            } else {
-                &tool["function"]["parameters"]
-            };
-            assert_eq!(
-                parameters["properties"]["backend"]["enum"],
-                json!([backend])
-            );
+            for name in ["generate_image", "edit_image"] {
+                let tool = body["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|v| v["name"] == name || v["function"]["name"] == name)
+                    .unwrap();
+                let parameters = if api == "responses" {
+                    &tool["parameters"]
+                } else {
+                    &tool["function"]["parameters"]
+                };
+                assert_eq!(
+                    parameters["properties"]["backend"]["enum"],
+                    json!([backend])
+                );
+            }
         }
     }
 }
@@ -136,6 +136,7 @@ fn maintenance_exposes_only_memory_while_replaying_all_native_tool_evidence() {
         let mut request:ModelRequest=serde_json::from_value(json!({"call_id":"maintenance","session_id":"session","conversation_id":"room","trigger_message_id":"","event_cutoff":0,"protocol":api,"model":"test","items":[],"memory_tools":true,"memory_capable":true})).unwrap();
         for name in [
             "generate_image",
+            "edit_image",
             "delegate_task",
             "search_history",
             "read_history",

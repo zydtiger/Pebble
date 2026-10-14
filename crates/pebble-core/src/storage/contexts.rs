@@ -28,9 +28,10 @@ pub(super) fn create_session(
         persona.display_name, persona.soul, persona.memory
     );
     let content = format!(
-        "{content}\n\nDELEGATION\n{}\n\nIMAGE_GENERATION\n{}",
+        "{content}\n\nDELEGATION\n{}\n\nIMAGE_GENERATION\n{}\n{}",
         crate::codex::tool::INSTRUCTIONS,
-        crate::image_generation::tool::INSTRUCTIONS
+        crate::image_generation::tool::INSTRUCTIONS,
+        crate::image_generation::tool::EDIT_INSTRUCTIONS
     );
     let content = format!("{content}\n\nHISTORY\n{}", crate::retrieval::INSTRUCTIONS);
     let content = format!(

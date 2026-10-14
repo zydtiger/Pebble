@@ -202,7 +202,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
     {
         let db = core.database.connection.lock().unwrap();
         db.execute_batch(
-            "DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
+            "DROP TABLE steered_calls; DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
         )
         .unwrap();
     }
@@ -230,7 +230,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
             .unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        15
+        16
     );
 }
 
@@ -545,6 +545,108 @@ fn provider_state_with_matching_field_names_cannot_introduce_image_references() 
                 .filter(|p| p["type"] == "pebble_image_v1")
                 .count(),
             1
+        );
+    }
+}
+
+#[test]
+fn original_size_metadata_is_distinct_from_rendition_and_legacy_refs_remain_readable() {
+    for protocol in ["chat_completions", "responses"] {
+        let root = tempfile::tempdir().unwrap();
+        let core = Core::open(root.path()).unwrap();
+        let persona = configured(&core, protocol);
+        let asset = core.import_image_data(&png(1536, 1024)).unwrap();
+        // Existing assets need no migration: metadata is enriched only when a new
+        // visible input is assembled from the immutable asset row.
+        let legacy: String = {
+            let db = core.database.connection.lock().unwrap();
+            let imported: String = db
+                .query_row(
+                    "SELECT reference FROM image_assets WHERE id=?1",
+                    [&asset.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&imported).unwrap()["original_size"],
+                json!({"width":1536,"height":1024})
+            );
+            db.execute("UPDATE image_assets SET reference=json_remove(reference,'$.original_size') WHERE id=?1",[&asset.id]).unwrap();
+            db.query_row(
+                "SELECT reference FROM image_assets WHERE id=?1",
+                [&asset.id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let legacy_reference: ImageReference = serde_json::from_str(&legacy).unwrap();
+        assert!(legacy_reference.original_size.is_none());
+        assert_eq!(
+            (legacy_reference.width, legacy_reference.height),
+            (768, 512)
+        );
+        assert_eq!(
+            serde_json::to_value(&legacy_reference).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&legacy).unwrap()
+        );
+        let (_, turns, _) = core
+            .database
+            .enqueue_room_images(
+                &persona.conversation_id,
+                "edit this",
+                &[],
+                std::slice::from_ref(&persona),
+                std::slice::from_ref(&asset.id),
+            )
+            .unwrap();
+        let turn = core.database.activate_turn(&persona, &turns[0]).unwrap();
+        let request = core.database.request(&turn.call_id).unwrap();
+        let frozen = request.items.last().unwrap().payload.clone();
+        let input: serde_json::Value = serde_json::from_slice(&frozen).unwrap();
+        let parts = input["content"].as_array().unwrap();
+        let envelope: serde_json::Value =
+            serde_json::from_str(parts[0]["text"].as_str().unwrap()).unwrap();
+        let metadata = &envelope["events"][0]["image_attachments"][0];
+        assert_eq!(
+            metadata["original_size"],
+            json!({"width":1536,"height":1024})
+        );
+        assert_eq!(
+            (metadata["width"].as_u64(), metadata["height"].as_u64()),
+            (Some(768), Some(512))
+        );
+        assert!(parts.iter().any(
+            |part| part["text"].as_str().is_some_and(|text| text.contains(
+                "Original image size: 1536 × 1024 pixels; vision rendition: 768 × 512 pixels"
+            ))
+        ));
+        let mut legacy_input =
+            [json!({"role":"user","content":[reference_part(&legacy_reference)]})];
+        materialize(root.path(), &mut legacy_input).unwrap();
+        assert!(
+            legacy_input[0]
+                .to_string()
+                .contains("data:image/png;base64,")
+        );
+        let db = core.database.connection.lock().unwrap();
+        let stored: String = db
+            .query_row(
+                "SELECT reference FROM image_assets WHERE id=?1",
+                [&asset.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, legacy);
+        drop(db);
+        assert_eq!(
+            core.database
+                .request(&turn.call_id)
+                .unwrap()
+                .items
+                .last()
+                .unwrap()
+                .payload,
+            frozen
         );
     }
 }

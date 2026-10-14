@@ -54,7 +54,10 @@ fn carry_ten_ordered_ids_excludes_queued_private_group_holes_and_copies_no_text(
     for api in ["chat_completions", "responses"] {
         let root = tempfile::tempdir().unwrap();
         let core = Core::open(root.path()).unwrap();
-        let p = persona(&core, api);
+        let mut p = persona(&core, api);
+        // Keep capacity for all ten references independently of tool declaration growth.
+        p.chat.as_mut().unwrap().context_len = 131072;
+        p.context = p.chat.as_ref().unwrap().budget();
         let db = &core.database;
         let group = core
             .create_group("Original room", std::slice::from_ref(&p.id))
@@ -177,7 +180,10 @@ fn carry_continues_across_rollovers_and_hydrates_archived_review_retry_restart()
     for api in ["chat_completions", "responses"] {
         let root = tempfile::tempdir().unwrap();
         let core = Core::open(root.path()).unwrap();
-        let p = persona(&core, api);
+        let mut p = persona(&core, api);
+        // This fixture retains all messages; boundary pruning has separate coverage.
+        p.chat.as_mut().unwrap().context_len = 131072;
+        p.context = p.chat.as_ref().unwrap().budget();
         let db = &core.database;
         let mut known = Vec::new();
         for n in 0..4 {
@@ -500,7 +506,7 @@ fn carry_half_ceiling_counts_supported_image_backend_declarations() {
         };
         let empty_enum_cost = estimate(&candidate);
         candidate.image_generation_backends = vec!["studio".into(), "chatgpt".into()];
-        assert_eq!(estimate(&candidate), empty_enum_cost + 18);
+        assert_eq!(estimate(&candidate), empty_enum_cost + 36);
         // Exactly fit the former empty-enum estimate at half the ordinary ceiling.
         let context_len = (2 * empty_enum_cost + 512) * 3 / 2;
         let mut reduced = p.clone();
@@ -509,7 +515,7 @@ fn carry_half_ceiling_counts_supported_image_backend_declarations() {
         let backends = core.image_generation.available_backends().unwrap();
         assert_eq!(backends, ["studio"]);
         candidate.image_generation_backends = backends.clone();
-        assert_eq!(estimate(&candidate), empty_enum_cost + 8);
+        assert_eq!(estimate(&candidate), empty_enum_cost + 16);
         db.publish_maintenance(&job, &reduced).unwrap();
         let pending = db.enqueue_turn(&p, "future input").unwrap();
         let mut successor = ordinary(db.preview_turn(&p, &pending).unwrap());

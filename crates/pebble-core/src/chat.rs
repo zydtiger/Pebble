@@ -83,6 +83,7 @@ pub(crate) struct RoomInput<'a> {
     pub mentions: &'a [String],
     pub images: &'a [String],
     pub separate_tasks: bool,
+    pub steer: bool,
 }
 
 pub struct ChatSubmission {
@@ -313,14 +314,11 @@ impl Chats {
     ) -> Result<ChatSubmission, Error> {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
-        let (message, turns, decisions) = db.enqueue_room_assigned_images(
-            input.room,
-            input.text,
-            input.mentions,
-            &workspace.personas,
-            input.images,
-            input.separate_tasks,
-        )?;
+        let (message, turns, decisions) = db.enqueue_input(&workspace.personas, input)?;
+        let superseded = db.steered_calls(&message.id)?;
+        for queue in queues.values() {
+            queue.cancel_calls(&superseded);
+        }
         let mut tasks = Vec::new();
         for turn in turns {
             let persona = workspace
@@ -352,6 +350,7 @@ impl Chats {
             }
         }
         drop(queues);
+        self.wake_groups();
         let participation = decisions.iter().map(|w| w.decision.clone()).collect();
         let group = crate::participation::start(
             self.clone(),
@@ -1006,7 +1005,7 @@ fn generate_structured(
                         ));
                     }
                     invalid_delegations += 1;
-                    let result = crate::memory::result(&request.protocol, &id, &json!({"ok":false,"error":"invalid_arguments","detail":detail,"instruction":"Correct generate_image with exactly prompt, backend and size {width,height}. No generation was submitted."}).to_string());
+                    let result = crate::memory::result(&request.protocol, &id, &json!({"ok":false,"error":"invalid_arguments","detail":detail,"instruction":"Correct the image tool arguments: generate_image requires prompt, backend and size; edit_image also requires image_id and prompt.instruction. No operation was submitted."}).to_string());
                     control
                         .while_active(|| db.reject_delegation_arguments(request, &output, &result))
                         .ok_or_else(|| Error::Generation("Cancelled".into()))??;

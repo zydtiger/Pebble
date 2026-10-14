@@ -81,7 +81,7 @@ fn populated_v012_upgrade_preserves_every_existing_identity_native_byte_state_an
         .map(Result::unwrap)
         .collect();
     assert_eq!(links, saved_links);
-    assert_eq!(count(&db, "PRAGMA user_version"), 15);
+    assert_eq!(count(&db, "PRAGMA user_version"), 16);
     assert!(
         !db.prepare("PRAGMA foreign_key_check")
             .unwrap()
@@ -203,7 +203,7 @@ fn populated_v013_additive_upgrade_preserves_group_memberships_and_publication_h
         count(&storage, "SELECT COUNT(*) FROM participation_decisions"),
         0
     );
-    assert_eq!(count(&storage, "PRAGMA user_version"), 15);
+    assert_eq!(count(&storage, "PRAGMA user_version"), 16);
     assert!(
         !storage
             .prepare("PRAGMA foreign_key_check")
@@ -290,7 +290,7 @@ fn populated_v014_upgrade_preserves_decisions_calls_native_bytes_and_contract_fi
         ]
         .map(|f| std::fs::read(std::path::Path::new(&directory).join(f)).unwrap())
     );
-    assert_eq!(count(&storage, "PRAGMA user_version"), 15);
+    assert_eq!(count(&storage, "PRAGMA user_version"), 16);
     assert_eq!(count(&storage, "SELECT COUNT(*) FROM group_rounds"), 0);
     assert!(
         !storage

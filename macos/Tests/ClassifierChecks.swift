@@ -136,7 +136,7 @@ enum ClassifierChecks {
         try check(model.bubbles.count == 8 && model.bubbles.last?.status == .complete, "Explicit mentions did not recover independently")
         model.sendMessage("hold stop this decision")
         try await wait(model, until: { model.participation.count == 2 && model.participation.allSatisfy { $0.status == "pending" } })
-        model.cancelParticipation(model.participation[0]); model.stopReply()
+        model.cancelParticipation(model.participation[0]); model.selectedRoom?.runs.forEach { $0.cancel() }
         try await wait(model, until: { !model.hasActiveReplies })
         try check(model.bubbles.count == 9 && model.participation.allSatisfy { $0.status == "cancelled" }, "Stop checking lost observation or admitted late reply")
         try await phase("participation-stopped")
@@ -153,21 +153,15 @@ enum ClassifierChecks {
         try check(model.bubbles.count == 11 && model.bubbles.last?.senderID == b && model.bubbles.last?.status == .complete, "Fallback did not stop after one permitted acknowledgment")
         try await phase("group-fallback-complete")
 
-        // Keep the ready B queued behind independent private work, leaving A unadmitted.
-        model.select(b)
-        for index in 0..<4 { model.sendMessage("Private B queue for waiting view \(index)") }
-        model.select(room)
-        model.mentionedIDs = [b, a]; model.draft = "Older protected mention requests"; model.sendMessage()
-        try await wait(model, until: { model.participation.contains { $0.personaId == a && $0.slotStatus == "pending" && $0.status == "mentioned" } && model.bubbles.last?.senderID == b })
-        model.mentionedIDs = [a]; model.draft = "New user round while old mentions wait"; model.sendMessage()
-        try await wait(model, until: { model.bubbles.filter(\.isUser).count == 8 && model.participation.filter { $0.personaId == a && $0.slotStatus == "pending" }.count == 2 })
-        try await phase("group-protected-waiting")
-        try check(model.bubbles.filter { !$0.isUser }.count == 6, "Future required slots prematurely created bubbles")
-        model.stopReply()
-        try await wait(model, until: { !model.isReplying })
-        try check(model.pendingCount(b) > 0 && model.participation.allSatisfy { !["pending", "admitted"].contains($0.slotStatus) }, "All-room Stop lost old/new round or cancelled private B")
-        try await phase("group-all-rounds-stopped")
+        let beforeSteering = model.bubbles.count
+        model.mentionedIDs = [b, a]; model.draft = "Original group question"; model.sendMessage()
+        model.sendMessage("Additional group constraint")
+        model.sendMessage("Final group constraint")
+        try await wait(model, until: { model.bubbles.filter(\.isUser).count == 9 })
+        try await phase("group-steering")
         try await wait(model, until: { !model.hasActiveReplies })
+        try check(model.bubbles.count == beforeSteering + 5, "Group steering did not retain three inputs and two requested replies")
+        try check(model.bubbles.suffix(2).allSatisfy { !$0.isUser && $0.status == .complete }, "Group steering lost a requested speaker")
         model.closeChat()
         print("Native classifier checks passed: separate settings/protocol round trips, Deciding/Listening, @ bypass plus dynamic volunteer, visible errors, manual recovery, cancellation, durable reopening.")
     }

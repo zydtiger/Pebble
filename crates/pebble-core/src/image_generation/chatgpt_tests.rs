@@ -332,6 +332,7 @@ fn legacy_prompt_reconciles_after_restart_without_duplicate_group_report() {
             &tool::Call {
                 id: "recoverable-image".into(),
                 arguments: tool::Arguments {
+                    image_id: None,
                     // A pre-structured-prompt operation keeps its frozen prose payload.
                     prompt: "One synthetic pebble. Keep \"茶\".\nNo border.".into(),
                     backend: "chatgpt".into(),
@@ -438,4 +439,75 @@ fn legacy_prompt_reconciles_after_restart_without_duplicate_group_report() {
             .count(),
         1
     );
+}
+
+#[test]
+fn chatgpt_edit_stages_original_and_supplies_local_image_only_on_first_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let executable = fake(root.path(), false, false);
+    let (id, source) = prepare_edit(&core, "chatgpt", &configured(), &executable);
+    let original = std::fs::read(&source.source_path).unwrap();
+    let control = Arc::new(Control::default());
+    execute(&core.image_generation, &id, false, &control).unwrap();
+    let staged = root
+        .path()
+        .join("data/image-workspaces")
+        .join(&id)
+        .join("source.png");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        std::fs::read(&source.source_path).unwrap()
+    );
+    execute(&core.image_generation, &id, true, &control).unwrap();
+    assert!(execute(&core.image_generation, &id, false, &control).is_err());
+    let methods = std::fs::read_to_string(root.path().join("image-methods.jsonl")).unwrap();
+    let methods: Vec<serde_json::Value> = methods
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    let turn = methods
+        .iter()
+        .find(|m| m["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["input"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        turn["params"]["input"][1],
+        json!({"type":"localImage","path":staged})
+    );
+    let op = core.database.image_generation(&id).unwrap();
+    assert_ne!(op.asset_id.as_deref(), Some(source.id.as_str()));
+    assert_eq!(
+        turn["params"]["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .split_once("Image prompt:\n")
+            .unwrap()
+            .1,
+        op.arguments.prompt
+    );
+    assert!(
+        methods
+            .iter()
+            .find(|m| m["method"] == "thread/start")
+            .unwrap()["params"]["developerInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("No shell")
+    );
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m["method"] == "turn/start")
+            .count(),
+        1
+    );
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m["method"] == "thread/read")
+            .count(),
+        1
+    );
+    assert_eq!(std::fs::read(&source.source_path).unwrap(), original);
 }

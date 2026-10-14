@@ -92,6 +92,104 @@ fn rollover_preserves_exact_unseen_holes_cross_room_observations_and_restart() {
         );
     }
 }
+
+#[test]
+fn rollover_preserves_unactivated_steered_inputs_once() {
+    for api in ["chat_completions", "responses"] {
+        let root = tempfile::tempdir().unwrap();
+        let core = Core::open(root.path()).unwrap();
+        let p = persona(&core, api);
+        let db = &core.database;
+        let original = db.enqueue_turn(&p, "already consumed").unwrap();
+        let original = db.activate_turn(&p, &original).unwrap();
+        complete(db, &p, &original, "accepted source");
+        let send = |text| {
+            db.enqueue_input(
+                std::slice::from_ref(&p),
+                crate::chat::RoomInput {
+                    room: &p.conversation_id,
+                    text,
+                    mentions: &[],
+                    images: &[],
+                    separate_tasks: false,
+                    steer: true,
+                },
+            )
+            .unwrap()
+            .1
+            .remove(0)
+        };
+        let first = send("unactivated original request");
+        let latest = send("new steering constraint");
+        assert!(!db.call_active(&first.call_id));
+        let job = db.begin_context_maintenance(&p, true).unwrap();
+        let review = serde_json::to_string(&job.request).unwrap();
+        assert!(!review.contains("unactivated original request"));
+        assert!(!review.contains("new steering constraint"));
+        db.publish_maintenance(&job, &p).unwrap();
+        let latest = db.activate_turn(&p, &latest).unwrap();
+        let request = db.request(&latest.call_id).unwrap();
+        let observed = events(&request);
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0]["message_id"], first.user.id);
+        assert_eq!(observed[1]["message_id"], latest.user.id);
+        assert_ne!(request.session_id, original.session_id);
+        complete(db, &p, &latest, "current answer");
+        drop(core);
+        let core = Core::open(root.path()).unwrap();
+        let replay = core.model_request(&latest.call_id).unwrap();
+        assert_eq!(events(&replay), observed);
+        assert_eq!(replay.history_cutoff, request.history_cutoff);
+    }
+}
+
+#[test]
+fn schema_15_steering_migrates_without_rewriting_native_context() {
+    let root = tempfile::tempdir().unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let p = persona(&core, "chat_completions");
+    let db = &core.database;
+    let turn = db.enqueue_turn(&p, "saved main context").unwrap();
+    let turn = db.activate_turn(&p, &turn).unwrap();
+    complete(db, &p, &turn, "saved main answer");
+    let before = db.request(&turn.call_id).unwrap();
+    let pending = db.enqueue_turn(&p, "saved pending input").unwrap();
+    db.connection
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO steered_calls(call_id,user_id) VALUES(?1,?2)",
+            params![pending.call_id, turn.user.id],
+        )
+        .unwrap();
+    drop(core);
+    let conn = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
+    conn.execute_batch("DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; PRAGMA user_version=15;").unwrap();
+    let core = Core::open(root.path()).unwrap();
+    let after = core.model_request(&turn.call_id).unwrap();
+    assert_eq!(after.session_id, before.session_id);
+    assert!(!after.history_tools);
+    assert_eq!(
+        after.items.iter().map(|i| &i.payload).collect::<Vec<_>>(),
+        before.items.iter().map(|i| &i.payload).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        core.database.steered_calls(&turn.user.id).unwrap(),
+        [pending.call_id]
+    );
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        16
+    );
+    assert!(
+        !conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
+}
 #[test]
 fn thresholds_respect_idle_backlog_and_priority_projection() {
     let budget = crate::ContextBudget {

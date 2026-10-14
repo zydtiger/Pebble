@@ -73,9 +73,9 @@ struct ClassifierSheet: View {
                         Text(hasKey ? "An inline key is saved; its value is never shown." : (environment.isEmpty ? "No inline key saved." : "Environment reference: \(environment)"))
                             .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                     }
-                    Text("Mentions always request a reply directly. A failed participation check stays visible so you can mention the character yourself.")
+                    Text("Mentions always request a reply directly, even when automatic participation is unavailable.")
                         .font(.system(size: 12))
-                    Text("Finish or stop this character's replies and participation checks before saving; app defaults require all characters to be idle.")
+                    Text("Wait for this character's replies and participation checks to finish before saving; app defaults require all characters to be idle.")
                         .font(.system(size: 11)).foregroundStyle(PebbleTheme.muted)
                 }.disabled(!loaded || saving).textFieldStyle(.roundedBorder).padding(.trailing, 4)
             }

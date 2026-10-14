@@ -17,7 +17,7 @@ mod image_generation;
 mod images;
 pub use image_generation::{
     ChatGptImageSettings, ImageGeneration, ImageGenerationListener, ImageGenerationSettings,
-    StudioSettings,
+    ImageOperationKind, StudioSettings,
 };
 pub use images::ImageAsset;
 mod live;
@@ -190,6 +190,7 @@ impl Core {
                 mentions,
                 images: &[],
                 separate_tasks: false,
+                steer: false,
             },
             listener,
         )
@@ -222,6 +223,7 @@ impl Core {
                 mentions,
                 images,
                 separate_tasks: false,
+                steer: false,
             },
             listener,
         )
@@ -248,6 +250,7 @@ impl Core {
                 mentions,
                 images,
                 separate_tasks,
+                steer: true,
             },
             listener,
         )

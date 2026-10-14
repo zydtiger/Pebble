@@ -13,15 +13,22 @@ func exerciseImageGenerationBridge(_ root: URL) async throws {
     try require(restored.studio?.modelId == "synthetic-model" && restored.studio?.steps == nil && restored.chatgpt != nil, "Typed image settings lost defaults")
     let room = model.selectedID ?? ""
     let persona = model.selected?.id ?? ""
-    let queued = ImageGenerationRecord(id: "synthetic-image", personaId: persona, conversationId: room, backend: "studio", status: "queued", activity: "Waiting in Studio's queue…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)
+    let queued = ImageGenerationRecord(id: "synthetic-image", personaId: persona, conversationId: room, kind: .generate, backend: "studio", status: "queued", activity: "Waiting in Studio's queue…", detail: "", publicationStatus: "pending", assetId: nil, actualWidth: nil, actualHeight: nil)
     model.imageGenerations = [queued]
-    try require(model.hasPendingImages && model.monitorTasks.count == 1, "Queued image is hidden or Stop is unreachable after acknowledgement")
+    try require(model.monitorTasks.count == 1, "Queued image is hidden after acknowledgement")
+    try require(model.monitorTasks.first?.title == "Generate image · Studio", "Creation monitor title lost typed kind")
+    var edit = queued
+    edit.kind = .edit; edit.activity = "Editing an image in Studio…"
+    model.imageGenerations = [edit]
+    try require(model.monitorTasks.first?.title == "Edit image · Studio" && model.monitorTasks.first?.status == edit.activity, "Editing monitor ignores typed operation kind/activity")
+    edit.backend = "chatgpt"; model.imageGenerations = [edit]
+    try require(model.monitorTasks.first?.title == "Edit image · ChatGPT", "ChatGPT edit monitor title is incorrect")
     var terminal = queued
     terminal.status = "completed"; terminal.publicationStatus = "queued"
     terminal.assetId = "immutable-image"; terminal.actualWidth = 1254; terminal.actualHeight = 1254
     model.imageGenerations = [terminal]
-    try require(model.monitorTasks.isEmpty && model.hasPendingImages, "Terminal generation monitor or queued publication Stop is incorrect")
+    try require(model.monitorTasks.isEmpty, "Terminal generation monitor or queued publication status is incorrect")
     terminal.publicationStatus = "completed"; model.imageGenerations = [terminal]
-    try require(!model.hasPendingImages && model.monitorTasks.isEmpty, "Completed image work remains active")
+    try require(model.monitorTasks.isEmpty, "Completed image work remains active")
     model.closeChat()
 }

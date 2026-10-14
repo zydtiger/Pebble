@@ -3,6 +3,7 @@ mod chatgpt;
 mod manager;
 mod prompt;
 pub(crate) mod settings;
+pub(crate) mod source;
 mod studio;
 pub(crate) mod tool;
 pub(crate) use manager::Manager;
@@ -27,6 +28,12 @@ pub struct ImageGeneration {
     pub actual_height: Option<u32>,
     #[serde(default)]
     pub effective_parameters: serde_json::Value,
+    #[serde(default)]
+    pub kind: ImageOperationKind,
+    #[serde(default)]
+    pub(crate) source: Option<source::Source>,
+    #[serde(default)]
+    pub(crate) input_id: Option<String>,
     pub(crate) arguments: tool::Arguments,
     pub(crate) settings: ImageGenerationSettings,
     pub(crate) executable: String,
@@ -63,4 +70,12 @@ mod chatgpt_tests;
 pub(crate) struct ImageReport {
     pub call: String,
     pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageOperationKind {
+    #[default]
+    Generate,
+    Edit,
 }

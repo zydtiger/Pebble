@@ -210,23 +210,32 @@ fn build_request_body(
         if request.image_generation_tools
             || (request.response_schema.is_some()
                 && messages.iter().any(|v| {
-                    v["name"] == "generate_image"
+                    matches!(v["name"].as_str(), Some("generate_image" | "edit_image"))
                         || v["tool_calls"].as_array().is_some_and(|c| {
-                            c.iter().any(|v| v["function"]["name"] == "generate_image")
+                            c.iter().any(|v| {
+                                matches!(
+                                    v["function"]["name"].as_str(),
+                                    Some("generate_image" | "edit_image")
+                                )
+                            })
                         })
                 }))
         {
-            let mut declaration = crate::image_generation::tool::declaration(&request.protocol);
-            if request.image_generation_tools {
-                let parameters = if request.protocol == "responses" {
-                    &mut declaration["parameters"]
-                } else {
-                    &mut declaration["function"]["parameters"]
-                };
-                parameters["properties"]["backend"]["enum"] =
-                    json!(request.image_generation_backends);
+            for mut declaration in [
+                crate::image_generation::tool::declaration(&request.protocol),
+                crate::image_generation::tool::edit_declaration(&request.protocol),
+            ] {
+                if request.image_generation_tools {
+                    let parameters = if request.protocol == "responses" {
+                        &mut declaration["parameters"]
+                    } else {
+                        &mut declaration["function"]["parameters"]
+                    };
+                    parameters["properties"]["backend"]["enum"] =
+                        json!(request.image_generation_backends);
+                }
+                tools.push(declaration);
             }
-            tools.push(declaration);
         }
         if request.history_tools
             || (request.response_schema.is_some()

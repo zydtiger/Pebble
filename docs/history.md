@@ -31,6 +31,7 @@ only ready slots into the persona queues. Native persona memory and explicit con
 | `context_marker_rooms` | Durable private/current-group projections with display anchor; independent from consumed-event cutoff |
 | `image_assets` | Imported immutable UUID, source/model metadata and versioned frozen rendition reference; files remain under the runtime root |
 | `message_images` | Message/asset association with explicit unique position and per-message unique asset |
+| `steered_calls` | Schema 15: obsolete call → newer user receipt; suppresses obsolete bubbles without deleting frozen history or losing unactivated user input |
 | `model_calls` | Immutable room/persona/membership identity and persona-wide call order; queued/active lifecycle, optional session/input cutoff, reply room, trigger/reply IDs, receipt/event cutoff, status/error, optional originating slot and retry_of, frozen state_before, and validation_errors |
 
 All sequences are assigned inside transactions. Timestamps describe creation;
@@ -236,9 +237,9 @@ descriptor; it is not automatically removed or rolled back. A failed staging
 attempt can also leave its evidence there. See [memory publication and recovery](memory.md#durable-effects-and-native-replay)
 for conflict guarantees and manual resolution.
 
-## Schema 15 and native recall
+## Schema 16 and native recall
 
-Schema 15 adds `model_sessions.history_tools` (false for preserved sessions),
+Schema 16 adds `model_sessions.history_tools` (false for preserved sessions),
 `model_calls.history_cutoff`, the automatic-maintenance flag and the two rollover
 bookkeeping tables above. Existing IDs, native bytes, timestamps, membership
 intervals, state and files remain intact. New contexts enable bounded read-only

@@ -59,6 +59,54 @@ pub(super) fn prepare(
         .unwrap();
     id.unwrap()
 }
+pub(super) fn prepare_edit(
+    core: &Core,
+    backend: &str,
+    settings: &ImageGenerationSettings,
+    executable: &str,
+) -> (String, crate::ImageAsset) {
+    let persona = core.workspace().unwrap().personas.remove(0);
+    let mut original = Vec::new();
+    RgbImage::new(1024, 768)
+        .write_to(&mut Cursor::new(&mut original), ImageFormat::Png)
+        .unwrap();
+    let source = core.import_image_data(&original).unwrap();
+    let (_, mut turns, _) = core
+        .database
+        .enqueue_room_images(
+            &persona.conversation_id,
+            "Edit this synthetic image",
+            &[],
+            std::slice::from_ref(&persona),
+            std::slice::from_ref(&source.id),
+        )
+        .unwrap();
+    let turn = core
+        .database
+        .activate_turn(&persona, &turns.remove(0))
+        .unwrap();
+    let request = core.database.request(&turn.call_id).unwrap();
+    let native = serde_json::json!({"type":"function_call","call_id":"edit-call","name":"edit_image","arguments":serde_json::json!({"image_id":source.id,"prompt":{"instruction":"Change the pebble to green", "preserve":["composition"],"details":"keep the label \"茶\"\nunchanged"},"backend":backend,"size":{"width":256,"height":256}}).to_string()});
+    let call = match tool::calls(&[native]).unwrap() {
+        tool::Parsed::Valid(call) => call,
+        _ => panic!("invalid edit"),
+    };
+    let (_, id) = core
+        .database
+        .prepare_image_generation(&request, &call, &[], settings, executable)
+        .unwrap();
+    core.database
+        .finish_turn(
+            &turn,
+            "",
+            MessageStatus::Failed,
+            Some("Synthetic fixture skips acknowledgement"),
+            None,
+        )
+        .unwrap();
+    (id.unwrap(), source)
+}
+
 #[test]
 #[ignore = "Opt-in real backend request; configure PEBBLE_IMAGE_PROBE_BACKEND and backend-specific environment"]
 fn live_image_generation_probe() {

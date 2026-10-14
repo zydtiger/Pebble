@@ -61,8 +61,8 @@ imported draft asset. No automatic cleanup or broad deletion is performed.
 ## Frozen input and visibility
 
 New multimodal user inputs contain typed `pebble_image_v1` parts whose references
-record asset UUID, exact rendition, SHA-256, bytes, dimensions, MIME and fixed
-`high` detail. Envelope metadata and preceding text parts associate images with
+record asset UUID, exact rendition, SHA-256, bytes, rendition dimensions, MIME
+and fixed `high` detail. Envelope metadata and preceding text parts associate images with
 their message and participant. Plain text and provider output are never parsed
 to discover assets. The HTTP adapter verifies the saved rendition and temporarily
 materializes a data URL into native Chat Completions `image_url` or Responses
@@ -115,3 +115,10 @@ The classifier's ignored `opt_in_selected_classifier_consumes_changed_image_pixe
 unit test takes `PEBBLE_CLASSIFIER_API_ROOT` and `PEBBLE_CLASSIFIER_MODEL`.
 Identical text with changed red/blue pixels must produce changed correct answers;
 HTTP success alone is insufficient evidence.
+
+New visible image inputs also include `original_size` with the immutable asset's
+original width/height, separately from the at-most-768-pixel vision rendition.
+This lets image editing prefer original dimensions when the user gives no size.
+The attribution text labels both sizes explicitly. Legacy references omit this
+optional metadata and remain readable; new inputs can enrich it from existing
+asset rows without updating those rows or rewriting frozen history.

@@ -21,4 +21,4 @@ CREATE TABLE session_recent_messages (
  PRIMARY KEY(session_id,position),
  UNIQUE(session_id,message_id)
 );
-PRAGMA user_version=15;
+PRAGMA user_version=16;

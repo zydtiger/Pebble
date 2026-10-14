@@ -89,7 +89,7 @@ Responses-only fields; ordinary credential saves preserve the chosen dialect.
 ## Independent participation settings
 
 App defaults and character settings link to a separate **Participation model**
-sheet, also available in each group. It edits `[defaults.classifier]` or the entire
+sheet. Group chats do not expose a participation settings shortcut. It edits `[defaults.classifier]` or the entire
 persona `[classifier]` override, leaving chat/SOUL/MEMORY/budgets untouched. Turning
 off a character override inherits the app classifier; turning off the app
 classifier leaves manual mentions. Credentials use the same explicit secure

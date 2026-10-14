@@ -58,7 +58,7 @@ struct ParticipationPanel: View {
         if record.slotStatus == "completed" { return record.phase == "permission" ? "Acknowledged" : "Replied" }
         if record.slotStatus == "admitted" { return "Reply in progress" }
         if record.slotStatus == "pending" {
-            if record.status != "pending" { return "Waiting for earlier replies…" }
+            if record.status != "pending" { return "Preparing reply…" }
             if record.phase == "intent" { return "Checking the group question…" }
             if record.phase == "permission" { return "Considering an acknowledgment…" }
             return "Deciding…"
