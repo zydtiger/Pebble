@@ -561,7 +561,12 @@ final class ChatModel {
         run.task = Task { [weak self, client] in
             do {
                 let handles: [ChatHandle]
-                if let retry { handles = [try await client.retry(persona: retry.0, reply: retry.1, observer: observer)] }
+                if let retry {
+                    handles = [try await client.retry(persona: retry.0, reply: retry.1, observer: observer)]
+                    let messages = try await client.history(room: conversation.id)
+                    self?.observeMessageTimes(messages)
+                    if !run.superseded { state.bubbles = messages.map(ChatBubble.init) }
+                }
                 else {
                     let submission = try await client.send(room: conversation.id, prompt: prompt, mentions: mentions, images: images, separateTasks: separate, observer: observer)
                     self?.observeMessageTimes([submission.message])

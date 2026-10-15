@@ -22,6 +22,32 @@ struct RenderChecks {
                 guard model.selected != nil, model.error == nil else {
                     throw RenderError.failed(model.error ?? "No persona loaded")
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_RETRY_ONLY"] == "1" {
+                    try "[defaults.chat]\ncontext_len=65536\nmax_output_tokens=4096\nmodel='synthetic'\nbase_url='http://127.0.0.1:9/v1'\napi='responses'\n"
+                        .write(to: model.dataRoot.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+                    await model.load()
+                    model.sendMessage("Please try replying again.")
+                    try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+                    guard let failed = model.bubbles.last, failed.canRetry, failed.text.isEmpty else {
+                        throw RenderError.failed("Missing empty failure")
+                    }
+                    try capture(window, name: "retry-empty-failed")
+                    var settings = try await model.readSettings(nil)
+                    settings.chat.enabled = false
+                    try await model.saveSettings(nil, update: SettingsUpdateRecord(chat: settings.chat, credential: .keep, persona: nil))
+                    model.retryReply(failed.id)
+                    try await ClassifierChecks.wait(model, until: { !model.bubbles.contains { $0.id == failed.id } })
+                    guard model.bubbles.count == 2 else { throw RenderError.failed("Retry duplicated failure bubble") }
+                    try capture(window, name: "retry-empty-replacing")
+                    try await ClassifierChecks.wait(model, until: { !model.hasActiveReplies })
+                    guard model.bubbles.count == 2, model.bubbles.last?.status == .complete else {
+                        throw RenderError.failed("Retry did not replace failure with completed reply")
+                    }
+                    try capture(window, name: "retry-empty-complete")
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 if ProcessInfo.processInfo.environment["PEBBLE_RENDER_MEMORY_ONLY"] == "1" {
                     try await checkMemoryPresentation(window: window, model: model)
                     model.closeChat()

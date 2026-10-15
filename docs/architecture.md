@@ -317,7 +317,8 @@ See [state controls and recovery](state.md).
 
 Only the latest terminal unsuccessful reply is retryable while that persona is
 idle. Retry creates a reply/call with retry_of and reuses the original receipt,
-never changing old bubbles or frozen requests. A current compatible session can
+preserving old records and frozen requests. Transcript snapshots hide empty unsuccessful
+attempts once a retry exists; the native UI refreshes that snapshot on retry acceptance. A current compatible session can
 reuse the nearest frozen ancestor's cutoff, including across unactivated
 cancelled retry attempts. Otherwise activation explicitly selects the original
 user event into the new context and excludes other earlier events. Durable

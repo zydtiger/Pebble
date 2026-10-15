@@ -174,9 +174,10 @@ struct BridgeChecks {
         model.selectedRoom?.runs.forEach { $0.cancel() }
         for _ in 0..<300 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
         try require(model.bubbles.last?.status == .cancelled && model.bubbles.last?.canRetry == true, "Group cancellation/retry metadata failed: bubbles=\(model.bubbles.map { "\($0.status):\($0.canRetry)" }), error=\(model.error ?? "none"), replying=\(model.isReplying)")
+        let retryCount = model.bubbles.count + (model.bubbles.last!.text.isEmpty ? 0 : 1)
         model.retryReply(model.bubbles.last!.id)
         for _ in 0..<400 where model.hasActiveReplies { try await Task.sleep(for: .milliseconds(10)) }
-        try require(model.bubbles.count == 7 && model.bubbles.last?.status == .complete && model.bubbles.last?.senderID == a, "Group retry duplicated user or used wrong speaker/destination")
+        try require(model.bubbles.count == retryCount && model.bubbles.last?.status == .complete && model.bubbles.last?.senderID == a, "Group retry duplicated user or used wrong speaker/destination")
         model.closeChat()
     }
 
@@ -276,10 +277,11 @@ struct BridgeChecks {
         try require(model.bubbles.count == 2 && model.bubbles[1].canRetry, "Cancelled latest reply did not expose Retry")
         let userID = model.bubbles[0].id
         model.draft = "Preserve this draft"
-        model.retryReply(model.bubbles[1].id)
+        let failedID = model.bubbles[1].id
+        model.retryReply(failedID)
         for _ in 0..<300 where model.isReplying { try await Task.sleep(for: .milliseconds(10)) }
-        try require(model.bubbles.count == 3 && model.bubbles[0].id == userID && model.bubbles[2].status == .complete, "Retry duplicated user or failed routing")
-        try require(model.bubbles[1].status == .cancelled && model.draft == "Preserve this draft", "Retry replaced partial attempt or draft")
+        try require(model.bubbles.count == 2 && model.bubbles[0].id == userID && model.bubbles[1].status == .complete, "Retry duplicated user or failed routing")
+        try require(!model.bubbles.contains { $0.id == failedID } && model.draft == "Preserve this draft", "Retry kept empty failure or changed draft")
         let before = try await model.readResponseSettings(id)
         let savedMessages = model.bubbles.map(\.id)
         let initial = "{\"affinity_user\":7,\"mood\":\"quiet\"}"

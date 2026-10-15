@@ -15,7 +15,7 @@ impl ChatListener for Sink {
     }
 }
 #[test]
-fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attempts() {
+fn both_protocols_retry_after_restart_reuse_frozen_input_and_replace_empty_attempts() {
     for protocol in ["chat_completions", "responses"] {
         let partial = if protocol == "responses" {
             responses_support::event(
@@ -69,12 +69,11 @@ fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attemp
             assert_eq!(a.payload, b.payload);
         }
         let saved = core.messages(&id).unwrap();
-        assert_eq!(saved.len(), 3);
+        assert_eq!(saved.len(), 2);
         assert_eq!(saved[0].content, "one original user");
-        assert!(saved[1].content.is_empty());
-        assert_eq!(saved[1].status, MessageStatus::Failed);
-        assert!(!saved[1].can_retry);
-        assert_eq!(saved[2].status, MessageStatus::Complete);
+        assert_eq!(saved[1].status, MessageStatus::Complete);
+        assert_eq!(saved[1].content, "accepted");
+        assert!(!saved.iter().any(|message| message.id == old_reply.id));
         assert!(matches!(
             core.retry_message(&id, &old_reply.id, Arc::new(Sink)),
             Err(Error::RetryUnavailable(_))
@@ -113,6 +112,9 @@ fn both_protocols_retry_after_restart_reuse_frozen_input_and_keep_partial_attemp
             .unwrap(),
             1
         );
+        drop(attempt);
+        drop(core);
+        assert_eq!(reopen(root.path()).messages(&id).unwrap(), saved);
     }
 }
 #[test]

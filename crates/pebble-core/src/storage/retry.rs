@@ -88,6 +88,43 @@ fn unavailable() -> Error {
 mod tests {
     use super::*;
     #[test]
+    fn empty_retry_chain_replaces_visible_attempt_but_retains_records() {
+        let root = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(root.path()).unwrap();
+        let persona = core.workspace().unwrap().personas.remove(0);
+        let first = core.database.enqueue_turn(&persona, "hello").unwrap();
+        core.database
+            .finish_pending(&first, MessageStatus::Failed, Some("failure"))
+            .unwrap();
+        for status in [
+            MessageStatus::Failed,
+            MessageStatus::Cancelled,
+            MessageStatus::Interrupted,
+        ] {
+            let old = core
+                .database
+                .messages(&first.conversation_id)
+                .unwrap()
+                .pop()
+                .unwrap();
+            let next = core.database.enqueue_retry(&persona, &old.id).unwrap();
+            let visible = core.database.messages(&first.conversation_id).unwrap();
+            assert_eq!(visible.len(), 2);
+            assert_eq!(visible[1].id, next.reply.id);
+            assert_eq!(visible[1].status, MessageStatus::Queued);
+            core.database
+                .finish_pending(&next, status, Some("another failure"))
+                .unwrap();
+            assert!(core.database.messages(&first.conversation_id).unwrap()[1].can_retry);
+        }
+        let connection = core.database.connection.lock().unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM model_calls", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 4);
+    }
+
+    #[test]
     fn unactivated_cancelled_retry_reuses_nearest_frozen_ancestor() {
         let root = tempfile::tempdir().unwrap();
         let core = crate::Core::open(root.path()).unwrap();
@@ -118,6 +155,10 @@ mod tests {
             .database
             .enqueue_retry(&persona, &queued.reply.id)
             .unwrap();
+        let visible = core.database.messages(&pending.conversation_id).unwrap();
+        assert_eq!(visible.len(), 3);
+        assert_eq!(visible[1].content, "partial");
+        assert_eq!(visible[2].id, again.reply.id);
         let active = core.database.activate_turn(&persona, &again).unwrap();
         let replay = core.database.request(&active.call_id).unwrap();
         assert_eq!(replay.items.len(), original.items.len());

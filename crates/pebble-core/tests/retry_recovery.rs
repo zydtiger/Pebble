@@ -43,7 +43,7 @@ fn restart_exposes_interrupted_queued_retry_without_duplicating_received_events(
     let request = core.model_request(&attempt.id).unwrap();
     assert_eq!(request.items.len(), 3);
     assert!(String::from_utf8_lossy(&request.items[2].payload).contains("queued before crash"));
-    assert_eq!(core.messages(&id).unwrap().len(), 5);
+    assert_eq!(core.messages(&id).unwrap().len(), 4);
     let db = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
     assert_eq!(
         db.query_row(

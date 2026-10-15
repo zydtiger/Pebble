@@ -250,7 +250,11 @@ impl Database {
                   AND (NOT EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=j.id OR EXISTS(SELECT 1 FROM json_each(task.record,'$.reports') r WHERE json_extract(r.value,'$.call')=j.id)) OR EXISTS(SELECT 1 FROM delegated_tasks task WHERE json_extract(task.record,'$.report_call')=j.id AND json_extract(task.record,'$.report_state')='failed')) AND NOT EXISTS(SELECT 1 FROM image_generations image WHERE EXISTS(SELECT 1 FROM json_each(image.record,'$.reports') r WHERE json_extract(r.value,'$.call')=j.id) AND (json_extract(image.record,'$.invalidated') OR json_extract(image.record,'$.report_call') IS NOT j.id OR json_extract(image.record,'$.publication_status')!='failed')) AND NOT EXISTS(SELECT 1 FROM model_calls newer WHERE newer.persona_id=j.persona_id AND newer.persona_sequence>j.persona_sequence)
                   AND NOT EXISTS(SELECT 1 FROM model_calls busy WHERE busy.persona_id=j.persona_id AND busy.status IN ('queued','streaming')) AND NOT EXISTS(SELECT 1 FROM context_maintenance maintenance WHERE maintenance.persona_id=j.persona_id AND maintenance.status='running') AND NOT EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=j.persona_id AND s.status IN ('pending','admitted')))
                 FROM messages m LEFT JOIN model_calls j ON j.reply_message_id = m.id
-                WHERE m.conversation_id = ?1 AND NOT EXISTS(SELECT 1 FROM steered_calls s WHERE s.call_id=j.id) ORDER BY m.sequence"
+                WHERE m.conversation_id = ?1 AND NOT EXISTS(SELECT 1 FROM steered_calls s WHERE s.call_id=j.id)
+                AND NOT (m.content = '' AND m.status IN ('failed','cancelled','interrupted')
+                    AND NOT EXISTS(SELECT 1 FROM message_images image WHERE image.message_id=m.id)
+                    AND EXISTS(SELECT 1 FROM model_calls retry WHERE retry.retry_of=j.id))
+                ORDER BY m.sequence"
         )?;
         let mut messages: Vec<Message> = query
             .query_map([conversation_id], |row| {

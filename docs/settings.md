@@ -51,7 +51,9 @@ be eligible when a later call exists. Other personas can continue independently.
 
 Retry appends one new reply and queued model_call with retry_of, reusing the
 original user message and receipt event. Old partial/error/status/cutoffs remain
-unchanged. There is no second user bubble or received event. Acceptance and
+unchanged in storage. Empty unsuccessful attempts are hidden from the transcript
+once a retry is accepted, including after restart, so only the replacement reply
+bubble remains. Attempts with text or images stay visible. There is no second user bubble or received event. Acceptance and
 activation retain the same durable queue and cancellation rules as normal sends.
 
 When the current compatible active session matches the nearest frozen ancestor,
@@ -69,7 +71,7 @@ representation prevents the next ordinary turn from importing it again.
 Startup marks retained queued/active calls interrupted. The transcript exposes
 saved failure details and current retry eligibility after reopen. Nothing is
 resent automatically. Repair settings or choose a fresh context deliberately,
-then retry. The native UI keeps earlier attempts and unsent room drafts intact.
+then retry. The native UI refreshes the transcript on retry acceptance and keeps unsent room drafts intact.
 
 
 ## v0.1.1 state contract
