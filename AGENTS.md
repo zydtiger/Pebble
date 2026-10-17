@@ -46,6 +46,9 @@ file-level hooks and `git diff --check`, not application builds.
 Keep authored files and tests small and readable. Add targeted tests for
 behavior, ownership, persistence, and cancellation; do not test generated code
 by reproducing its implementation. Never commit runtime data or credentials.
+Never read or output `config.toml` in full: it may contain API keys. Inspect
+only the specific fields needed for the task, and redact API keys and other
+secrets before any output.
 
 ## Git and distribution
 
