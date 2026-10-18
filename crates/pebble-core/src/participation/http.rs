@@ -118,18 +118,23 @@ pub(crate) async fn classify(
 
 fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Result<Value, Error> {
     let connection = &config.connection;
+    let prompt = match phase {
+        "intent" => include_str!("../../assets/fallback-intent-prompt.txt").trim_end(),
+        "permission" => include_str!("../../assets/fallback-permission-prompt.txt").trim_end(),
+        _ => super::PROMPT.trim_end(),
+    };
+    let prompt = if connection.uses_json_object() {
+        let key = if phase == "intent" {
+            "whole_group_question"
+        } else {
+            "respond"
+        };
+        format!("{prompt}\nReturn only a JSON object, for example {{\"{key}\":true}}.")
+    } else {
+        prompt.to_owned()
+    };
     let messages = vec![
-        crate::storage::input_message(
-            &connection.api,
-            "system",
-            match phase {
-                "intent" => include_str!("../../assets/fallback-intent-prompt.txt").trim_end(),
-                "permission" => {
-                    include_str!("../../assets/fallback-permission-prompt.txt").trim_end()
-                }
-                _ => super::PROMPT.trim_end(),
-            },
-        ),
+        crate::storage::input_message(&connection.api, "system", &prompt),
         crate::images::input_message(&connection.api, input)?,
     ];
     let (_, mut body) = if connection.api == "responses" {
@@ -148,7 +153,9 @@ fn request_body(config: &ClassifierConnection, input: &Value, phase: &str) -> Re
     } else {
         super::schema()
     };
-    if connection.api == "chat_completions"
+    if connection.uses_json_object() {
+        body["response_format"] = json!({"type":"json_object"});
+    } else if connection.api == "chat_completions"
         || connection.responses_schema_format.as_deref() == Some("response_format")
     {
         body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"participation","strict":true,"schema":schema}});
@@ -215,3 +222,5 @@ fn budgeted_body(config: &ClassifierConnection, input: &str, phase: &str) -> Res
 
 #[cfg(test)]
 mod budget_tests;
+#[cfg(test)]
+mod deepseek_tests;

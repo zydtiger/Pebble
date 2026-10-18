@@ -108,6 +108,32 @@ fn omission_sends_no_hidden_temperature_or_template_switch() {
 }
 
 #[test]
+fn deepseek_json_object_covers_every_phase_without_relaxing_boolean_validation() {
+    let mut config = config("chat_completions", None);
+    config.connection.base_url = "https://api.deepseek.com/v1".into();
+    config.connection.request.clear();
+    for phase in ["initial", "reassess", "intent", "permission"] {
+        let body = budgeted_body(&config, "{}", phase).unwrap();
+        assert_eq!(body["response_format"], json!({"type":"json_object"}));
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("JSON")
+        );
+        let key = if phase == "intent" {
+            "whole_group_question"
+        } else {
+            "respond"
+        };
+        assert!(super::super::phase_answer(&json!({key:true}).to_string(), phase).unwrap());
+        for invalid in [json!({key:"true"}), json!({key:true,"extra":0}), json!({})] {
+            assert!(super::super::phase_answer(&invalid.to_string(), phase).is_err());
+        }
+    }
+}
+
+#[test]
 fn four_normalized_images_fit_16k_and_prune_optional_images_as_complete_events() {
     let root = tempfile::tempdir().unwrap();
     let pixels = image::RgbImage::from_pixel(768, 768, image::Rgb([255, 0, 0]));

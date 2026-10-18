@@ -274,7 +274,9 @@ fn build_request_body(
         && !request.image_generation_tools
         && let Some(schema) = &request.response_schema
     {
-        if chat.api == "chat_completions"
+        if chat.uses_json_object() {
+            body["response_format"] = json!({"type":"json_object"});
+        } else if chat.api == "chat_completions"
             || chat.responses_schema_format.as_deref() == Some("response_format")
         {
             body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"persona_response","strict":true,"schema":schema}});
@@ -291,3 +293,5 @@ fn build_request_body(
 
 #[cfg(test)]
 mod budget_tests;
+#[cfg(test)]
+mod deepseek_tests;

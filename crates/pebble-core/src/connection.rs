@@ -1,5 +1,15 @@
 use crate::{ChatConnection, Error};
 
+impl ChatConnection {
+    /// DeepSeek Chat Completions accepts JSON mode, but rejects JSON Schema mode.
+    /// Match the API host, not the model name (which other servers can also serve).
+    pub(crate) fn uses_json_object(&self) -> bool {
+        self.api == "chat_completions"
+            && url::Url::parse(&self.base_url)
+                .is_ok_and(|url| url.host_str() == Some("api.deepseek.com"))
+    }
+}
+
 pub(crate) fn identity(chat: Option<&ChatConnection>) -> (String, String, String) {
     match chat {
         None => ("pebble_demo_v1".into(), "local-demo".into(), String::new()),

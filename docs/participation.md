@@ -40,14 +40,17 @@ replies, decisions and still-admittable slots in the affected scope; validation 
 replacement. No chat session or state boundary changes.
 
 Both protocols use streaming false, a configured output cap (64 in the example),
-and required-boolean-only strict JSON schema. The example explicitly configures
+and required-boolean-only local validation. The example explicitly configures
 `temperature = 0` and nested `chat_template_kwargs.enable_thinking = false`;
 otherwise optional parameters are omitted. Both connections use the concrete
 [request settings contract](settings.md#concrete-request-parameters).
-Chat sends `response_format.json_schema`. Responses sends `store=false`,
+Chat normally sends `response_format.json_schema`; the exact `api.deepseek.com`
+host uses `response_format: {"type":"json_object"}` in all four decision phases.
+Use DeepSeek's `request.thinking.type = "disabled"` instead of the Qwen template
+switch for a short non-thinking classification budget. Responses sends `store=false`,
 `max_output_tokens`, and standard `text.format`, or the explicitly selected
 `responses_schema_format = "response_format"` llama-compatible extension.
-There is no provider/hostname/model sniffing or alternate-model retry.
+There is no automatic capability fallback or alternate-model retry.
 Backend support for thinking controls must be verified independently; parameters
 remain explicit across protocol switches, with incompatible values rejected.
 

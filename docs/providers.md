@@ -44,6 +44,39 @@ Final-only structured requests send Chat Completions `response_format` with
 prefix also includes the schema and response semantics; provider constraints do
 not replace Rust validation. Legacy sessions send neither constraint.
 
+DeepSeek Chat Completions at the exact hostname `api.deepseek.com` instead sends
+`response_format: {"type":"json_object"}` for both final chat replies and every
+participation phase. Both the API root and `/v1` root select this behavior.
+DeepSeek's Chat Completions endpoint rejects `json_schema`; JSON mode constrains
+JSON syntax only. The frozen chat prefix still carries the response schema;
+participation prompts still specify the required boolean. Rust validates the same
+reply/state schema and strict participation fields before accepting either output.
+Chat retains its bounded format-repair behavior; classifier failures are not retried.
+Tool-enabled chat requests retain their native tool declarations and final-only
+format selection. No API key, history, schema, or settings migration is needed.
+
+This rule is specific to the API host and Chat Completions protocol, not the model
+name or whether a server is hosted. Local SGLang/vLLM/llama.cpp, OpenAI, and other
+hosts retain the existing schema mode. Proxies under another hostname do not
+inherit the DeepSeek rule. Responses behavior is unchanged. There is no HTTP-error
+fallback or capability probe that silently weakens a schema constraint.
+
+On 2026-10-17, `deepseek-flash` rejected both chat and classifier `json_schema`
+requests with HTTP 400, while JSON mode passed. Isolated live tests through
+Pebble then verified validated chat/state acceptance, a second turn after restart,
+and true/false participation decisions. Credentials are supplied through
+`PEBBLE_DEEPSEEK_CHAT_KEY` and `PEBBLE_DEEPSEEK_CLASSIFIER_KEY`; the tests never
+read the application's files or save keys into test configuration:
+
+```sh
+cargo test -p pebble-core --test deepseek_live -- --ignored
+cargo test -p pebble-core --lib deepseek_participation_accepts_true_and_false -- --ignored
+```
+
+See [DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode/) for
+JSON mode's prompt requirements and limitations. JSON syntax guarantees are
+weaker than schema adherence, so local validation remains mandatory in both modes.
+
 Some compatible Responses servers expose the Chat Completions constraint as an
 extension instead of implementing standard `text.format`. Explicitly configure
 that connection with `responses_schema_format = "response_format"`; default or
@@ -53,7 +86,7 @@ It can be set in app-default or persona connection TOML, or the native Responses
 form's **Response schema** picker: **Standard · text.format** or
 **llama.cpp · response_format**. Native settings saves for Responses preserve
 the selection; switching the connection to Chat Completions removes
-this Responses-only field. No endpoint sniffing or automatic capability fallback occurs.
+this Responses-only field. No automatic Responses capability fallback occurs.
 
 On 2026-10-09, synthetic probes against llama-server build `b11146-7fe450e19`,
 model `gemma-4-31b-uncensored`, tested a schema enum deliberately contrary to the
