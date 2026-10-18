@@ -34,7 +34,7 @@ Pebble currently runs from a source build. You need:
   its setup.
 - Rust installed with [rustup](https://rustup.rs). The repository selects the
   required Rust toolchain automatically.
-- XcodeGen 2.46 or later and `just`.
+- XcodeGen 2.46 or later, `just`, and Python 3 (for build-cache maintenance).
 
 Install the build tools with Homebrew, then clone and run Pebble:
 

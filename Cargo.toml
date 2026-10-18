@@ -18,6 +18,12 @@ uuid = { version = "1.27", features = ["v4"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 uniffi = "=0.32.2"
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 strip = "debuginfo"

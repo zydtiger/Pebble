@@ -26,6 +26,12 @@ repos:
         files: ^\.github/workflows/
   - repo: local
     hooks:
+      - id: build-cache-tests
+        name: Build cache eviction tests
+        entry: python3 -B scripts/test-build-cache.py
+        language: system
+        files: ^scripts/(prune-build-cache|test-build-cache)\.py$
+        pass_filenames: false
       - id: cargo-fmt
         name: Rust formatting
         entry: cargo fmt --all -- --check

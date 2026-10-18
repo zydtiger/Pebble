@@ -8,6 +8,44 @@ for local use, not signed or notarized distribution releases.
 
 ## Validate
 
+### Rust build cache
+
+Dev and test profiles use `line-tables-only` debug information: backtraces keep
+source locations, while debugger variable/type inspection is limited. Incremental
+compilation remains enabled.
+
+Before building, `just build` (also `just run`) trims this checkout's
+`target/debug` cache to a default budget of 20 GiB. It removes the oldest artifact
+groups and incremental directories first, stopping once below budget. Related
+fingerprints, dependencies and build-script outputs are removed together; final
+top-level libraries/executables and unrecognized files are retained. Release,
+Xcode outputs and other worktrees are outside its scope.
+
+This is approximate LRU: ordering uses the latest filesystem access/modification
+time in each group, without reading file contents. Filesystems may delay or disable
+access-time updates, and other readers may refresh them. It is not an exact Cargo
+usage log. Accounting uses allocated bytes and deduplicates hardlinks; APFS shared
+extents can make actual reclaimed free space differ.
+
+Cleanup acquires Cargo's Debug directory locks without waiting and skips cleanup
+if a build is active. It runs before the build, so a build can exceed the budget
+until the next invocation. Retained files can also prevent reaching the budget;
+the script reports this rather than falling back to a full `cargo clean`.
+Direct Cargo/Xcode/script builds do not trigger cleanup. No background job runs.
+
+Preview or manually change the budget for one cleanup:
+
+```sh
+python3 scripts/prune-build-cache.py --dry-run
+python3 scripts/prune-build-cache.py --max-gib 30
+python3 -B scripts/test-build-cache.py
+```
+
+Python 3 is required for the `just build` preflight. The default budget lives in
+`scripts/prune-build-cache.py`; tune it after measuring normal build/test usage.
+
+### Checks
+
 ```sh
 just check          # file checks, Rust lint/tests, Swift 6 FFI integration
 just build          # native application compile and local signing

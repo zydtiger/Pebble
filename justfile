@@ -2,6 +2,7 @@ default:
     @just --list
 
 build:
+    python3 scripts/prune-build-cache.py
     bash scripts/build-app.sh
 
 run: build
