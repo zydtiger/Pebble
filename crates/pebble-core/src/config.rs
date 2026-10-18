@@ -81,6 +81,8 @@ struct AppConfig {
 
 #[derive(Deserialize)]
 struct PersonaConfig {
+    #[serde(default)]
+    heartbeat: crate::activity::settings::Heartbeat,
     persona: Identity,
     response: ResponseConfig,
     chat: Option<ChatConnection>,
@@ -352,6 +354,7 @@ pub(crate) fn load_candidate(
         }
         let config_path = path.join("config.toml");
         let config: PersonaConfig = parse(&config_path, overrides)?;
+        config.heartbeat.validate(&config_path)?;
         if config.persona.display_name.trim().is_empty() {
             return Err(Error::Configuration {
                 path: config_path.display().to_string(),

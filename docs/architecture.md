@@ -28,6 +28,42 @@ The host resolves the data directory and performs native actions such as
 opening Finder. The core receives the path; it does not hard-code a Mac home
 directory. This keeps product logic reusable with another frontend.
 
+## Private activity heartbeats
+
+Opt-in private activity runs only while Pebble is open. Rust owns its durable
+schedule, quiet hours, UTC daily budget, enabled/stop state and the serialized
+persona reservation. A private evaluation uses the persona's native session
+and history but commits only activity state and native model items: it never
+creates a message, room event, unread marker, notification or room reorder.
+User input cancels an unaccepted private output; accepted native task effects
+remain durable. Existing sessions with the old reply/state-only prefix wait
+for an explicit fresh context rather than silently changing that frozen model
+contract.
+
+Private exploration reuses `delegate_task` with persona-selected objectives,
+normal frozen Codex settings and an independent task workspace. The executor
+receives the task brief, not the full persona context. Existing sandbox and
+`on-request` / `auto_review` apply to both ordinary and autonomous work; configured
+MCP servers do not block dispatch. Autonomous threads request live web search on
+start and resume. Enabling activity authorizes exploration and configured task
+workspace access, not external messaging, purchases, deletion or unrelated
+private-data disclosure. Permission/input deferral uses the existing task
+lifecycle. Outcomes return as private evidence and wake the same persona;
+they do not report to a chat room. Private acceptance requires exact frozen
+outcome acknowledgments, valid state/plans and an outcome summary. Up to two
+corrections reuse the same evidence without another wake or task execution;
+exhaustion preserves the queued evidence. See [delegation](delegation.md) for the
+underlying permission and recovery contract.
+
+Plans and return intents persist separately from persona mood/state. A private
+proposal can request one separately admitted direct-chat publication; only its
+successful message commit fulfills the intent. Invalid chat plan effects can
+be corrected, then rolled back independently of an otherwise valid reply/state;
+native history retains explicit runtime rejection. The Swift header displays typed
+activity snapshots, and real delegated work remains in the task monitor.
+See [private activity](activity.md) for schema, file ownership, scheduling,
+purpose-aware output and rollout limits.
+
 Swift owns local macOS reply notifications through UserNotifications. The first
 send requests alert/sound authorization without blocking chat. Completed persona
 events and task-snapshot room refreshes share session-only message-ID deduplication;
@@ -286,6 +322,13 @@ request. Required images fail visibly if unavailable. See [image input](images.m
 for limits, replay, attribution and verification.
 
 ## Settings and recovery
+
+Heartbeat policy belongs exclusively to the persona's `[heartbeat]` TOML table.
+Rust validates direct file edits and atomically writes the same fields for UI
+changes. The scheduler and private effect/publication boundaries read that file;
+SQLite retains wake consumption, due times and exploration state only. Schema 21
+moves prior database policy to missing file tables without overwriting explicit
+file settings. See [private activity](activity.md) for defaults and migration.
 
 Rust owns concrete typed request-parameter validation, composition and final-body
 budgeting for chat, classifier phases, repairs, native memory continuations and

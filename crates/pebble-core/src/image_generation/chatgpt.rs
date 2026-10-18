@@ -22,6 +22,7 @@ pub(crate) fn available(root: &std::path::Path, executable: &str) -> bool {
             writable: false,
             model: None,
             effort: None,
+            scope: None,
         };
         let mut adapter = Adapter::start_images(&settings)?;
         let account = adapter.rpc("account/read", json!({"refreshToken":false}))?;
@@ -106,6 +107,7 @@ pub(crate) fn execute(
         writable: true,
         model: config.model.clone(),
         effort: config.effort.clone(),
+        scope: None,
     };
     let mut adapter = Adapter::start_images(&settings)?;
     if control.is_cancelled() {

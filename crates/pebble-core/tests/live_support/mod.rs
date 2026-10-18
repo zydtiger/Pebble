@@ -1,5 +1,6 @@
 // Shared HTTP fixtures for deterministic and opt-in live integration tests.
 #![allow(dead_code)]
+mod activity;
 use pebble_core::{ChatEvent, ChatEventKind, ChatListener, Core, Error};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -122,7 +123,8 @@ impl Server {
                 let plan = if automatic && let Some(output) = maintenance_reply(&body) {
                     stream(output)
                 } else {
-                    let plan = next.take().unwrap();
+                    let mut plan = next.take().expect("Unexpected fixture request");
+                    activity::fill_acknowledgments(&body, &mut plan.body);
                     next = plans.next();
                     tx.send((headers, body)).unwrap();
                     plan

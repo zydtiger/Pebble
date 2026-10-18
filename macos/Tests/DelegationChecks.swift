@@ -21,7 +21,7 @@ func checkDelegationMonitor(window: NSWindow, model: ChatModel) async throws {
     func fixture(_ state: DelegationState, id: String = "synthetic-task", report: String = "completed", title: String = "Check the latest release") -> DelegatedTaskRecord {
         DelegatedTaskRecord(id: id, title: title, personaId: persona.id, conversationId: persona.conversationId,
                             state: state, activity: "Codex is working…", detail: "Private tool log must remain hidden", result: "Saved evidence must be explained in chat",
-                            links: [], request: nil, reportState: report, threadId: "synthetic-thread", turnId: "synthetic-turn", createdAt: "2026-10-11T12:00:00Z")
+                            links: [], request: nil, reportState: report, threadId: "synthetic-thread", turnId: "synthetic-turn", createdAt: "2026-10-11T12:00:00Z", privateDelivery: false)
     }
     func executionProgressCount(_ view: NSView) -> Int {
         let own = (view as? NSProgressIndicator).map { $0.isHidden ? 0 : 1 } ?? 0

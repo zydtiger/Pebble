@@ -28,7 +28,11 @@ pub(crate) fn create(root: &Path, name: &str) -> Result<String, Error> {
         for (file, text) in [
             (
                 "config.toml",
-                format!("{config}{}", crate::structured::DEFAULT_INITIAL),
+                format!(
+                    "{config}{}{}",
+                    crate::structured::DEFAULT_INITIAL,
+                    crate::activity::settings::DEFAULT_CONFIG
+                ),
             ),
             (
                 "response_schema.json",

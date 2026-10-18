@@ -62,7 +62,7 @@ extension ChatModel {
                 self.delegatedTasks = tasks
                 // Reports have no UI-owned chat handle. Scan their original rooms even
                 // when no presentation cache exists; shared message IDs deduplicate streams.
-                let reportRooms = self.replyNotifications == nil ? Set<String>() : Set(tasks.map(\.conversationId))
+                let reportRooms = self.replyNotifications == nil ? Set<String>() : Set(tasks.filter { !$0.privateDelivery }.map(\.conversationId))
                 await self.refreshRoomsAfterReply(notificationRooms: reportRooms)
             }
         }

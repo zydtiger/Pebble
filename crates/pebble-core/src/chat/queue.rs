@@ -33,6 +33,15 @@ impl Queue {
             }
         }
     }
+    pub(super) fn cancel_prefix(&self, prefix: &str) {
+        for (id, control) in self.entries.lock().expect("queue lock").iter() {
+            if id.starts_with(prefix)
+                && let Some(control) = control.upgrade()
+            {
+                control.cancel();
+            }
+        }
+    }
 }
 
 pub(super) struct Reservation {

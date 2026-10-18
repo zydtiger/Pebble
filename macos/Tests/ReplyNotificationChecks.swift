@@ -122,7 +122,7 @@ enum ReplyNotificationChecks {
     private static func task(_ persona: PersonaRecord, room: String? = nil) -> DelegatedTaskRecord {
         DelegatedTaskRecord(id: "notification-fixture", title: "Saved task outcome", personaId: persona.id,
             conversationId: room ?? persona.conversationId, state: .completed, activity: "", detail: "", result: "",
-            links: [], request: nil, reportState: "completed", threadId: nil, turnId: nil, createdAt: "")
+            links: [], request: nil, reportState: "completed", threadId: nil, turnId: nil, createdAt: "", privateDelivery: false)
     }
 
     private static func checkPendingRoute(_ root: URL) async throws {

@@ -82,7 +82,7 @@ pub(super) fn freeze(
         sequence: 0,
         payload: codec::decode(&codec, payload, length as usize, codec::DECODED_CAP)?,
     }];
-    request.response_schema = Some(persona.response_schema.clone());
+    request.response_schema = Some(crate::structured::chat_schema(&persona.response_schema));
     request.history_tools = true;
     request.memory_tools = true;
     request.delegation_tools = true;

@@ -230,6 +230,30 @@ Unicode, local DST dates, bounds and native evidence. See [context](context.md),
 Richer retrieval, attachment deletion, sync and broader distribution remain
 outside these increments.
 
+### Background heartbeat and private exploration
+
+This version-unassigned increment implements the following sequence:
+
+1. **H1 — Durable schedule and time:** opt-in per-persona heartbeat, local quiet
+   hours, UTC daily wake budget, disable/stop/restart coalescing, frozen contact time
+   and separate queue delay.
+2. **H2 — Private evaluation and plans:** same-session serialized activity calls
+   without a reply, independent activity state, bounded future ideas and intents,
+   real-publication return promises and purpose-aware fresh contexts.
+3. **H3 — Delegated exploration and interruption:** persona-selected objectives
+   reuse normal Codex permissions, MCP and live search with private outcomes;
+   user chat preempts private generation while accepted tasks retain identity.
+4. **H4 — Return publication and native visibility:** separately admitted direct
+   replies fulfill saved intents, compact header controls show actual progress,
+   and only published chat refreshes notifications. Rollover retains at most ten
+   observed chat message IDs, regardless of private activity volume.
+
+H1–H4 have deterministic core and protocol fixtures; native validation and
+independent review are release gates. Live exploration requires an authenticated
+local Codex with a search-capable model/provider and compatible managed policy.
+**H5** (specialized shared games and group activity) remains future work. See
+[private activity](activity.md) for exact contracts, ownership and limits.
+
 ## Message steering
 
 Native sends interrupt and replace unfinished ordinary replies in the selected
@@ -240,3 +264,10 @@ Schema 15 preserves supersession across restart without deleting frozen model
 history, tool effects or user messages. Other rooms and independent background
 result delivery remain isolated. `tests/steering.rs`, native bridge checks and
 `PEBBLE_RENDER_STEERING_ONLY=1 just preview` cover this behavior.
+
+### Heartbeat configuration authority
+
+Persona `config.toml` now owns `[heartbeat]` policy, including UI changes.
+Schema 21 removes duplicated SQLite settings while retaining runtime budgets
+and due times. Targeted tests cover direct edits, UI file round trips, invalid
+configuration, late-result rejection and migration with explicit file precedence.

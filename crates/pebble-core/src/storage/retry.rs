@@ -7,7 +7,7 @@ use rusqlite::{OptionalExtension, params};
 impl Database {
     pub(crate) fn ensure_idle(&self, persona: Option<&str>) -> Result<(), Error> {
         let connection = self.connection.lock().expect("database lock");
-        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR c.persona_id=?1)) OR EXISTS(SELECT 1 FROM context_maintenance WHERE status='running' AND (?1 IS NULL OR persona_id=?1)) OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.status IN ('pending','admitted') AND (?1 IS NULL OR d.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
+        if connection.query_row("SELECT EXISTS(SELECT 1 FROM model_calls c WHERE c.status IN ('queued','streaming') AND (?1 IS NULL OR c.persona_id=?1)) OR EXISTS(SELECT 1 FROM activity_calls c WHERE c.status='streaming' AND (?1 IS NULL OR c.persona_id=?1)) OR EXISTS(SELECT 1 FROM context_maintenance WHERE status='running' AND (?1 IS NULL OR persona_id=?1)) OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE s.status IN ('pending','admitted') AND (?1 IS NULL OR d.persona_id=?1))",[persona],|r|r.get::<_,bool>(0))? {return Err(Error::Busy);}
         Ok(())
     }
     pub(crate) fn enqueue_retry(&self, persona: &Persona, reply: &str) -> Result<Turn, Error> {

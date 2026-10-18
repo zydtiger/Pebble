@@ -38,7 +38,7 @@ two turns and restart. They never read the app's existing files or conversation.
 
 ## Structured-output constraints
 
-Final-only structured requests send Chat Completions `response_format` with
+By default, final-only structured requests send Chat Completions `response_format` with
 `type: "json_schema"` and a strict named `json_schema`. Standard Responses sends
 `text.format` with `type: "json_schema"`, name, strict, and the schema. The frozen
 prefix also includes the schema and response semantics; provider constraints do
@@ -76,6 +76,19 @@ cargo test -p pebble-core --lib deepseek_participation_accepts_true_and_false --
 See [DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode/) for
 JSON mode's prompt requirements and limitations. JSON syntax guarantees are
 weaker than schema adherence, so local validation remains mandatory in both modes.
+
+For structured JSON-mode requests, Pebble also includes the actual current-purpose
+schema as derived system context. Private no-reply evaluations use a different
+shape from the frozen chat prefix; Rust validates their state, plans and exact
+outcome acknowledgments before accepting the handover. Memory maintenance stays
+tool-only.
+
+The opt-in `activity_persona_live` test uses a selected real persona endpoint
+with an isolated synthetic character and a gated local task executor. It verifies
+native delegation, chat while the accepted task continues, exact private outcome
+acceptance and absence of private chat bubbles. It does not execute real Codex
+research; `activity_live` separately covers the real Codex executor.
+
 
 Some compatible Responses servers expose the Chat Completions constraint as an
 extension instead of implementing standard `text.format`. Explicitly configure
@@ -128,7 +141,9 @@ schema dialect; schema repair also disables tools. Maintenance exposes only `upd
 delegation calls. It requires one native call (`tool_choice=required`) and has no conversational final request.
 
 Chat Completions assembles indexed fragmented IDs/names/argument strings and
-retains assistant reasoning with the native call. Responses uses authoritative
+retains assistant reasoning with the native call. Null tool ID, type, name or
+argument fields mean no update for that chunk; previously assembled values are
+retained. Non-null invalid types and incomplete final tool identities still fail. Responses uses authoritative
 completed reasoning/function-call items in their array order and preserves opaque
 fields/IDs; final item events must agree. Pebble retains completed native tool
 batches, arguments and results even when a final reply fails. Tool output and

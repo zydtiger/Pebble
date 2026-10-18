@@ -202,7 +202,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
     {
         let db = core.database.connection.lock().unwrap();
         db.execute_batch(
-            "DROP TABLE steered_calls; DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
+            "DROP TABLE activity_delegation_submissions; DROP TABLE activity_calls; DROP TABLE activity_steps; DROP TABLE activity_events; DROP TABLE share_intents; DROP TABLE persona_activities; DROP TABLE persona_activity_runtime; DROP INDEX model_items_activity_call; ALTER TABLE model_items DROP COLUMN activity_call_id; ALTER TABLE model_sessions DROP COLUMN private_activity_contract; DROP TABLE steered_calls; DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; DROP TABLE image_generation_submissions; DROP TABLE image_generations; ALTER TABLE model_sessions DROP COLUMN image_generation_tools; DROP TABLE delegation_runs; DROP TABLE delegation_submissions; DROP TABLE delegated_tasks; DROP TABLE delegation_assignments; ALTER TABLE model_sessions DROP COLUMN delegation_tools; ALTER TABLE messages DROP COLUMN separate_delegations; DROP TABLE message_images; DROP TABLE image_assets; PRAGMA user_version=11;",
         )
         .unwrap();
     }
@@ -230,7 +230,7 @@ fn asset_acceptance_is_atomic_and_v11_migration_preserves_text_items() {
             .unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        16
+        21
     );
 }
 

@@ -1,3 +1,4 @@
+pub(crate) mod activity;
 mod codec;
 mod contexts;
 mod delegation;
@@ -72,7 +73,7 @@ impl Database {
             connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
         }
         let tx = connection.transaction()?;
-        if version > 16 {
+        if version > 21 {
             return Err(Error::Schema(version));
         }
         if version == 0 {
@@ -146,6 +147,21 @@ impl Database {
         if version < 16 {
             tx.execute_batch(include_str!("storage/rollover-migration.sql"))?;
         }
+        if version < 17 {
+            tx.execute_batch(include_str!("storage/activity-migration.sql"))?;
+        }
+        if version < 18 {
+            tx.execute_batch(include_str!("storage/private-activity-migration.sql"))?;
+        }
+        if version < 19 {
+            tx.execute_batch(include_str!("storage/activity-delegation-migration.sql"))?;
+        }
+        if version < 20 {
+            tx.execute_batch(include_str!("storage/activity-outcome-migration.sql"))?;
+        }
+        if version < 21 {
+            crate::activity::settings::migrate(&tx, root)?;
+        }
         tx.execute_batch("UPDATE group_reply_slots SET status='interrupted' WHERE status IN ('pending','admitted'); UPDATE group_rounds SET status='interrupted',continuation=0 WHERE status IN ('active','superseded');")?;
         tx.execute("UPDATE participation_decisions SET status='interrupted',error='Application stopped before participation completed; mention a character to continue.' WHERE status='pending'", [])?;
         // Durable deltas remain visible, but unfinished outputs are never accepted model items.
@@ -170,6 +186,7 @@ impl Database {
         database.recover_maintenance()?;
         database.recover_delegations()?;
         database.recover_image_generations()?;
+        database.recover_activities()?;
         Ok(database)
     }
 

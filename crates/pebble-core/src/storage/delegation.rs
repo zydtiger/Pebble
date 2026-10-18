@@ -285,6 +285,10 @@ impl Database {
                 submission: new_id(),
                 dispatch_started: false,
                 approval_previews: Default::default(),
+                origin: "user".into(),
+                delivery: "room_report".into(),
+                activity_id: None,
+                activity_step_id: None,
             };
             tx.execute("INSERT INTO delegated_tasks(id,conversation_id,persona_id,trigger_id,request_key,record) VALUES (?1,?2,?3,?4,?5,?6)",params![id,task.conversation_id,task.persona_id,task.trigger,key,serde_json::to_string(&task)?])?;
             dispatch = Some(id.clone());

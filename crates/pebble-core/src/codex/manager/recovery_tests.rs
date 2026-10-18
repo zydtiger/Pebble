@@ -319,3 +319,28 @@ fn running_worker_shutdown_at_initialize_or_thread_barrier_preserves_first_dispa
         }
     }
 }
+
+#[test]
+fn legacy_private_scope_reopens_without_widening_or_dispatching() {
+    let (root, core, task, _) = admitted_core(DelegationState::Queued, None);
+    core.database
+        .update_task(&task.id, |saved| {
+            saved.origin = "autonomous".into();
+            saved.settings.scope = Some(settings::ExecutionScope::PublicWebResearch);
+            saved.result = "Saved private evidence".into();
+            Ok(())
+        })
+        .unwrap();
+    drop(core);
+    let core = reopen(root.path());
+    let saved = settled(&core, &task.id);
+    assert_eq!(saved.state, DelegationState::Failed);
+    assert_eq!(
+        saved.settings.scope,
+        Some(settings::ExecutionScope::PublicWebResearch)
+    );
+    assert!(!saved.settings.writable);
+    assert_eq!(saved.result, "Saved private evidence");
+    assert!(saved.detail.contains("retired restricted scope"));
+    assert!(methods(Path::new(&saved.settings.workspace)).is_empty());
+}

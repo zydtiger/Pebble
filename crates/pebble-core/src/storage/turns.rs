@@ -174,6 +174,13 @@ impl Database {
         )?;
         let mut envelope = json!({"events":events, "reply_request":{
             "conversation_id":pending.conversation_id, "trigger_message_id":user_id}});
+        // Freeze wall-clock information only once the queued reply actually
+        // activates. Retry reuses this exact input item and never reinterprets
+        // queue delay or an unrelated heartbeat as user silence.
+        envelope["temporal_context"] =
+            super::activity::time::context(&tx, &persona.id, Some(&user_id))?;
+        envelope["activity_runtime"] =
+            super::activity::plans::context(&tx, &self.root, &persona.id)?;
         if memory_tools {
             let memory =
                 std::fs::read_to_string(std::path::Path::new(&persona.directory).join("MEMORY.md"))
@@ -286,9 +293,18 @@ impl Database {
             [&turn.session_id],
             |r| r.get(0),
         )?;
+        let mut rejected_activity = None;
         let accepted_state = if status == MessageStatus::Complete {
             if let Some(schema) = schema {
-                let schema: Value = serde_json::from_str(&schema)?;
+                let mut schema: Value = serde_json::from_str(&schema)?;
+                let activity_contract: bool = tx.query_row(
+                    "SELECT private_activity_contract FROM model_sessions WHERE id=?1",
+                    [&turn.session_id],
+                    |r| r.get(0),
+                )?;
+                if activity_contract {
+                    schema = crate::structured::chat_schema(&schema);
+                }
                 let output = native.ok_or_else(|| {
                     Error::Generation("Structured completion requires native output.".into())
                 })?;
@@ -311,6 +327,17 @@ impl Database {
                     return Err(Error::Generation(
                         "Accepted state changed since this turn was frozen.".into(),
                     ));
+                }
+                if activity_contract {
+                    let candidate: Value = serde_json::from_str(&text)?;
+                    rejected_activity = super::activity::validation::apply_chat(
+                        &tx,
+                        &self.root,
+                        &turn.persona_id,
+                        &turn.conversation_id,
+                        Some(&turn.reply.id),
+                        &candidate["activity"],
+                    )?;
                 }
                 Some(state)
             } else {
@@ -356,6 +383,17 @@ impl Database {
                         payload,
                     )?;
                     link(&tx, &output, &event)?;
+                }
+                if let Some(detail) = &rejected_activity {
+                    tx.execute("UPDATE model_calls SET validation_errors=json_insert(validation_errors,'$[#]',?2) WHERE id=?1", params![turn.call_id,detail])?;
+                    let feedback = json!({"purpose":"activity_feedback","accepted":false,"detail":detail,"instructions":"The preceding chat reply and state were accepted, but its activity metadata was rolled back. No proposed promise, fulfillment, dismissal, schedule or progress update took effect. Read current activity_runtime before proposing further changes."});
+                    let protocol: String = tx.query_row(
+                        "SELECT protocol FROM model_sessions WHERE id=?1",
+                        [&turn.session_id],
+                        |r| r.get(0),
+                    )?;
+                    let item = input_message(&protocol, "user", &feedback.to_string());
+                    insert_item(&tx, &turn.session_id, Some(&turn.call_id), "input", &item)?;
                 }
                 update_frontier(&tx, &turn.session_id, &turn.persona_id)?;
             }
@@ -449,6 +487,15 @@ pub(super) fn insert_event_for(
          VALUES (?1, ?2, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM persona_events WHERE persona_id = ?2), ?3, ?4, ?5)",
         params![id, persona, conversation, message, kind],
     )?;
+    if kind == "received"
+        && db.query_row(
+            "SELECT sender_kind='user' FROM messages WHERE id=?1",
+            [message],
+            |r| r.get::<_, bool>(0),
+        )?
+    {
+        super::activity::interrupt_on_user_receipt(db, persona)?;
+    }
     Ok(id)
 }
 
@@ -477,7 +524,7 @@ fn link(db: &Connection, item: &str, event: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
+pub(super) fn update_frontier(db: &Connection, session: &str, persona: &str) -> Result<(), Error> {
     db.execute(
         "UPDATE model_sessions SET covered_event_sequence = COALESCE(
             (SELECT MIN(e.sequence) - 1 FROM persona_events e WHERE e.persona_id = ?2 AND e.kind = 'received' AND e.sequence > (SELECT event_start_sequence FROM model_sessions WHERE id = ?1) AND NOT EXISTS(SELECT 1 FROM summarized_events z WHERE z.session_id=?1 AND z.event_id=e.id) AND NOT EXISTS (SELECT 1 FROM model_calls c WHERE c.trigger_message_id = e.message_id AND c.persona_id=e.persona_id AND (SELECT kind FROM conversations WHERE id=e.conversation_id)='direct' AND c.session_id IS NULL AND c.status IN ('cancelled', 'interrupted', 'failed') AND NOT EXISTS(SELECT 1 FROM steered_calls steered WHERE steered.call_id=c.id) AND NOT EXISTS (SELECT 1 FROM model_calls live WHERE live.trigger_message_id=e.message_id AND live.persona_id=e.persona_id AND (live.session_id IS NOT NULL OR live.status IN ('queued','streaming')))) AND NOT EXISTS (

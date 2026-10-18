@@ -94,7 +94,7 @@ while True:
     elif method == 'skills/list':
         reply({'data': [{'skills': [{'name': 'synthetic-calendar-routing', 'enabled': True}]}]})
     elif method == 'mcpServerStatus/list':
-        reply({'data': [{'name': 'synthetic-mcp', 'authStatus': 'oAuth'}], 'nextCursor': None})
+        reply(options.get('mcp_status', {'data': [{'name': 'synthetic-mcp', 'authStatus': 'oAuth'}], 'nextCursor': None}))
     elif method in ('thread/start', 'thread/resume'):
         if method == 'thread/resume':
             thread = value['params']['threadId']

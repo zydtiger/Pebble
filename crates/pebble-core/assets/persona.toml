@@ -14,3 +14,10 @@ subtitle = "A curious mind. A soft place to land."
 [response.initial_state]
 affinity_user = 20
 mood = "calm"
+
+[heartbeat]
+enabled = false
+daily_wake_budget = 4
+# Local quiet hours; omit both keys to disable.
+quiet_start = "23:00"
+quiet_end = "08:00"

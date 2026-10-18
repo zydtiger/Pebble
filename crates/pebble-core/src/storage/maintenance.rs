@@ -43,7 +43,7 @@ impl Database {
         let mut db = self.connection.lock().expect("database lock");
         let tx = db.transaction()?;
         if tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status='streaming')",
+            "SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status='streaming') OR EXISTS(SELECT 1 FROM activity_calls WHERE persona_id=?1 AND status='streaming')",
             [&persona.id],
             |r| r.get::<_, bool>(0),
         )? {

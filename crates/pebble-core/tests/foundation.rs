@@ -29,6 +29,10 @@ fn restart_keeps_identity_and_state_table() {
     assert_eq!(
         tables,
         [
+            "activity_calls",
+            "activity_delegation_submissions",
+            "activity_events",
+            "activity_steps",
             "automatic_rollovers",
             "context_maintenance",
             "context_marker_rooms",
@@ -53,10 +57,13 @@ fn restart_keeps_identity_and_state_table() {
             "model_items",
             "model_sessions",
             "participation_decisions",
+            "persona_activities",
+            "persona_activity_runtime",
             "persona_events",
             "persona_states",
             "personas",
             "session_recent_messages",
+            "share_intents",
             "steered_calls",
             "summarized_events"
         ]

@@ -14,8 +14,9 @@ pub(super) fn create_session(
         [&persona.id],
     )?;
     let id = new_id();
-    db.execute("INSERT INTO model_sessions (id, persona_id, protocol, model, base_url, event_start_sequence, covered_event_sequence, status, context_reason, response_schema, memory_tools, delegation_tools, image_generation_tools, history_tools)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'active', ?7, ?8, 1, 1, 1, 1)", params![id, persona.id, protocol, model, base_url, start, reason, serde_json::to_string(&persona.response_schema)?])?;
+    db.execute("INSERT INTO model_sessions (id, persona_id, protocol, model, base_url, event_start_sequence, covered_event_sequence, status, context_reason, response_schema, memory_tools, delegation_tools, image_generation_tools, history_tools, private_activity_contract)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'active', ?7, ?8, 1, 1, 1, 1, 1)", params![id, persona.id, protocol, model, base_url, start, reason, serde_json::to_string(&persona.response_schema)?])?;
+    db.execute("UPDATE persona_activity_runtime SET next_wake_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_reason='Private activity context ready' WHERE persona_id=?1 AND next_reason='Fresh context required for private activity'",[&persona.id])?;
     let state = super::state::current(db, &persona.id)?;
     crate::structured::validate_state(&persona.response_schema, &state).map_err(|detail| Error::Generation(format!("Current state is incompatible with the response schema: {detail} Restore a compatible schema; state is never reset automatically.")))?;
     let content = format!(
@@ -36,8 +37,8 @@ pub(super) fn create_session(
     let content = format!("{content}\n\nHISTORY\n{}", crate::retrieval::INSTRUCTIONS);
     let content = format!(
         "{content}\n\nRESPONSE_CONTRACT\n{}\n\nRESPONSE_SCHEMA\n{}\n\nCURRENT_ACCEPTED_STATE\n{}",
-        crate::structured::SEMANTICS,
-        persona.response_schema,
+        crate::structured::PURPOSE_AWARE_SEMANTICS,
+        crate::structured::chat_schema(&persona.response_schema),
         state
     );
     insert_item(

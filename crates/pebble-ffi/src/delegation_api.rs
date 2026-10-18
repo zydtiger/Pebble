@@ -123,9 +123,11 @@ pub struct DelegatedTaskRecord {
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
     pub created_at: String,
+    pub private_delivery: bool,
 }
 impl From<pebble_core::DelegatedTask> for DelegatedTaskRecord {
     fn from(t: pebble_core::DelegatedTask) -> Self {
+        let private_delivery = t.private_delivery();
         let state = match t.state {
             pebble_core::DelegationState::Queued => DelegationState::Queued,
             pebble_core::DelegationState::Running => DelegationState::Running,
@@ -168,6 +170,7 @@ impl From<pebble_core::DelegatedTask> for DelegatedTaskRecord {
             thread_id: t.thread_id,
             turn_id: t.turn_id,
             created_at: t.created_at,
+            private_delivery,
         }
     }
 }

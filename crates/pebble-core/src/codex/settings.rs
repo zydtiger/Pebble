@@ -2,6 +2,14 @@ use crate::{Error, file_error};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+// Previously saved experimental tasks keep their restrictive scope marker.
+// New tasks use the ordinary settings; old scopes are never silently widened.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExecutionScope {
+    PublicWebResearch,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct CodexSettings {
@@ -56,6 +64,8 @@ pub(crate) struct TaskSettings {
     pub writable: bool,
     pub model: Option<String>,
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ExecutionScope>,
 }
 impl TaskSettings {
     pub(crate) fn new(settings: &CodexSettings, workspace: &Path) -> Self {
@@ -66,6 +76,7 @@ impl TaskSettings {
             writable: settings.writable,
             model: settings.model.clone(),
             effort: settings.effort.clone(),
+            scope: None,
         }
     }
     pub(crate) fn cwd(&self) -> Result<PathBuf, Error> {

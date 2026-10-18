@@ -164,7 +164,7 @@ fn schema_15_steering_migrates_without_rewriting_native_context() {
         .unwrap();
     drop(core);
     let conn = rusqlite::Connection::open(root.path().join("data/app.sqlite")).unwrap();
-    conn.execute_batch("DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; PRAGMA user_version=15;").unwrap();
+    conn.execute_batch("DROP TABLE activity_delegation_submissions; DROP TABLE activity_calls; DROP TABLE activity_steps; DROP TABLE activity_events; DROP TABLE share_intents; DROP TABLE persona_activities; DROP TABLE persona_activity_runtime; DROP INDEX model_items_activity_call; ALTER TABLE model_items DROP COLUMN activity_call_id; ALTER TABLE model_sessions DROP COLUMN private_activity_contract; ALTER TABLE delegated_tasks DROP COLUMN activity_step_id; ALTER TABLE delegated_tasks DROP COLUMN activity_id; ALTER TABLE delegated_tasks DROP COLUMN delivery; ALTER TABLE delegated_tasks DROP COLUMN origin; DROP TABLE session_recent_messages; DROP TABLE automatic_rollovers; DROP TABLE summarized_events; ALTER TABLE context_maintenance DROP COLUMN automatic; ALTER TABLE model_calls DROP COLUMN history_cutoff; ALTER TABLE model_sessions DROP COLUMN history_tools; PRAGMA user_version=15;").unwrap();
     let core = Core::open(root.path()).unwrap();
     let after = core.model_request(&turn.call_id).unwrap();
     assert_eq!(after.session_id, before.session_id);
@@ -180,7 +180,7 @@ fn schema_15_steering_migrates_without_rewriting_native_context() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        16
+        21
     );
     assert!(
         !conn

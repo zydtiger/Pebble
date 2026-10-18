@@ -38,7 +38,14 @@ impl Database {
                 return Ok(None);
             };
             let call: Option<String> = db.query_row("SELECT id FROM model_calls WHERE session_id=?1 AND status='completed' ORDER BY persona_sequence DESC LIMIT 1",[&session],|r|r.get(0)).optional()?;
-            let Some(call) = call else { return Ok(None) };
+            let private: Option<(String, String)> = if call.is_none() {
+                db.query_row("SELECT c.id,s.response_schema FROM activity_calls c JOIN model_sessions s ON s.id=c.session_id WHERE c.session_id=?1 AND c.status='completed' ORDER BY c.rowid DESC LIMIT 1",[&session],|r|Ok((r.get(0)?,r.get(1)?))).optional()?
+            } else {
+                None
+            };
+            if call.is_none() && private.is_none() {
+                return Ok(None);
+            }
             let last: i64 = db.query_row(
                 "SELECT MAX(sequence) FROM model_items WHERE session_id=?1",
                 [&session],
@@ -46,7 +53,21 @@ impl Database {
             )?;
             if db.query_row("SELECT EXISTS(SELECT 1 FROM automatic_rollovers WHERE source_session=?1 AND last_item_sequence=?2)",params![session,last],|r|r.get::<_,bool>(0))? { return Ok(None) }
             let busy: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM model_calls WHERE persona_id=?1 AND status='queued') OR EXISTS(SELECT 1 FROM participation_decisions WHERE persona_id=?1 AND status='pending') OR EXISTS(SELECT 1 FROM group_reply_slots s JOIN participation_decisions d ON d.id=s.decision_id WHERE d.persona_id=?1 AND s.status IN ('pending','admitted'))",[&persona.id],|r|r.get(0))?;
-            let request = super::items::request(&db, &self.root, &call, true)?;
+            let request = if let Some(call) = call {
+                super::items::request(&db, &self.root, &call, true)?
+            } else {
+                let (call, schema) = private.expect("completed activity");
+                let schema = crate::structured::private_schema(&serde_json::from_str(&schema)?)
+                    .map_err(Error::Generation)?;
+                super::activity::activity_request(
+                    &db,
+                    &self.root,
+                    &call,
+                    &schema,
+                    super::state::current(&db, &persona.id)?,
+                    true,
+                )?
+            };
             (session, last, busy, request)
         };
         let (session, last, busy, mut request) = source;

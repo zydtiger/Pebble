@@ -194,6 +194,7 @@ struct ContentView: View {
                 CharacterAvatar(size: 35)
             }
             Text(persona.displayName).font(.system(size: 14, weight: .semibold))
+            PersonaActivityControl(model: model, persona: persona)
             Spacer()
             Button { model.settingsTarget = SettingsTarget(personaID: persona.id) } label: { Image(systemName: "slider.horizontal.3") }
                 .buttonStyle(.plain).foregroundStyle(PebbleTheme.muted)

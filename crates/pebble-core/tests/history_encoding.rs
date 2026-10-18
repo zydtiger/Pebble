@@ -126,7 +126,7 @@ fn schema4_raw_history_migration_preserves_ids_and_exact_json_bytes() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        16
+        21
     );
     assert_eq!(
         db.query_row(

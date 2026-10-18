@@ -140,8 +140,25 @@ pub struct DelegatedTask {
     pub(crate) dispatch_started: bool,
     #[serde(default)]
     pub(crate) approval_previews: std::collections::BTreeMap<String, String>,
+    #[serde(default = "user_task_origin")]
+    pub(crate) origin: String,
+    #[serde(default = "room_report_delivery")]
+    pub(crate) delivery: String,
+    #[serde(default)]
+    pub(crate) activity_id: Option<String>,
+    #[serde(default)]
+    pub(crate) activity_step_id: Option<String>,
+}
+fn user_task_origin() -> String {
+    "user".into()
+}
+fn room_report_delivery() -> String {
+    "room_report".into()
 }
 impl DelegatedTask {
+    pub fn private_delivery(&self) -> bool {
+        self.delivery == "private_observation"
+    }
     pub(crate) fn awaiting_first_dispatch(&self) -> bool {
         matches!(
             self.state,
@@ -165,7 +182,7 @@ pub struct TaskAnswer {
 mod probes;
 
 /// Runtime local date/offset for relative calendar and current-fact requests.
-fn local_time() -> serde_json::Value {
+pub(crate) fn local_time() -> serde_json::Value {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

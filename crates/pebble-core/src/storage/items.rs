@@ -90,6 +90,17 @@ pub(super) fn request(
         request.image_generation_tools = false;
     }
     request.response_schema = schema.map(|s| serde_json::from_str(&s)).transpose()?;
+    let activity_contract: bool = connection.query_row(
+        "SELECT private_activity_contract FROM model_sessions WHERE id=?1",
+        [&request.session_id],
+        |r| r.get(0),
+    )?;
+    if activity_contract {
+        request.response_schema = request
+            .response_schema
+            .as_ref()
+            .map(crate::structured::chat_schema);
+    }
     request.state_before = state.map(|s| serde_json::from_str(&s)).transpose()?;
     // First scan metadata only: never materialize an oversized saved history.
     let mut query = connection.prepare("SELECT codec, decoded_length, length(payload) FROM model_items WHERE session_id=?1 AND sequence<=?2")?;

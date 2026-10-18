@@ -1,3 +1,4 @@
+mod activity;
 use crate::{Error, Message, MessageStatus, Persona, demo, history::Turn, storage::Database};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
@@ -289,6 +290,7 @@ impl Chats {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
+        queue.cancel_prefix("activity:");
         let turn = db.enqueue_retry(&persona, reply)?;
         self.launch(db, persona, listener, queue, turn, None)
     }
@@ -302,6 +304,7 @@ impl Chats {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let persona = load()?;
         let queue = queues.entry(persona.id.clone()).or_default().clone();
+        queue.cancel_prefix("activity:");
         let turn = db.enqueue_turn(&persona, prompt)?;
         self.launch(db, persona, listener, queue, turn, None)
     }
@@ -315,6 +318,13 @@ impl Chats {
         let mut queues = self.queues.lock().expect("generation queues lock");
         let workspace = load()?;
         let (message, turns, decisions) = db.enqueue_input(&workspace.personas, input)?;
+        // Group members receive this message together, even though their reply
+        // slots are admitted one at a time. Interrupt private work at receipt.
+        for decision in &decisions {
+            if let Some(queue) = queues.get(&decision.persona.id) {
+                queue.cancel_prefix("activity:");
+            }
+        }
         let superseded = db.steered_calls(&message.id)?;
         for queue in queues.values() {
             queue.cancel_calls(&superseded);
@@ -328,6 +338,7 @@ impl Chats {
                 .expect("validated persona")
                 .clone();
             let queue = queues.entry(persona.id.clone()).or_default().clone();
+            queue.cancel_prefix("activity:");
             // Each accepted call is finalized even if a worker cannot start. Earlier workers remain owned.
             match self.launch(
                 db.clone(),
@@ -385,6 +396,7 @@ impl Chats {
                 .ok_or(Error::UnknownPersona)?
                 .clone();
             let queue = queues.entry(persona.id.clone()).or_default().clone();
+            queue.cancel_prefix("activity:");
             let (ack, received) = std::sync::mpsc::sync_channel(1);
             let launched = self.launch(
                 db.clone(),
@@ -457,6 +469,16 @@ impl Chats {
         self.wake_groups();
         Ok(room)
     }
+    pub(crate) fn cancel_private(&self, persona: &str) {
+        if let Some(queue) = self
+            .queues
+            .lock()
+            .expect("generation queues lock")
+            .get(persona)
+        {
+            queue.cancel_prefix("activity:");
+        }
+    }
     pub(crate) fn cancel_all(&self) {
         for queue in self.queues.lock().expect("generation queues lock").values() {
             queue.cancel_all();
@@ -477,13 +499,27 @@ impl Chats {
         persona: &Persona,
         pending: Option<&Turn>,
     ) {
+        self.maintain_with_control(db, persona, pending, None);
+    }
+    fn maintain_with_control(
+        &self,
+        db: &Arc<Database>,
+        persona: &Persona,
+        pending: Option<&Turn>,
+        parent: Option<&Arc<Control>>,
+    ) {
         // Register cancellation atomically with admission and the idle/priority decision.
         // This persona's current reservation still owns execution during HTTP.
         let preparation = {
             let queues = self.queues.lock().expect("generation queues lock");
+            if parent.is_some_and(|control| control.is_cancelled()) {
+                return;
+            }
             db.automatic_rollover(persona, pending).map(|job| {
                 job.map(|job| {
-                    let control = Arc::new(Control::default());
+                    let control = parent
+                        .cloned()
+                        .unwrap_or_else(|| Arc::new(Control::default()));
                     let reservation = queues
                         .get(&persona.id)
                         .map(|q| q.reserve(&job.id, &control));
@@ -903,6 +939,7 @@ fn generate_structured(
         || base_request.delegation_tools
         || base_request.image_generation_tools;
     let mut candidate_count = 0;
+    let mut activity_fallback = None;
     let mut invalid_delegations = 0;
     let runtime = worker_runtime()?;
     // Two argument corrections, one accepted tool phase, and three final candidates.
@@ -911,6 +948,9 @@ fn generate_structured(
             return Err(Error::Generation("Cancelled".into()));
         }
         if std::time::Instant::now() >= deadline {
+            if let Some(valid) = activity_fallback {
+                return Ok(valid);
+            }
             return Err(Error::Generation(
                 "The complete reply operation exceeded 180 seconds.".into(),
             ));
@@ -949,13 +989,24 @@ fn generate_structured(
             budget.check_demo(&candidate_request)?;
         }
         let output = if let Some(chat) = chat {
-            runtime.block_on(async {
+            let result = runtime.block_on(async {
                 tokio::select! {
                     biased;
                     _ = control.cancelled() => Err(Error::Generation("Cancelled".into())),
                     result = tokio::time::timeout(deadline.saturating_duration_since(std::time::Instant::now()),crate::live::generate(chat,&candidate_request,budget.max_output_tokens,control.clone(),|_|Ok(()))) => result.map_err(|_|Error::Generation("The complete reply operation exceeded 180 seconds.".into()))?,
                 }
-            })?
+            });
+            match result {
+                Ok(output) => output,
+                Err(error) => {
+                    if !control.is_cancelled()
+                        && let Some(valid) = activity_fallback
+                    {
+                        return Ok(valid);
+                    }
+                    return Err(error);
+                }
+            }
         } else {
             let text = demo::reply(request)?;
             // The deterministic demo exercises the same pending/cancel lifecycle.
@@ -1141,12 +1192,32 @@ fn generate_structured(
         }
         candidate_count += 1;
         // Transport, refusal and truncation errors leave here, without format repair.
-        let text = crate::live::output_text(&output)?;
+        let text = match crate::live::output_text(&output) {
+            Ok(text) => text,
+            Err(error) => return activity_fallback.ok_or(error),
+        };
         match crate::structured::candidate(schema, &text) {
-            Ok((reply, _)) => return Ok((reply, output)),
+            Ok((reply, _)) => {
+                if let Some(detail) = db.chat_activity_feedback(request, &output)? {
+                    db.validation_error(&request.call_id, &detail)?;
+                    if candidate_count < 3 {
+                        activity_fallback = Some((reply, output));
+                        feedback = Some(format!(
+                            "Activity update rejected: {detail} Answer the user normally, preserve pending intents, and use activity:null if no valid update is needed. Do not claim rejected promises or fulfillment succeeded."
+                        ));
+                        continue;
+                    }
+                    // Publication independently rolls back rejected metadata.
+                    // A valid reply/state must survive exhausted intent repair.
+                }
+                return Ok((reply, output));
+            }
             Err(detail) => {
                 db.validation_error(&request.call_id, &detail)?;
                 if candidate_count == 3 {
+                    if let Some(valid) = activity_fallback {
+                        return Ok(valid);
+                    }
                     return Err(Error::Generation(format!(
                         "Response format/schema validation failed after 3 candidates: {detail}"
                     )));

@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 mod chat_completions;
+mod json_mode;
 mod output_bound;
 mod responses;
 mod sse;
@@ -181,6 +182,7 @@ fn build_request_body(
         ),
         _ => return Err(failure("The configured model protocol is unsupported.")),
     };
+    json_mode::prepare(chat, request, &mut body);
     let replay_tools = messages.iter().any(|item| {
         item.get("tool_calls").is_some()
             || item["type"] == "function_call"
@@ -193,7 +195,19 @@ fn build_request_body(
         || request.image_generation_tools
         || replay_tools
     {
-        let mut tools = vec![crate::memory::declaration(&request.protocol)];
+        let mut tools = Vec::new();
+        if request.memory_tools
+            || messages.iter().any(|v| {
+                v["name"] == "update_memory"
+                    || v["tool_calls"].as_array().is_some_and(|calls| {
+                        calls
+                            .iter()
+                            .any(|c| c["function"]["name"] == "update_memory")
+                    })
+            })
+        {
+            tools.push(crate::memory::declaration(&request.protocol));
+        }
         if request.delegation_tools
             || (request.response_schema.is_some()
                 && messages.iter().any(|v| {

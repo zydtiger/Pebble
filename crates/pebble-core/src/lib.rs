@@ -1,6 +1,7 @@
 #[cfg(test)]
 extern crate self as pebble_core;
 
+mod activity;
 mod chat;
 mod codex;
 pub use codex::{
@@ -33,6 +34,7 @@ mod settings;
 mod storage;
 mod structured;
 
+pub use activity::{ActivitySettings, PersonaActivitySnapshot};
 pub use chat::{ChatEvent, ChatEventKind, ChatListener, ChatSubmission, ChatTask};
 pub use classifier_settings::ClassifierSettings;
 pub use config::{ChatConnection, ClassifierConnection, Persona, Workspace};
@@ -98,6 +100,7 @@ pub struct Core {
     chats: Arc<chat::Chats>,
     codex: Arc<codex::Manager>,
     image_generation: Arc<image_generation::Manager>,
+    activity: Arc<activity::Manager>,
 }
 
 impl Core {
@@ -106,7 +109,9 @@ impl Core {
         config::initialize(&data_root)?;
         let database = Arc::new(storage::Database::open(&data_root)?);
         database.upgrade_persona_contracts(&data_root)?;
-        config::load(&data_root)?;
+        for persona in config::load(&data_root)?.personas {
+            activity::settings::remove_legacy_pause(&data_root, &persona.id)?;
+        }
         let chats = Arc::new(chat::Chats::default());
         let codex =
             codex::Manager::new(database.clone(), data_root.clone(), Arc::downgrade(&chats));
@@ -118,16 +123,19 @@ impl Core {
         );
         *database.image_generation.lock().expect("image manager") =
             Arc::downgrade(&image_generation);
+        let activity = activity::Manager::new(database.clone(), Arc::downgrade(&chats));
         let core = Self {
             data_root,
             database,
             chats,
             codex,
             image_generation,
+            activity,
         };
         core.workspace()?;
         core.codex.recover();
         core.image_generation.recover();
+        core.activity.recover();
         Ok(core)
     }
 
@@ -137,6 +145,58 @@ impl Core {
             .resolve_conversations(&mut workspace.personas)?;
         workspace.rooms = self.database.rooms()?;
         Ok(workspace)
+    }
+
+    pub fn activity_settings(&self, persona: &str) -> Result<ActivitySettings, Error> {
+        Ok(self.database.activity_settings(persona)?.into())
+    }
+    pub fn save_activity_settings(
+        &self,
+        persona: &str,
+        settings: &ActivitySettings,
+    ) -> Result<(), Error> {
+        self.chats.serialized(|| {
+            self.database.save_activity_settings(
+                persona,
+                settings.enabled,
+                settings.quiet_start_minutes,
+                settings.quiet_end_minutes,
+                settings.daily_wake_budget,
+            )
+        })?;
+        if !settings.enabled {
+            self.chats.cancel_private(persona);
+        }
+        Ok(())
+    }
+    pub fn persona_activity(&self, persona: &str) -> Result<PersonaActivitySnapshot, Error> {
+        Ok(self.database.activity_snapshot(persona)?.into())
+    }
+    pub fn persona_activities(&self) -> Result<Vec<PersonaActivitySnapshot>, Error> {
+        Ok(self
+            .database
+            .activity_snapshots(&self.workspace()?.personas)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+    pub fn start_activity(&self, persona: &str, objective: &str) -> Result<(), Error> {
+        self.chats
+            .serialized(|| self.database.start_activity(persona, objective))
+    }
+    pub fn stop_activity(&self, persona: &str) -> Result<(), Error> {
+        self.chats
+            .serialized(|| self.database.stop_activity(persona))?;
+        self.chats.cancel_private(persona);
+        for task in self.database.delegated_tasks()? {
+            if task.persona_id == persona
+                && task.delivery == "private_observation"
+                && task.state.active()
+            {
+                self.codex.cancel(&task.id)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn create_group(&self, title: &str, members: &[String]) -> Result<Room, Error> {
@@ -405,6 +465,7 @@ impl Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        self.activity.shutdown();
         self.chats.cancel_all();
         self.codex.shutdown();
         self.image_generation.shutdown();

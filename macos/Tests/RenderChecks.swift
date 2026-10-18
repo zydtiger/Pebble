@@ -113,6 +113,49 @@ struct RenderChecks {
                     app.terminate(nil)
                     return
                 }
+                if ProcessInfo.processInfo.environment["PEBBLE_RENDER_ACTIVITY_ONLY"] == "1" {
+                    guard let persona = model.selected else { throw RenderError.failed("No activity renderer persona") }
+                    var settings = try await model.client.activitySettings(persona: persona.id)
+                    settings.enabled = true
+                    try await model.client.saveActivitySettings(persona: persona.id, settings: settings)
+                    await model.reloadActivities()
+                    guard model.personaActivities[persona.id]?.enabled == true else { throw RenderError.failed("Private activity did not enable") }
+                    try capture(window, name: "activity-waiting")
+                    NSApp.activate(ignoringOtherApps: true)
+                    window.makeKeyAndOrderFront(nil)
+                    try await Task.sleep(for: .milliseconds(300))
+                    let previousWindows = Set(NSApp.windows.map(\.windowNumber))
+                    // Exercise the rendered header with native in-process mouse events.
+                    // The window is fixed at 1000 x 730 for this visual fixture.
+                    @MainActor func clickActivityControl() {
+                        let view = window.contentView!
+                        let point = view.convert(NSPoint(x: 420, y: view.isFlipped ? 47 : view.bounds.height - 47), to: nil)
+                        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+                        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+                        NSApp.postEvent(up, atStart: true)
+                        NSApp.sendEvent(down)
+                    }
+                    clickActivityControl()
+                    try await Task.sleep(for: .milliseconds(400))
+                    guard let popover = NSApp.windows.first(where: { $0.isVisible && !previousWindows.contains($0.windowNumber) }) else {
+                        throw RenderError.failed("Private activity popover did not appear")
+                    }
+                    try capture(popover, name: "activity-permissions")
+                    clickActivityControl()
+                    try await Task.sleep(for: .milliseconds(150))
+                    settings.enabled = false
+                    try await model.client.saveActivitySettings(persona: persona.id, settings: settings)
+                    await model.reloadActivities()
+                    guard model.personaActivities[persona.id]?.enabled == false else { throw RenderError.failed("Private activity did not disable") }
+                    try capture(window, name: "activity-disabled")
+                    try await model.client.stopActivity(persona: persona.id)
+                    await model.reloadActivities()
+                    guard model.personaActivities[persona.id]?.enabled == false, model.bubbles.isEmpty else { throw RenderError.failed("Private activity stop changed chat") }
+                    try capture(window, name: "activity-stopped")
+                    model.closeChat()
+                    app.terminate(nil)
+                    return
+                }
                 var classifier = try await model.readClassifierSettings(nil)
                 classifier.connection.enabled = false
                 try await model.saveClassifierSettings(nil, update: classifier, credential: .keep)

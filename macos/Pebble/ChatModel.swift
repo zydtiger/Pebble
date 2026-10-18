@@ -190,6 +190,8 @@ final class ChatModel {
     var imageGenerationSink: AsyncStream<[ImageGenerationRecord]>.Continuation?
     var showCodexSettings = false
     var delegatedTasks: [DelegatedTaskRecord] = []
+    var personaActivities: [String: PersonaActivitySnapshotRecord] = [:]
+    var activityObservation: Task<Void, Never>?
     var delegationStream: Task<Void, Never>?
     var delegationSink: AsyncStream<[DelegatedTaskRecord]>.Continuation?
     var settingsTarget: SettingsTarget?
@@ -357,6 +359,8 @@ final class ChatModel {
                 }
             }
             startMaintenanceObservation()
+            await reloadActivities()
+            startActivityObservation()
             try await startTaskObservation()
             try await startImageObservation()
             for persona in loaded.personas where maintenanceHandles[persona.id] == nil {
@@ -701,6 +705,7 @@ final class ChatModel {
         }
     }
     func closeChat() {
+        activityObservation?.cancel(); activityObservation = nil
         maintenanceObservation?.cancel(); maintenanceObservation = nil
         imageGenerationStream?.cancel(); imageGenerationStream = nil; imageGenerationSink?.finish(); imageGenerationSink = nil
         delegationStream?.cancel(); delegationStream = nil; delegationSink?.finish(); delegationSink = nil
