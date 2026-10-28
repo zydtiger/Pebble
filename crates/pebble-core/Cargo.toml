@@ -15,14 +15,14 @@ toml_edit = "0.25"
 uuid.workspace = true
 rusqlite.workspace = true
 url = "2.5"
-zstd = "0.13"
+zstd = "0.14"
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-base64 = "0.22"
-sha2 = "0.10"
+base64 = "0.23"
+sha2 = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
-jsonschema = { version = "0.58.6", default-features = false }
+jsonschema = { version = "0.60.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.23"
